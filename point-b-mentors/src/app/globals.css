@@ -1,0 +1,129 @@
+@import "tailwindcss";
+
+:root {
+  --color-ink: #111111;
+  --color-ink-soft: #55565b;
+  --color-paper: #f5f4f0;
+  --color-paper-dim: #ebe9e3;
+  --color-line: #e2e0d9;
+  --color-brass: #b07d2a;
+  --color-brass-dark: #8f651f;
+  --color-brass-pale: #f4e8d0;
+  --color-forest: #1d5a3c;
+  --color-forest-pale: #dcefe2;
+  --color-rust: #9a3324;
+  --color-rust-pale: #f6e4e0;
+  /* Pastel accents: highlights, tiles and step cards */
+  --color-peach: #f7c9a2;
+  --color-sky: #bfe6f4;
+  --color-mint: #cdeec3;
+  --color-lemon: #fdf1a2;
+  --color-lilac: #ddd3f5;
+}
+
+@theme inline {
+  --color-ink: var(--color-ink);
+  --color-ink-soft: var(--color-ink-soft);
+  --color-paper: var(--color-paper);
+  --color-paper-dim: var(--color-paper-dim);
+  --color-line: var(--color-line);
+  --color-brass: var(--color-brass);
+  --color-brass-dark: var(--color-brass-dark);
+  --color-brass-pale: var(--color-brass-pale);
+  --color-forest: var(--color-forest);
+  --color-forest-pale: var(--color-forest-pale);
+  --color-rust: var(--color-rust);
+  --color-rust-pale: var(--color-rust-pale);
+  --color-peach: var(--color-peach);
+  --color-sky: var(--color-sky);
+  --color-mint: var(--color-mint);
+  --color-lemon: var(--color-lemon);
+  --color-lilac: var(--color-lilac);
+  --font-display: var(--font-fraunces);
+  --font-sans: var(--font-inter);
+}
+
+body {
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+}
+
+::selection {
+  background: var(--color-brass-pale);
+  color: var(--color-ink);
+}
+
+.font-display {
+  font-family: var(--font-display);
+  font-weight: 300;
+  letter-spacing: -0.035em;
+}
+
+/* Marker-style highlight behind a few words of a headline */
+.mark {
+  padding: 0 0.06em;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+/* Hide scrollbars on horizontal carousels */
+.no-scrollbar { scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+
+html {
+  scroll-behavior: smooth;
+}
+
+/* Native FAQ accordion */
+details > summary { list-style: none; }
+details > summary::-webkit-details-marker { display: none; }
+details[open] .faq-plus { transform: rotate(45deg); }
+
+.input {
+  @apply w-full rounded-xl border border-line bg-white px-3.5 py-2.5 text-sm text-ink placeholder:text-ink-soft/60 focus:border-ink/50 focus:outline-none;
+}
+
+/* ---------- Motion ---------- */
+.reveal {
+  opacity: 0;
+  transform: translateY(28px);
+  transition: opacity 0.8s cubic-bezier(0.22, 1, 0.36, 1), transform 0.8s cubic-bezier(0.22, 1, 0.36, 1);
+  transition-delay: var(--reveal-delay, 0ms);
+}
+.reveal.is-in {
+  opacity: 1;
+  transform: none;
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(24px); }
+  to { opacity: 1; transform: none; }
+}
+.animate-rise {
+  animation: rise 0.9s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: var(--rise-delay, 0ms);
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-14px); }
+}
+.animate-float {
+  animation: float 6s ease-in-out infinite;
+  animation-delay: var(--float-delay, 0s);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal { opacity: 1; transform: none; transition: none; }
+  .animate-rise, .animate-float { animation: none; }
+}
+
+/* Small pop-in for dropdown panels */
+@keyframes pop {
+  from { opacity: 0; transform: translateY(-6px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  [class*="animate-[pop"] { animation: none !important; }
+}

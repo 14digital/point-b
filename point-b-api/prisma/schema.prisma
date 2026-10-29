@@ -1,0 +1,328 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  STUDENT
+  MENTOR
+  ADMIN
+}
+
+enum SessionKind {
+  ONE_TO_ONE
+  GROUP
+}
+
+enum MentorCategory {
+  LOCAL
+  INTERNATIONAL
+}
+
+enum MentorLevel {
+  PROFESSIONAL
+  SENIOR_SPECIALIST
+  EXECUTIVE
+}
+
+enum MentorStatus {
+  ONBOARDING
+  ACTIVE
+  PAUSED
+  SUSPENDED
+}
+
+enum Currency {
+  PKR
+  GBP
+}
+
+enum ApplicationStatus {
+  SUBMITTED
+  UNDER_REVIEW
+  SHORTLISTED
+  INTERVIEW_SCHEDULED
+  INTERVIEW_COMPLETED
+  APPROVED
+  ONBOARDING
+  ACTIVE
+  CHANGES_REQUESTED
+  WAITLISTED
+  REJECTED
+  PAUSED
+  SUSPENDED
+}
+
+enum BookingStatus {
+  PENDING_PAYMENT
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+}
+
+model User {
+  id               String    @id @default(auto()) @map("_id") @db.ObjectId
+  email            String    @unique
+  passwordHash     String
+  name             String
+  role             Role      @default(STUDENT)
+  timezone         String    @default("Asia/Karachi")
+  dateOfBirth      DateTime?
+  guardianEmail    String?
+  guardianConsent  Boolean   @default(false)
+  isActive         Boolean   @default(true)
+  // Single-use set/reset password link. Only a SHA-256 hash is stored.
+  resetTokenHash      String?
+  resetTokenExpiresAt DateTime?
+  passwordChangedAt   DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  mentorProfile MentorProfile?
+  bookings      Booking[]      @relation("StudentBookings")
+  applications  MentorApplication[]
+  savedMentors  SavedMentor[]
+  auditLogs     AuditLog[]
+  notifications Notification[]
+}
+
+model MentorProfile {
+  id                 String         @id @default(auto()) @map("_id") @db.ObjectId
+  userId             String @db.ObjectId         @unique
+  slug               String         @unique
+  title              String
+  organization       String
+  country            String
+  category           MentorCategory
+  level              MentorLevel
+  languages          String[]
+  expertise          String[]
+  industries         String[]
+  introduction       String
+  careerSummary      String
+  qualifications     String[]
+  achievements       String[]
+  helpTopics         String[]
+  outsideScope       String[]
+  linkedinUrl        String?
+  photoUrl           String?
+  priceOverrideMinor Int?
+  verified           Boolean        @default(false)
+  isDemo             Boolean        @default(false)
+  status             MentorStatus   @default(ONBOARDING)
+  agreementAcceptedAt DateTime?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  user     User               @relation(fields: [userId], references: [id])
+  slots    AvailabilitySlot[]
+  bookings Booking[]
+  saved    SavedMentor[]
+
+  @@index([status, category])
+}
+
+model MentorApplication {
+  id                  String            @id @default(auto()) @map("_id") @db.ObjectId
+  userId              String? @db.ObjectId
+  fullName            String
+  email               String
+  phone               String
+  countryOfResidence  String
+  professionalLocation String
+  linkedinUrl         String
+  headline            String
+  currentRole         String
+  organization        String
+  yearsExperience     Int
+  industry            String
+  specialistAreas     String[]
+  qualifications      String
+  languages           String[]
+  previousMentorshipExperience String @default("")
+  topicsOffered       String[]
+  preferredPricing    String
+  weeklyAvailability  String
+  motivation          String
+  participation       String
+  agreedToTerms       Boolean
+  status              ApplicationStatus @default(SUBMITTED)
+  internalNotes       String            @default("")
+  changesRequested    String? // what the applicant was asked to change, as sent to them
+  changesRequestedAt  DateTime?
+  // Secure "update your application" link. Only a SHA-256 hash is stored; cleared on use or on any status change.
+  editTokenHash       String?
+  editTokenExpiresAt  DateTime?
+  resubmittedAt       DateTime?
+  resubmissionCount   Int               @default(0)
+  identityVerified    Boolean           @default(false)
+  mentorProfileId     String? @db.ObjectId
+  submittedAt         DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+
+  user      User?              @relation(fields: [userId], references: [id])
+  scorecard InterviewScorecard?
+
+  @@index([status])
+  @@index([email])
+}
+
+model InterviewScorecard {
+  id            String   @id @default(auto()) @map("_id") @db.ObjectId
+  applicationId String @db.ObjectId   @unique
+  experience    Int
+  expertise     Int
+  communication Int
+  approach      Int
+  conduct       Int
+  total         Int
+  reviewerId    String @db.ObjectId
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  application MentorApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+}
+
+model AvailabilitySlot {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  mentorId  String @db.ObjectId
+  startAt   DateTime
+  endAt     DateTime
+  isBooked  Boolean  @default(false) // true once every seat is taken
+  kind      SessionKind @default(ONE_TO_ONE)
+  capacity  Int      @default(1)
+  seatsTaken Int     @default(0)
+  createdAt DateTime @default(now())
+
+  mentor   MentorProfile @relation(fields: [mentorId], references: [id], onDelete: Cascade)
+  bookings Booking[]
+
+  @@unique([mentorId, startAt])
+  @@index([mentorId, startAt, isBooked])
+}
+
+model Booking {
+  id                String        @id @default(auto()) @map("_id") @db.ObjectId
+  reference         String        @unique
+  studentId         String @db.ObjectId
+  mentorId          String @db.ObjectId
+  slotId            String @db.ObjectId
+  agenda            String
+  currentSituation  String
+  usefulOutcome     String
+  materialsToReview String        @default("")
+  sessionKind       SessionKind   @default(ONE_TO_ONE)
+  reminderSentAt    DateTime?
+  hostStartedAt     DateTime? // set when the mentor first opens the call room
+  rescheduleCount   Int           @default(0)
+  rescheduledAt     DateTime?
+  priceMinor        Int
+  currency          Currency
+  status            BookingStatus @default(PENDING_PAYMENT)
+  meetingLink       String?
+  cancelledAt       DateTime?
+  cancelReason      String?
+  completedAt       DateTime?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  student  User             @relation("StudentBookings", fields: [studentId], references: [id])
+  mentor   MentorProfile    @relation(fields: [mentorId], references: [id])
+  slot     AvailabilitySlot @relation(fields: [slotId], references: [id])
+  payments Payment[]
+  review   Review?
+
+  @@index([studentId, status])
+  @@index([mentorId, status])
+  @@index([slotId])
+}
+
+model Payment {
+  id            String        @id @default(auto()) @map("_id") @db.ObjectId
+  bookingId     String @db.ObjectId
+  provider      String
+  providerRef   String        @unique
+  amountMinor   Int
+  currency      Currency
+  status        PaymentStatus @default(PENDING)
+  processedAt   DateTime?
+  createdAt     DateTime      @default(now())
+
+  booking Booking @relation(fields: [bookingId], references: [id])
+}
+
+model Review {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  bookingId String @db.ObjectId   @unique
+  rating    Int
+  comment   String
+  createdAt DateTime @default(now())
+
+  booking Booking @relation(fields: [bookingId], references: [id])
+}
+
+model SavedMentor {
+  id       String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId   String @db.ObjectId
+  mentorId String @db.ObjectId
+  createdAt DateTime @default(now())
+
+  user   User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mentor MentorProfile @relation(fields: [mentorId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, mentorId])
+}
+
+model PricingRule {
+  id         String      @id @default(auto()) @map("_id") @db.ObjectId
+  level      MentorLevel
+  currency   Currency
+  priceMinor Int
+  updatedAt  DateTime    @updatedAt
+
+  @@unique([level, currency])
+}
+
+model Setting {
+  key       String   @id @map("_id")
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+model AuditLog {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  adminId    String @db.ObjectId
+  action     String
+  entityType String
+  entityId   String
+  detail     String   @default("")
+  createdAt  DateTime @default(now())
+
+  admin User @relation(fields: [adminId], references: [id])
+
+  @@index([entityType, entityId])
+}
+
+model Notification {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String? @db.ObjectId
+  toEmail   String
+  subject   String
+  body      String
+  sentAt    DateTime @default(now())
+  readAt    DateTime?
+
+  user User? @relation(fields: [userId], references: [id])
+}

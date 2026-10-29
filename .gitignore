@@ -1,0 +1,17 @@
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Dependencies and build output
+node_modules/
+dist/
+.next/
+
+# Secrets: never commit real environment files
+.env
+.env.local
+.env.*.local
+
+# Local MongoDB data
+.mongo-data/
