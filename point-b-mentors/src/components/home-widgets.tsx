@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRef } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { MentorPhoto, Skeleton, pastelFor } from "./ui";
 import { MentorCard } from "./mentor-card";
 import { Reveal } from "./motion";
@@ -25,14 +25,43 @@ export function HeroBadge() {
 /** "Topics you can get help with" chips along the bottom of the hero. */
 export function HeroTopics() {
   const facets = useApi<{ expertise: string[] }>("/mentors/facets");
-  if (!facets.data?.expertise.length) return null;
+  const all = facets.data?.expertise ?? [];
+  const row = useRef<HTMLDivElement>(null);
+  const more = useRef<HTMLAnchorElement>(null);
+  const [fit, setFit] = useState(all.length);
+
+  // Show only the chips that fit on one line, then "+N more" right after them (no scrolling).
+  useLayoutEffect(() => {
+    const el = row.current;
+    if (!el || !all.length) return;
+    const GAP = 8;
+    const measure = () => {
+      const widths = [...el.querySelectorAll<HTMLElement>("[data-chip]")].map((c) => c.offsetWidth);
+      const count = (limit: number) => { let used = 0, n = 0; for (const w of widths) { used += (n ? GAP : 0) + w; if (used > limit) break; n++; } return n; };
+      const total = el.clientWidth;
+      const n = count(total);
+      setFit(n === widths.length ? n : count(total - GAP - (more.current?.offsetWidth ?? 96)));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [all.length]);
+
+  if (!all.length) return null;
+  const hidden = all.length - fit;
+  const chip = "shrink-0 whitespace-nowrap rounded-full px-4 py-2 text-sm text-white backdrop-blur-md transition-colors";
   return (
-    <div className="no-scrollbar flex items-center gap-2 overflow-x-auto">
-      <span className="mr-2 shrink-0 text-sm text-white/75">Topics you can get help with:</span>
-      {facets.data.expertise.slice(0, 6).map((x) => (
-        <Link key={x} href={`/mentors?expertise=${encodeURIComponent(x)}`} className="shrink-0 rounded-full bg-white/15 px-4 py-2 text-sm text-white backdrop-blur-md transition-colors hover:bg-white/25">{x}</Link>
-      ))}
-      <Link href="/mentors" className="shrink-0 rounded-full bg-white/15 px-4 py-2 text-sm text-white backdrop-blur-md hover:bg-white/25">+ more</Link>
+    <div className="flex items-center gap-2">
+      <span className="mr-2 hidden shrink-0 text-sm text-white/75 sm:inline">Topics you can get help with:</span>
+      <div ref={row} className="flex min-w-0 flex-1 gap-2 overflow-hidden">
+        {all.map((x, i) => (
+          // Chips that don't fit stay in the DOM (invisible, ordered last) so they can be measured on resize.
+          <Link key={x} data-chip href={`/mentors?expertise=${encodeURIComponent(x)}`} aria-hidden={i >= fit || undefined} tabIndex={i >= fit ? -1 : undefined}
+            className={`${chip} bg-white/15 hover:bg-white/25 ${i >= fit ? "invisible order-2" : ""}`}>{x}</Link>
+        ))}
+        <Link ref={more} href="/mentors" className={`${chip} order-1 bg-white/30 font-medium hover:bg-white/40 ${hidden > 0 ? "" : "invisible order-3"}`}>+{Math.max(hidden, 1)} more</Link>
+      </div>
     </div>
   );
 }

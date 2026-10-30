@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Container, SectionHeading, Button, Mark } from "@/components/ui";
 import { HeroBadge, HeroTopics, MentorBubbles, MentorCarousel, TopicTiles } from "@/components/home-widgets";
 import { Reveal, ScrollStatement } from "@/components/motion";
+import { HeroVideo } from "@/components/hero-video";
 
 const STEPS = [
   { dots: 1, bg: "bg-peach", title: "Find your mentor", body: "Search by topic, background or price. Every profile shows real experience, reviews and open times." },
@@ -21,16 +22,19 @@ const FAQ = [
 export default function HomePage() {
   return (
     <>
-      {/* Hero. Add a licensed photo at public/hero.jpg and it shows behind the overlay automatically. */}
+      {/* Hero. Background video from public/hero.mp4 (or NEXT_PUBLIC_HERO_VIDEO_URL); public/hero.jpg is the poster and fallback. */}
       <section
         className="relative isolate flex min-h-[100svh] flex-col justify-end overflow-hidden text-white"
         style={{
           backgroundImage:
-            "linear-gradient(180deg, rgba(0,0,0,0.45) 0%, rgba(0,0,0,0.15) 45%, rgba(0,0,0,0.65) 100%), url(/hero.jpg), radial-gradient(900px 600px at 72% 35%, #8a6a3e, transparent 70%), radial-gradient(700px 500px at 10% 90%, #3c4a3a, transparent 70%), linear-gradient(135deg, #2b2620, #15130f)",
+            "url(/hero.jpg), radial-gradient(900px 600px at 72% 35%, #8a6a3e, transparent 70%), radial-gradient(700px 500px at 10% 90%, #3c4a3a, transparent 70%), linear-gradient(135deg, #2b2620, #15130f)",
           backgroundSize: "cover",
           backgroundPosition: "center",
         }}
       >
+        <HeroVideo />
+        {/* Readability overlay, above the video and below the text */}
+        <div aria-hidden className="pointer-events-none absolute inset-0 -z-10 bg-[linear-gradient(180deg,rgba(0,0,0,0.5)_0%,rgba(0,0,0,0.18)_45%,rgba(0,0,0,0.7)_100%)]" />
         <Container className="pb-10 pt-32">
           <div className="animate-rise"><HeroBadge /></div>
           <h1 style={{ ["--rise-delay" as string]: "120ms" }} className="animate-rise mt-5 max-w-5xl font-display text-[3rem] leading-[0.98] sm:text-[5.2rem] lg:text-[6.6rem]">
