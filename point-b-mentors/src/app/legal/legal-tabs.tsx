@@ -5,6 +5,7 @@ import { useState, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import { Container, Mark } from "@/components/ui";
 import { Reveal } from "@/components/motion";
+import { NoticeText } from "@/lib/policy";
 
 const ic = (d: ReactNode) => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>{d}</svg>;
 
@@ -67,11 +68,11 @@ const CONTENT: Record<TabId, { title: string; summary: string; inShort: string[]
   refunds: {
     title: "Rescheduling & Refunds",
     summary: "What happens if your plans change, or a session doesn\u2019t go as expected.",
-    inShort: ["Booked sessions can\u2019t be cancelled", "Reschedule free up to 2 days before; payment carries over", "If a mentor can\u2019t attend: a new time or a full refund"],
+    inShort: ["Booked sessions can\u2019t be cancelled", "Reschedule free up to {notice} before; payment carries over", "If a mentor can\u2019t attend: a new time or a full refund"],
     sections: [
       {
         heading: "Rescheduling a session",
-        body: "Booked sessions cannot be cancelled. Instead, a student can move a confirmed session to another available time with the same mentor, free of charge, up to 2 days (48 hours) before it starts. The original payment carries over. Within 2 days of the start, the session can no longer be moved.",
+        body: "Booked sessions cannot be cancelled. Instead, a student can move a confirmed session to another available time with the same mentor, free of charge, up to {notice} before it starts. The original payment carries over. Within {notice} of the start, the session can no longer be moved.",
       },
       {
         heading: "If a mentor can\u2019t attend",
@@ -178,7 +179,7 @@ export function LegalTabs() {
                     <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-ink text-white">
                       <svg width="10" height="10" viewBox="0 0 20 20" fill="none" aria-hidden><path d="M4 10.5l4 4 8-9" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
                     </span>
-                    {x}
+                    <NoticeText text={x} />
                   </li>
                 ))}
               </ul>
@@ -190,7 +191,7 @@ export function LegalTabs() {
                   <span className="font-display text-2xl leading-none text-ink-soft/50">{String(i + 1).padStart(2, "0")}</span>
                   <div>
                     <h3 className="font-display text-2xl text-ink">{s.heading}</h3>
-                    <p className="mt-2 text-[0.95rem] leading-relaxed text-ink-soft">{s.body}</p>
+                    <p className="mt-2 text-[0.95rem] leading-relaxed text-ink-soft"><NoticeText text={s.body} /></p>
                   </div>
                 </section>
               ))}

@@ -10,6 +10,7 @@ import { NotificationBell } from "./notification-bell";
 
 const LINKS = [
   { href: "/mentors", label: "Explore Mentors" },
+  { href: "/match", label: "Match Me" },
   { href: "/how-it-works", label: "How It Works" },
   { href: "/pricing", label: "Pricing" },
   { href: "/become-a-mentor", label: "Become a Mentor" },

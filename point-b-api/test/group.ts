@@ -22,7 +22,7 @@ async function main() {
   ok(g && g.kind === 'GROUP' && g.capacity === 3 && g.seatsLeft === 3, 'group slot listed with seats');
   ok(d.data.groupPriceMinor < d.data.priceMinor && d.data.groupPriceMinor === Math.round(d.data.priceMinor * 0.4 / 100) * 100, 'group seat cheaper than 1:1 (40%)');
 
-  const studs = await Promise.all(['a', 'b', 'c', 'd', 'e'].map(async (n) => (await call('POST', '/auth/register', { name: `Grp ${n}`, email: `grp.${n}.${run}@example.com`, password: 'Passw0rd!x' })).data.accessToken as string));
+  const studs = await Promise.all(['a', 'b', 'c', 'd', 'e'].map(async (n) => (await call('POST', '/auth/register', { name: `Grp ${n}`, email: `grp.${n}.${run}@example.com`, password: 'Passw0rd!x', phone: '+923001234567' })).data.accessToken as string));
   const res = await Promise.all(studs.map((s) => call('POST', '/bookings', { slotId: g.id, agenda: 'Career guidance', ...prep }, s)));
   const won = res.filter((r) => r.status === 201), lost = res.filter((r) => r.status === 409);
   ok(won.length === 3 && lost.length === 2, `5 racers, 3 seats: exactly 3 win (wins=${won.length}, conflicts=${lost.length})`);

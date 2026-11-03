@@ -3,5 +3,5 @@ import { BookingsModule } from '../bookings/bookings.module';
 import { MentorsController } from './mentors.controller';
 import { MentorsService } from './mentors.service';
 
-@Module({ imports: [BookingsModule], controllers: [MentorsController], providers: [MentorsService] })
+@Module({ imports: [BookingsModule], controllers: [MentorsController], providers: [MentorsService], exports: [MentorsService] })
 export class MentorsModule {}

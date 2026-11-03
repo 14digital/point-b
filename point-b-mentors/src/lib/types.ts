@@ -5,6 +5,7 @@ export type Level = "PROFESSIONAL" | "SENIOR_SPECIALIST" | "EXECUTIVE";
 
 export interface SessionUser {
   id: string; email: string; name: string; role: Role; timezone: string; isMinor: boolean; guardianConsent: boolean;
+  phone?: string | null; whatsappAlerts?: boolean;
   mentorProfile?: { id: string; slug: string; status: string } | null;
 }
 
@@ -30,9 +31,9 @@ export interface Booking {
   priceMinor: number; currency: Currency; startAt: string; endAt: string;
   mentor: { id: string; slug: string; name: string; title: string; photoUrl?: string | null };
   student?: { id: string; name: string };
-  meetingLink: string | null; review: { rating: number; comment: string } | null;
+  meetingLink: string | null; review: { rating: number; comment: string; status: ReviewStatus } | null; canReview?: boolean;
   payment: { providerRef: string; provider: string; status: string } | null;
-  holdExpiresAt: string | null; cancelReason: string | null; createdAt: string;
+  holdExpiresAt: string | null; awaitingVerification?: boolean; cancelReason: string | null; createdAt: string;
   rescheduleCount?: number; rescheduledAt?: string | null; rescheduleBy?: string | null;
 }
 
@@ -45,9 +46,17 @@ export interface Application {
   id: string; fullName: string; email: string; phone: string; countryOfResidence: string; professionalLocation: string;
   linkedinUrl: string; headline: string; currentRole: string; organization: string; yearsExperience: number; industry: string;
   specialistAreas: string[]; qualifications: string; languages: string[]; previousMentorshipExperience: string;
+  strengths?: string[];
   topicsOffered: string[]; preferredPricing: string; weeklyAvailability: string; motivation: string; participation: string;
   status: AppStatus; internalNotes: string; identityVerified: boolean; submittedAt: string;
   changesRequested?: string | null; changesRequestedAt?: string | null;
   editTokenExpiresAt?: string | null; resubmittedAt?: string | null; resubmissionCount?: number;
+  interviewAt?: string | null; interviewDurationMin?: number | null; interviewNote?: string | null;
   scorecard: Scorecard | null; allowedTransitions?: AppStatus[]; passThreshold?: number;
 }
+
+export interface Interview { id: string; interviewAt: string; interviewDurationMin: number | null; interviewNote: string | null }
+export interface AdminInterview extends Interview { fullName: string; email: string; phone: string; headline: string }
+
+export type ReviewStatus = "PENDING" | "APPROVED" | "HIDDEN";
+export interface MyReview { id: string; rating: number; comment: string; status: ReviewStatus; createdAt: string; moderatedAt: string | null; reference: string; agenda: string; sessionAt: string; studentName: string }

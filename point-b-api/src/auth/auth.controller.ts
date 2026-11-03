@@ -1,8 +1,8 @@
-import { Body, Controller, Get, HttpCode, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, Patch, Post } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { AuthUser, CurrentUser, Public } from '../common/auth';
-import { ChangePasswordDto, ForgotPasswordDto, LoginDto, RegisterDto, ResetPasswordDto } from './auth.dto';
+import { ChangePasswordDto, ForgotPasswordDto, LoginDto, RegisterDto, ResetPasswordDto, UpdateContactDto } from './auth.dto';
 import { AuthService } from './auth.service';
 
 @ApiTags('auth')
@@ -27,6 +27,7 @@ export class AuthController {
   @Post('reset-password') reset(@Body() dto: ResetPasswordDto) { return this.auth.resetPassword(dto); }
 
   @ApiBearerAuth() @Get('me') me(@CurrentUser() u: AuthUser) { return this.auth.me(u.id); }
+  @ApiBearerAuth() @Patch('me/contact') contact(@CurrentUser() u: AuthUser, @Body() dto: UpdateContactDto) { return this.auth.updateContact(u.id, dto); }
 
   @ApiBearerAuth() @Post('change-password')
   changePassword(@CurrentUser() u: AuthUser, @Body() dto: ChangePasswordDto) { return this.auth.changePassword(u.id, dto); }

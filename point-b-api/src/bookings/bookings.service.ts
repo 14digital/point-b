@@ -4,14 +4,16 @@ import { randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../common/notifications.service';
 import { AuthUser } from '../common/auth';
-import { priceFor } from '../common/pricing';
+import { commissionFor, commissionRules, feeOf, priceFor } from '../common/pricing';
 import { DailyService } from '../calls/daily.service';
 import { StripeService } from '../payments/stripe.service';
 import { emailDate, webUrl } from '../common/email-template';
-import { CancelBookingDto, CreateBookingDto, CreateReviewDto } from './bookings.dto';
+import { CancelBookingDto, CreateBookingDto, CreateReviewDto, PromoCheckDto } from './bookings.dto';
 
 export const HOLD_MINUTES = 15;
-/** Students can move a confirmed session up to this many hours before it starts (2 days). */
+/** Default for how many hours before the start a student can still move a session; admins change it with `reschedule_notice_hours`. */
+/** "3 days" for whole days, otherwise "36 hours". */
+export const noticeLabel = (h: number) => (h % 24 === 0 ? `${h / 24} day${h === 24 ? '' : 's'}` : `${h} hour${h === 1 ? '' : 's'}`);
 export const DEFAULT_RESCHEDULE_HOURS = 48;
 const REMINDER_MINUTES = 30;
 // MongoDB omits unset optional fields, so "not reminded yet" must match both null and missing.
@@ -65,29 +67,33 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     return {
       id: b.id, reference: b.reference, status: b.status, sessionKind: b.sessionKind, agenda: b.agenda,
       currentSituation: b.currentSituation, usefulOutcome: b.usefulOutcome, materialsToReview: b.materialsToReview,
-      priceMinor: b.priceMinor, currency: b.currency,
+      priceMinor: b.priceMinor, currency: b.currency, listPriceMinor: b.listPriceMinor ?? b.priceMinor, discountMinor: b.discountMinor ?? 0,
       startAt: b.slot.startAt, endAt: b.slot.endAt,
       mentor: { id: b.mentor.id, slug: b.mentor.slug, name: b.mentor.user.name, title: b.mentor.title, photoUrl: b.mentor.photoUrl },
       student: viewer?.role === 'STUDENT' ? undefined : { id: b.student.id, name: b.student.name },
       meetingLink: showLink ? sessionUrl(b.reference) : null,
-      review: b.review ? { rating: b.review.rating, comment: b.review.comment } : null,
+      review: b.review ? { rating: b.review.rating, comment: b.review.comment, status: b.review.status ?? 'APPROVED' } : null,
+      canReview: !b.review && this.reviewable(b),
       payment: b.payments[0] ?? null,
-      holdExpiresAt: b.status === 'PENDING_PAYMENT' ? new Date(b.createdAt.getTime() + HOLD_MINUTES * 60_000) : null,
+      holdExpiresAt: b.status === 'PENDING_PAYMENT' && !b.awaitingVerification ? new Date(b.createdAt.getTime() + HOLD_MINUTES * 60_000) : null,
+      awaitingVerification: b.status === 'PENDING_PAYMENT' && !!b.awaitingVerification,
       cancelReason: b.cancelReason, createdAt: b.createdAt,
       rescheduleCount: b.rescheduleCount, rescheduledAt: b.rescheduledAt,
       rescheduleBy: b.status === 'CONFIRMED' ? new Date(b.slot.startAt.getTime() - noticeHours * 3600_000) : null,
     };
   }
 
-  private async noticeHours() {
+  async noticeHours() {
     const s = await this.prisma.setting.findUnique({ where: { key: 'reschedule_notice_hours' } });
-    return s ? Number(s.value) : DEFAULT_RESCHEDULE_HOURS;
+    const n = s ? Number(s.value) : NaN;
+    return Number.isFinite(n) && n >= 0 ? n : DEFAULT_RESCHEDULE_HOURS;
   }
 
   /** Frees slots held by unpaid bookings after HOLD_MINUTES. Safe to call often. */
   async releaseExpiredHolds() {
     const cutoff = new Date(Date.now() - HOLD_MINUTES * 60_000);
-    const stale = await this.prisma.booking.findMany({ where: { status: 'PENDING_PAYMENT', createdAt: { lt: cutoff } }, select: { id: true, slotId: true, payments: { select: { provider: true, providerRef: true, status: true } } } });
+    // Bookings waiting for an admin to check a bank transfer keep their slot until it is approved or rejected.
+    const stale = await this.prisma.booking.findMany({ where: { status: 'PENDING_PAYMENT', createdAt: { lt: cutoff }, OR: [{ awaitingVerification: null }, { awaitingVerification: false }, { awaitingVerification: { isSet: false } }] }, select: { id: true, slotId: true, payments: { select: { provider: true, providerRef: true, status: true } } } });
     for (const b of stale) {
       for (const p of b.payments) if (p.provider === 'stripe' && p.status === 'PENDING' && p.providerRef.startsWith('pi_')) await this.stripe.cancelIntent(p.providerRef);
       await this.prisma.$transaction([
@@ -121,7 +127,13 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     if (!slot || slot.mentor.status !== 'ACTIVE') throw new NotFoundException('This slot is no longer available');
     if (slot.startAt.getTime() <= Date.now() + 15 * 60_000) throw new BadRequestException('This slot starts too soon to book');
     if (slot.mentor.userId === user.id) throw new BadRequestException('You cannot book your own session');
-    const { priceMinor, currency } = await priceFor(this.prisma, slot.mentor, slot.kind);
+    const { priceMinor: listPriceMinor, currency } = await priceFor(this.prisma, slot.mentor, slot.kind);
+    const repeatStudent = await this.isRepeat(user.id, slot.mentorId);
+    const promo = dto.promoCode?.trim() ? await this.resolvePromo(user.id, dto.promoCode, slot) : null;
+    const discountMinor = promo ? Math.round((listPriceMinor * promo.percentOff) / 100 / 100) * 100 : 0;
+    const priceMinor = listPriceMinor - discountMinor;
+    const commissionPercent = commissionFor(await commissionRules(this.prisma), slot.mentor.level, slot.kind, repeatStudent);
+    const pricing = { listPriceMinor, discountMinor, promoCodeId: promo?.id ?? null, repeatStudent, commissionPercent, platformFeeMinor: commissionPercent == null ? null : feeOf(priceMinor, commissionPercent) };
     const already = await this.prisma.booking.findFirst({ where: { slotId: slot.id, studentId: user.id, status: { in: ['PENDING_PAYMENT', 'CONFIRMED'] } }, select: { id: true } });
     if (already) throw new ConflictException('You already have a seat in this session');
     const reference = 'PBM-' + randomBytes(4).toString('hex').toUpperCase();
@@ -136,7 +148,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
           data: {
             reference, studentId: user.id, mentorId: slot.mentorId, slotId: slot.id, sessionKind: slot.kind,
             agenda: dto.agenda, currentSituation: dto.currentSituation, usefulOutcome: dto.usefulOutcome,
-            materialsToReview: dto.materialsToReview ?? '', priceMinor, currency,
+            materialsToReview: dto.materialsToReview ?? '', priceMinor, currency, ...pricing,
           },
         });
         await tx.payment.create({ data: { bookingId: b.id, provider: this.stripe.enabled() ? 'stripe' : (process.env.PAYMENTS_PROVIDER ?? 'mock'), providerRef: 'pay_' + randomBytes(10).toString('hex'), amountMinor: priceMinor, currency } });
@@ -147,6 +159,45 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
       if ((e as { code?: string }).code === 'P2002' || (e as { code?: string }).code === 'P2034') throw new ConflictException('Sorry, that slot was just taken. Please choose another time.');
       throw e;
     }
+  }
+
+  /** Whether the student has already had a paid session with this mentor. */
+  private async isRepeat(studentId: string, mentorId: string) {
+    return !!(await this.prisma.booking.findFirst({ where: { studentId, mentorId, status: { in: ['CONFIRMED', 'COMPLETED'] } }, select: { id: true } }));
+  }
+
+  /** A promo code the student may use on this slot: theirs, from this mentor, for a 1:1, unused, unexpired and not held by another booking. */
+  private async resolvePromo(studentId: string, raw: string, slot: { id: string; mentorId: string; kind: string }) {
+    const code = raw.trim().toUpperCase();
+    const p = await this.prisma.promoCode.findUnique({ where: { code } });
+    if (!p || p.studentId !== studentId || p.revokedAt) throw new BadRequestException('That promo code is not valid for your account.');
+    if (p.mentorId !== slot.mentorId) throw new BadRequestException('That promo code is for sessions with a different mentor.');
+    if (slot.kind !== 'ONE_TO_ONE') throw new BadRequestException('Promo codes apply to 1:1 sessions only.');
+    if (p.usedAt) throw new BadRequestException('That promo code has already been used.');
+    if (p.expiresAt < new Date()) throw new BadRequestException('That promo code has expired.');
+    const held = await this.prisma.booking.findFirst({ where: { promoCodeId: p.id, status: 'PENDING_PAYMENT' }, select: { id: true } });
+    if (held) throw new BadRequestException('That promo code is already applied to a booking awaiting payment.');
+    return p;
+  }
+
+  async promoCheck(user: AuthUser, dto: PromoCheckDto) {
+    await this.releaseExpiredHolds();
+    const slot = await this.prisma.availabilitySlot.findUnique({ where: { id: dto.slotId }, include: { mentor: true } });
+    if (!slot) throw new NotFoundException('This slot is no longer available');
+    const p = await this.resolvePromo(user.id, dto.code, slot);
+    const { priceMinor, currency } = await priceFor(this.prisma, slot.mentor, slot.kind);
+    const discountMinor = Math.round((priceMinor * p.percentOff) / 100 / 100) * 100;
+    return { code: p.code, percentOff: p.percentOff, listPriceMinor: priceMinor, discountMinor, priceMinor: priceMinor - discountMinor, currency };
+  }
+
+  /** The student's promo codes that can still be used, so the booking form can offer them. */
+  async myPromos(user: AuthUser) {
+    const rows = await this.prisma.promoCode.findMany({ where: { studentId: user.id, usedAt: null, revokedAt: null, expiresAt: { gt: new Date() } }, orderBy: { createdAt: 'desc' } });
+    const mentors = await this.prisma.mentorProfile.findMany({ where: { id: { in: rows.map((r) => r.mentorId) } }, select: { id: true, slug: true, user: { select: { name: true } } } });
+    return rows.map((r) => {
+      const m = mentors.find((x) => x.id === r.mentorId);
+      return { code: r.code, percentOff: r.percentOff, expiresAt: r.expiresAt, note: r.note, mentorId: r.mentorId, mentorSlug: m?.slug ?? null, mentorName: m?.user.name ?? '' };
+    });
   }
 
   async listMine(user: AuthUser) {
@@ -203,13 +254,14 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
       throw new ConflictException('Booking is no longer awaiting payment');
     }
     await this.prisma.booking.update({ where: { id: b.id }, data: { status: 'CONFIRMED', meetingLink: sessionUrl(b.reference) } });
+    if (b.promoCodeId) await this.prisma.promoCode.updateMany({ where: { id: b.promoCodeId, usedAt: null }, data: { usedAt: new Date(), bookingId: b.id } });
     const when = b.slot.startAt.toISOString();
     const mentorUserId = (await this.prisma.mentorProfile.findUnique({ where: { id: b.mentorId }, select: { userId: true } }))?.userId;
     const link = sessionUrl(b.reference);
     const kind = b.sessionKind === 'GROUP' ? 'Group session' : '1:1 session';
     const facts = (who: [string, string]): [string, string][] => [who, ['Date and time', emailDate(b.slot.startAt)], ['Type', kind], ['Agenda', b.agenda], ['Reference', b.reference]];
     const cta = { label: 'View your session', url: link };
-    await this.notify.send(b.student.email, 'Your booking is confirmed', `Hi ${b.student.name.split(' ')[0]},\n\nThank you for booking. Your session with ${b.mentor.user.name} is confirmed and your payment has been received.\n\nYou can join from your dashboard when it is time. We will email you a reminder 30 minutes before it starts. If you need a different time, you can reschedule from your dashboard up to 2 days before the start.`, b.student.id, { cta, facts: facts(['Mentor', b.mentor.user.name]) });
+    await this.notify.send(b.student.email, 'Your booking is confirmed', `Hi ${b.student.name.split(' ')[0]},\n\nThank you for booking. Your session with ${b.mentor.user.name} is confirmed and your payment has been received.\n\nYou can join from your dashboard when it is time. We will email you a reminder 30 minutes before it starts. If you need a different time, you can reschedule from your dashboard up to ${noticeLabel(await this.noticeHours())} before the start.`, b.student.id, { cta, facts: facts(['Mentor', b.mentor.user.name]) });
     await this.notify.send(b.mentor.user.email, 'You have a new booking', `Hi ${b.mentor.user.name.split(' ')[0]},\n\n${b.student.name} has booked a session with you. Their preparation notes are on your dashboard so you can read them beforehand.`, mentorUserId, { cta: { label: 'Open your dashboard', url: `${webUrl()}/dashboard/mentor` }, facts: facts(['Student', b.student.name]) });
   }
 
@@ -267,7 +319,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     if (b.status !== 'CONFIRMED' && b.status !== 'PENDING_PAYMENT') throw new BadRequestException('This booking can no longer be cancelled');
     const isStudent = b.studentId === user.id && user.role === 'STUDENT';
     if (user.role !== 'ADMIN' && !(isStudent && b.status === 'PENDING_PAYMENT')) {
-      throw new ForbiddenException('Confirmed sessions can\'t be cancelled, but you can reschedule up to 2 days before the start time.');
+      throw new ForbiddenException(`Confirmed sessions can't be cancelled, but you can reschedule up to ${noticeLabel(await this.noticeHours())} before the start time.`);
     }
     // Refund card payments with Stripe first, so a booking is never marked refunded when the money didn't move.
     for (const p of await this.prisma.payment.findMany({ where: { bookingId: b.id, status: 'SUCCEEDED', provider: 'stripe' } })) {
@@ -307,12 +359,23 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     return this.get(user, reference);
   }
 
+  /** Feedback opens the moment the call is over: marked completed, past its end time, or the mentor has opened the room. */
+  private reviewable(b: FullBooking) {
+    if (b.status === 'COMPLETED') return true;
+    if (b.status !== 'CONFIRMED') return false;
+    const now = Date.now();
+    return b.slot.endAt.getTime() <= now || (!!b.hostStartedAt && b.slot.startAt.getTime() <= now);
+  }
+
   async review(user: AuthUser, reference: string, dto: CreateReviewDto) {
     const b = await this.load(user, reference);
     if (b.studentId !== user.id) throw new ForbiddenException('Only the student can review this session');
-    if (b.status !== 'COMPLETED') throw new BadRequestException('You can review a session once it has been completed');
     if (b.review) throw new ConflictException('You have already reviewed this session');
-    await this.prisma.review.create({ data: { bookingId: b.id, rating: dto.rating, comment: dto.comment } });
+    if (!this.reviewable(b)) throw new BadRequestException('You can leave feedback once the session has finished');
+    // Held for the mentor's approval; nothing is public until they approve it.
+    await this.prisma.review.create({ data: { bookingId: b.id, rating: dto.rating, comment: dto.comment, status: 'PENDING' } });
+    const mentorUserId = (await this.prisma.mentorProfile.findUnique({ where: { id: b.mentorId }, select: { userId: true } }))?.userId;
+    await this.notify.send(b.mentor.user.email, `New feedback from ${b.student.name.split(' ')[0]}`, `Hi ${b.mentor.user.name.split(' ')[0]},\n\n${b.student.name} has left feedback on your session. It is private until you approve it. Open your dashboard to read it and choose whether it appears on your public profile.`, mentorUserId, { cta: { label: 'Review feedback', url: `${webUrl()}/dashboard/mentor` }, facts: [['Rating', `${dto.rating} out of 5`], ['Session', emailDate(b.slot.startAt)]] });
     return this.get(user, reference);
   }
 }

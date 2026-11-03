@@ -1,7 +1,9 @@
-import { BadRequestException, Body, Controller, Get, GoneException, Param, Post, Put } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, GoneException, NotFoundException, Param, Post, Put, Query, ServiceUnavailableException } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
-import { Public } from '../common/auth';
+import { ApiBearerAuth } from '@nestjs/swagger';
+import { AuthUser, CurrentUser, Public } from '../common/auth';
+import { DailyService } from '../calls/daily.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../common/notifications.service';
 import { CreateApplicationDto, UpdateApplicationDto } from './applications.dto';
@@ -10,14 +12,14 @@ import { webUrl } from '../common/email-template';
 
 const EDITABLE = {
   fullName: true, email: true, phone: true, countryOfResidence: true, professionalLocation: true, linkedinUrl: true, headline: true,
-  currentRole: true, organization: true, yearsExperience: true, industry: true, specialistAreas: true, qualifications: true, languages: true,
+  currentRole: true, organization: true, yearsExperience: true, industry: true, specialistAreas: true, strengths: true, qualifications: true, languages: true,
   previousMentorshipExperience: true, topicsOffered: true, preferredPricing: true, weeklyAvailability: true, motivation: true, participation: true,
 } as const;
 
 @ApiTags('applications')
 @Controller('applications')
 export class ApplicationsController {
-  constructor(private prisma: PrismaService, private notify: NotificationsService) {}
+  constructor(private prisma: PrismaService, private notify: NotificationsService, private daily: DailyService) {}
 
   @Public() @Throttle({ default: { limit: 5, ttl: 3_600_000 } })
   @Post()
@@ -29,6 +31,45 @@ export class ApplicationsController {
     const app = await this.prisma.mentorApplication.create({ data: { ...dto, email } });
     await this.notify.send(email, 'We have received your mentor application', `Thanks ${dto.fullName.split(' ')[0]}. Applications are reviewed in order received. Approval is not automatic and includes a short interview.`);
     return { id: app.id, status: app.status };
+  }
+
+  /** The signed-in user's own upcoming mentor interview, matched by email, for their dashboard. */
+  @ApiBearerAuth() @Get('mine/interview')
+  async myInterview(@CurrentUser() u: AuthUser) {
+    const user = await this.prisma.user.findUnique({ where: { id: u.id }, select: { email: true } });
+    if (!user) return null;
+    return this.prisma.mentorApplication.findFirst({
+      where: { email: user.email.toLowerCase(), status: 'INTERVIEW_SCHEDULED', interviewAt: { not: null } }, orderBy: { interviewAt: 'asc' },
+      select: { id: true, interviewAt: true, interviewDurationMin: true, interviewNote: true },
+    });
+  }
+
+  /**
+   * Gate for the interview room. The admin joins as host while signed in; the applicant joins with the private link from
+   * their email (they have no account yet) or by signing in with the same email. Same window rules as mentoring sessions.
+   */
+  @Public() @Throttle({ default: { limit: 60, ttl: 3_600_000 } })
+  @Get(':id/interview-call')
+  async interviewCall(@Param('id') id: string, @Query('token') token: string | undefined, @CurrentUser() user?: AuthUser) {
+    const a = /^[0-9a-f]{24}$/.test(id) ? await this.prisma.mentorApplication.findUnique({ where: { id } }) : null;
+    const isAdmin = user?.role === 'ADMIN';
+    const isApplicant = !!a && ((!!token && token.length >= 20 && a.interviewTokenHash === hashToken(token)) || (!!user && user.email.toLowerCase() === a.email));
+    if (!a || (!isAdmin && !isApplicant)) throw new NotFoundException('Interview not found');
+    if (a.status !== 'INTERVIEW_SCHEDULED' || !a.interviewAt) return { state: 'not_scheduled' as const };
+    const start = a.interviewAt, end = new Date(start.getTime() + (a.interviewDurationMin ?? 30) * 60_000);
+    const base = { applicantName: a.fullName, startAt: start, endAt: end, isHost: isAdmin };
+    const now = Date.now();
+    if (now < start.getTime() - 10 * 60_000) return { ...base, state: 'too_early' as const };
+    // Interviews often overrun, so the room stays open for 30 minutes past the planned end.
+    if (now > end.getTime() + 30 * 60_000) return { ...base, state: 'ended' as const };
+    if (!this.daily.enabled()) throw new ServiceUnavailableException('Video calling is not configured yet. Please contact support.');
+    const room = 'pb-iv-' + a.id;
+    // The applicant waits for the interviewer; Daily's presence list covers an admin who joined before this was recorded.
+    if (!isAdmin && !a.interviewHostStartedAt && (await this.daily.presence(room, (u) => !u.startsWith('applicant-'))) !== 'yes') return { ...base, state: 'waiting_for_host' as const };
+    const url = await this.daily.ensureRoom(room, new Date(end.getTime() + 30 * 60_000), 4);
+    if (isAdmin && !a.interviewHostStartedAt) await this.prisma.mentorApplication.updateMany({ where: { id: a.id, OR: [{ interviewHostStartedAt: null }, { interviewHostStartedAt: { isSet: false } }] }, data: { interviewHostStartedAt: new Date() } });
+    const meetingToken = await this.daily.token(room, { userId: isAdmin ? user!.id : 'applicant-' + a.id, userName: isAdmin ? user!.name : a.fullName, owner: isAdmin, startAt: start, endAt: new Date(end.getTime() + 30 * 60_000) });
+    return { ...base, state: 'ready' as const, url, token: meetingToken };
   }
 
   /** Resolves an update link, refusing it once used, expired, or after the application has moved on. */

@@ -12,9 +12,13 @@ import { RescheduleDialog } from "@/components/reschedule-dialog";
 import { api, errMsg } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { STATUS_LABEL } from "@/lib/constants";
+import { FeedbackForm, SubmittedFeedback } from "@/components/feedback";
+import { MobileField, WhatsAppIcon } from "@/components/mobile-field";
+import { isValidPhone, type CountryCode } from "@/components/phone-input";
 import { fmtDay, fmtDayShort, fmtTime, formatMoney } from "@/lib/format";
 import { useApi, useNow } from "@/lib/use-api";
 import type { Booking } from "@/lib/types";
+import { NoticeText } from "@/lib/policy";
 
 const TABS = ["Upcoming", "Awaiting payment", "Past"] as const;
 type Tab = (typeof TABS)[number];
@@ -26,6 +30,7 @@ export default function StudentDashboardPage() {
 function Dashboard() {
   const { user } = useAuth();
   const { data, loading, error, reload } = useApi<Booking[]>("/bookings");
+  const promos = useApi<{ code: string; percentOff: number; expiresAt: string; note: string; mentorSlug: string | null; mentorName: string }[]>("/bookings/promos");
   const params = useSearchParams();
   const router = useRouter();
   const returned = params.get("paid");
@@ -39,7 +44,7 @@ function Dashboard() {
   const pending = (data ?? []).filter((b) => b.status === "PENDING_PAYMENT");
   const past = (data ?? []).filter((b) => !upcoming.includes(b) && !pending.includes(b)).sort((a, b) => +new Date(b.startAt) - +new Date(a.startAt));
   const completed = past.filter((b) => b.status === "COMPLETED");
-  const needsFeedback = completed.filter((b) => !b.review);
+  const needsFeedback = past.filter((b) => b.canReview);
   const [tab, setTab] = useState<Tab>("Upcoming");
   const tabs = TABS.filter((t) => t !== "Awaiting payment" || pending.length > 0);
   const next = upcoming[0];
@@ -63,6 +68,17 @@ function Dashboard() {
       <Container className="py-10 sm:py-12">
         {user?.isMinor && !user.guardianConsent && <div className="mb-6 max-w-2xl"><Alert tone="info">Your parent or guardian still needs to confirm consent before you can book sessions. Contact support if they haven&rsquo;t received our email.</Alert></div>}
         {error && <div className="mb-6"><Alert>{error}</Alert></div>}
+        {user && !user.phone && <AddMobile />}
+        {(promos.data ?? []).map((c) => (
+          <div key={c.code} className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-3xl bg-mint/60 p-5 ring-1 ring-line sm:p-6">
+            <div className="min-w-0">
+              <p className="text-xs font-medium uppercase tracking-[0.12em] text-ink/60">Promo code from {c.mentorName}</p>
+              <p className="mt-1 font-display text-2xl text-ink">{c.percentOff}% off your next 1:1 with {c.mentorName.replace(/^(Dr|Mr|Ms|Mrs)\.?\s+/i, "").split(" ")[0]}</p>
+              <p className="mt-1 text-sm text-ink-soft"><span className="font-mono tracking-wide text-ink">{c.code}</span> · applied for you at checkout · valid until {new Date(c.expiresAt).toLocaleDateString("en-GB", { day: "numeric", month: "long" })}</p>
+            </div>
+            {c.mentorSlug && <Button href={`/mentors/${c.mentorSlug}`}>Book now</Button>}
+          </div>
+        ))}
 
         <div className="grid gap-8 lg:grid-cols-[1fr_320px]">
           <div className="min-w-0 space-y-8">
@@ -107,7 +123,7 @@ function Dashboard() {
               <p className="font-display text-2xl text-ink">Good to know</p>
               <ul className="mt-3 space-y-2 text-sm text-ink-soft">
                 <li>The call room opens 10 minutes before the start.</li>
-                <li>Need a different time? Reschedule up to 2 days before.</li>
+                <li>Need a different time? <NoticeText text="Reschedule up to {notice} before." /></li>
                 <li>We email a reminder 30 minutes ahead.</li>
               </ul>
               <Link href="/contact" className="mt-4 inline-block text-sm font-medium text-ink underline underline-offset-4">Contact support</Link>
@@ -186,7 +202,7 @@ function UpcomingCard({ b, onChange }: { b: Booking; onChange: () => void }) {
         <Badge tone="forest">Confirmed</Badge><Badge>{formatMoney(b.priceMinor, b.currency)} paid</Badge>{!!b.rescheduleCount && <Badge tone="brass">Rescheduled</Badge>}
         {b.rescheduleBy && (
           <span className="ml-auto text-xs text-ink-soft">
-            {canMove ? <>Reschedule until {fmtDayShort(b.rescheduleBy)}, {fmtTime(b.rescheduleBy)}</> : "Rescheduling closed (less than 2 days to go)"}
+            {canMove ? <>Reschedule until {fmtDayShort(b.rescheduleBy)}, {fmtTime(b.rescheduleBy)}</> : <NoticeText text="Rescheduling closed (less than {notice} to go)" />}
           </span>
         )}
       </div>
@@ -203,12 +219,16 @@ function PendingCard({ b, onChange }: { b: Booking; onChange: () => void }) {
     <div className="rounded-3xl border-l-4 border-brass bg-white p-5 ring-1 ring-line sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <Who b={b} />
-        <div className="flex gap-2">
-          <Button size="sm" disabled={busy} onClick={() => setPaying(true)}>Pay {formatMoney(b.priceMinor, b.currency)}</Button>
-          <Button size="sm" variant="ghost" disabled={busy} onClick={() => run(() => api(`/bookings/${b.reference}/cancel`, { body: {} }))}>Release slot</Button>
-        </div>
+        {b.awaitingVerification ? <Badge tone="brass">Checking your payment</Badge> : (
+          <div className="flex gap-2">
+            <Button size="sm" disabled={busy} onClick={() => setPaying(true)}>Pay {formatMoney(b.priceMinor, b.currency)}</Button>
+            <Button size="sm" variant="ghost" disabled={busy} onClick={() => run(() => api(`/bookings/${b.reference}/cancel`, { body: {} }))}>Release slot</Button>
+          </div>
+        )}
       </div>
-      <p className="mt-4 border-t border-line pt-3 text-xs text-ink-soft">Held until {b.holdExpiresAt ? fmtTime(b.holdExpiresAt) : "—"}. The slot is released if payment isn&rsquo;t completed.</p>
+      <p className="mt-4 border-t border-line pt-3 text-xs text-ink-soft">{b.awaitingVerification
+        ? <>We&rsquo;re matching your bank transfer of {formatMoney(b.priceMinor, b.currency)}. Your time is held, and you&rsquo;ll get an email once it&rsquo;s confirmed, usually within a few hours.</>
+        : <>Held until {b.holdExpiresAt ? fmtTime(b.holdExpiresAt) : "—"}. The slot is released if payment isn&rsquo;t completed.</>}</p>
       {error && <div className="mt-3"><Alert>{error}</Alert></div>}
       {paying && <CheckoutDialog reference={b.reference} title={`Session with ${b.mentor.name}`} subtitle={`${fmtDay(b.startAt)} · ${fmtTime(b.startAt)}`} onClose={() => setPaying(false)} onPaid={paid} />}
     </div>
@@ -216,41 +236,51 @@ function PendingCard({ b, onChange }: { b: Booking; onChange: () => void }) {
 }
 
 function PastCard({ b, onChange }: { b: Booking; onChange: () => void }) {
-  const { busy, error, run } = useAction(onChange);
-  const [rating, setRating] = useState(0);
-  const [comment, setComment] = useState("");
   const [reviewing, setReviewing] = useState(false);
   const tone = b.status === "COMPLETED" ? "forest" : b.status === "CANCELLED" || b.status === "NO_SHOW" ? "rust" : "neutral";
+  const status = b.status === "CONFIRMED" ? "Finished" : STATUS_LABEL[b.status];
   return (
     <div className="rounded-3xl bg-white p-5 ring-1 ring-line sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <Who b={b} />
         <div className="flex flex-wrap items-center gap-2">
-          <Badge tone={tone}>{STATUS_LABEL[b.status]}</Badge>
-          {b.status === "COMPLETED" && !b.review && !reviewing && <Button size="sm" onClick={() => setReviewing(true)}>Leave feedback</Button>}
+          <Badge tone={tone}>{status}</Badge>
+          {b.canReview && !reviewing && <Button size="sm" onClick={() => setReviewing(true)}>Leave feedback</Button>}
           <Button href={`/mentors/${b.mentor.slug}`} size="sm" variant="secondary">Book again</Button>
         </div>
       </div>
       {b.cancelReason && <p className="mt-3 text-xs text-ink-soft">{b.cancelReason}</p>}
-      {b.review && (
-        <div className="mt-4 rounded-2xl bg-paper-dim px-4 py-3 text-sm text-ink-soft">
-          <span className="mr-2 text-brass">{"★".repeat(b.review.rating)}<span className="text-line">{"★".repeat(5 - b.review.rating)}</span></span>&ldquo;{b.review.comment}&rdquo;
-        </div>
-      )}
-      {reviewing && (
-        <div className="mt-4 space-y-3 rounded-2xl bg-paper-dim p-4">
-          <p className="text-sm font-medium text-ink">How was your session with {b.mentor.name.split(" ")[0]}?</p>
-          <div className="flex gap-1" role="radiogroup" aria-label="Rating">
-            {[1, 2, 3, 4, 5].map((n) => <button key={n} type="button" role="radio" aria-checked={rating === n} aria-label={`${n} star${n > 1 ? "s" : ""}`} onClick={() => setRating(n)} className={`text-3xl leading-none transition-transform hover:scale-110 ${n <= rating ? "text-brass" : "text-line"}`}>★</button>)}
-          </div>
-          <textarea className="input min-h-24" maxLength={1000} placeholder="What was useful? What will you do next?" value={comment} onChange={(e) => setComment(e.target.value)} />
-          {error && <Alert>{error}</Alert>}
-          <div className="flex gap-2">
-            <Button size="sm" disabled={busy || !rating || comment.trim().length < 5} onClick={() => run(() => api(`/bookings/${b.reference}/review`, { body: { rating, comment } }))}>{busy ? <Spinner /> : "Submit feedback"}</Button>
-            <Button size="sm" variant="ghost" onClick={() => setReviewing(false)}>Cancel</Button>
-          </div>
-        </div>
-      )}
+      {b.review && <div className="mt-4"><SubmittedFeedback review={b.review} /></div>}
+      {reviewing && <div className="mt-4"><FeedbackForm b={b} onDone={() => { setReviewing(false); onChange(); }} onCancel={() => setReviewing(false)} /></div>}
+    </div>
+  );
+}
+
+/** Asks students who signed up before mobile numbers were collected to add one, so alerts can reach them on WhatsApp. */
+function AddMobile() {
+  const { refresh } = useAuth();
+  const [phone, setPhone] = useState("");
+  const [iso, setIso] = useState<CountryCode>("PK");
+  const [whatsapp, setWhatsapp] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  async function save() {
+    if (!isValidPhone(phone)) { setErr(phone ? "That number doesn't look right. Check the country code and digits." : "Please add your mobile number."); document.getElementById("add-mobile")?.focus(); return; }
+    setBusy(true); setErr(null);
+    try { await api("/auth/me/contact", { method: "PATCH", body: { phone, whatsappAlerts: whatsapp } }); await refresh(); }
+    catch (e) { setErr(errMsg(e)); setBusy(false); }
+  }
+  return (
+    <div className="mb-6 grid gap-6 rounded-3xl bg-white p-6 ring-1 ring-line sm:p-7 lg:grid-cols-[minmax(0,1fr)_minmax(0,24rem)] lg:items-start">
+      <div>
+        <span className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-[#25D366]/15 text-[#1fa855]"><WhatsAppIcon className="h-6 w-6" /></span>
+        <p className="mt-4 font-display text-2xl text-ink">Add your mobile number</p>
+        <p className="mt-1 max-w-md text-sm leading-relaxed text-ink-soft">Get booking confirmations and a reminder before every call on WhatsApp, as well as by email, so you never miss a session.</p>
+      </div>
+      <div>
+        <MobileField id="add-mobile" value={phone} onChange={(v) => { setPhone(v); setErr(null); }} iso={iso} onIso={setIso} whatsapp={whatsapp} onWhatsapp={setWhatsapp} error={err} />
+        <Button className="mt-4 w-full" disabled={busy} onClick={save}>{busy ? <Spinner /> : "Save number"}</Button>
+      </div>
     </div>
   );
 }

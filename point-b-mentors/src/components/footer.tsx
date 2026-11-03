@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Container } from "./ui";
 import { Logo } from "./logo";
+import { NoticeText } from "@/lib/policy";
 
 const COLUMNS = [
   {
@@ -39,7 +40,7 @@ const COLUMNS = [
   },
 ];
 
-const PROMISES = ["Verified professionals", "Private video calls", "Free rescheduling up to 2 days before"];
+const PROMISES = ["Verified professionals", "Private video calls", "Free rescheduling up to {notice} before"];
 
 export function Footer() {
   return (
@@ -61,7 +62,7 @@ export function Footer() {
                     <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-white/10">
                       <svg width="10" height="10" viewBox="0 0 20 20" fill="none" aria-hidden><path d="M4 10.5l4 4 8-9" stroke="#e9c880" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
                     </span>
-                    {p}
+                    <NoticeText text={p} />
                   </li>
                 ))}
               </ul>

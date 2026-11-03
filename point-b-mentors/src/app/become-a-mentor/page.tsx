@@ -5,7 +5,7 @@ import { Reveal } from "@/components/motion";
 export const metadata = { title: "Become a Mentor — POINT B Mentors" };
 
 const STAGES = [
-  { tone: "bg-sky", title: "Apply", when: "About 10 minutes", text: "Tell us about your experience, what you can help with and when you're usually free.", statuses: ["Submitted"] },
+  { tone: "bg-sky", title: "Apply", when: "About 3 minutes", text: "Tell us about your experience and what you can help with.", statuses: ["Submitted"] },
   { tone: "bg-lilac", title: "Review", when: "Our team", text: "We read every application. If something needs clarifying, we'll email you a private link to update it.", statuses: ["Under review", "Shortlisted"] },
   { tone: "bg-peach", title: "Interview", when: "Video call", text: "A short conversation about your background, how you'd approach mentoring, and professional conduct.", statuses: ["Interview scheduled", "Interview completed"] },
   { tone: "bg-mint", title: "Go live", when: "Your profile", text: "Sign in, complete your profile, accept the mentor agreement and open your first times.", statuses: ["Approved", "Onboarding", "Active"] },
@@ -126,7 +126,7 @@ export default function BecomeMentorPage() {
         <Container className="flex flex-col items-start gap-5 rounded-3xl bg-ink px-8 py-12 text-paper sm:px-12">
           <h2 className="font-display text-3xl tracking-tight">Ready to apply?</h2>
           <p className="max-w-xl text-paper/75">
-            The application takes around ten minutes, and you can review everything before you send it.
+            The application takes about three minutes: just the essentials about you, your experience and what you'd like to help with.
           </p>
           <Button href="/become-a-mentor/apply" variant="secondary" className="border-paper/30 text-paper hover:border-paper/60">
             Start your application

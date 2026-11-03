@@ -4,6 +4,9 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Button, Container, Skeleton } from "@/components/ui";
+import { CallFrame } from "@/components/call-frame";
+import { FeedbackForm, SubmittedFeedback } from "@/components/feedback";
+import type { Booking } from "@/lib/types";
 import { api, errMsg } from "@/lib/api";
 import { useAuth, HOME_BY_ROLE } from "@/lib/auth";
 import { fmtDay, fmtTime } from "@/lib/format";
@@ -24,11 +27,12 @@ export default function SessionPage() {
   }, [loading, user, reference, router]);
 
   if (loading || !user) return <Container className="py-12"><Skeleton className="h-8 w-64" /><Skeleton className="mt-6 h-72 w-full" /></Container>;
-  return <Room reference={reference} home={HOME_BY_ROLE[user.role]} />;
+  return <Room reference={reference} home={HOME_BY_ROLE[user.role]} isStudent={user.role === "STUDENT"} />;
 }
 
-function Room({ reference, home }: { reference: string; home: string }) {
+function Room({ reference, home, isStudent }: { reference: string; home: string; isStudent: boolean }) {
   const [info, setInfo] = useState<CallInfo | null>(null);
+  const [left, setLeft] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const ready = info?.state === "ready";
 
@@ -52,8 +56,9 @@ function Room({ reference, home }: { reference: string; home: string }) {
   if (error && !info) return <Shell home={home}><Alert>{error}</Alert></Shell>;
   if (!info) return <Shell home={home}><Skeleton className="h-72 w-full" /></Shell>;
 
+  if (left && isStudent) return <Shell home={home}><FeedbackPanel reference={reference} mentorName={info.mentorName} home={home} /></Shell>;
   if (info.state === "ready" && info.url && info.token) {
-    return <CallFrame info={info} onLeave={() => { window.location.href = home; }} />;
+    return <CallFrame url={info.url} token={info.token} title={<><span className="font-medium">{info.sessionKind === "GROUP" ? "Group session" : "1:1 session"}</span> with {info.mentorName} · {fmtTime(info.startAt)}–{fmtTime(info.endAt)}</>} note={info.isHost ? "You're the host: you can mute, remove and end the call." : "Your mentor is in the room."} onLeave={() => { if (isStudent) setLeft(true); else window.location.href = home; }} />;
   }
 
   const when = `${fmtDay(info.startAt)} · ${fmtTime(info.startAt)}–${fmtTime(info.endAt)}`;
@@ -74,66 +79,38 @@ function Room({ reference, home }: { reference: string; home: string }) {
         {error && <div className="mt-4"><Alert>{error}</Alert></div>}
         <Link href={home}><Button variant="secondary" className="mt-6">Back to dashboard</Button></Link>
       </div>
+      {info.state === "ended" && isStudent && <div className="mx-auto mt-6 max-w-lg"><FeedbackPanel reference={reference} mentorName={info.mentorName} home={home} bare /></div>}
     </Shell>
   );
 }
 
-function CallFrame({ info, onLeave }: { info: CallInfo; onLeave: () => void }) {
-  const box = useRef<HTMLDivElement>(null);
+/** Shown to the student the moment the call ends: rate the session while it is fresh. */
+function FeedbackPanel({ reference, mentorName, home, bare }: { reference: string; mentorName: string; home: string; bare?: boolean }) {
+  const [b, setB] = useState<Booking | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  const leave = useRef(onLeave);
-  leave.current = onLeave;
-
+  const [sent, setSent] = useState(false);
+  const [tick, setTick] = useState(0);
+  const load = () => setTick((n) => n + 1);
   useEffect(() => {
-    let frame: import("@daily-co/daily-js").DailyCall | null = null;
-    let cancelled = false;
-    (async () => {
-      try {
-        const Daily = (await import("@daily-co/daily-js")).default;
-        if (cancelled || !box.current) return;
-        // Dev StrictMode mounts twice and Daily allows one call object per page: clear any leftover first.
-        const stale = Daily.getCallInstance();
-        if (stale) await stale.destroy();
-        if (cancelled || !box.current) return;
-        frame = Daily.createFrame(box.current, {
-          iframeStyle: { width: "100%", height: "100%", border: "0", borderRadius: "16px" },
-          showLeaveButton: true,
-          showFullscreenButton: true,
-        });
-        let failed = false;
-        // A failed join also emits left-meeting; only a deliberate leave should return to the dashboard.
-        frame.on("left-meeting", () => { if (!cancelled && !failed) leave.current(); });
-        frame.on("error", (e) => { failed = true; console.error("[daily]", e); setError(callError(e?.errorMsg)); });
-        await frame.join({ url: info.url!, token: info.token! });
-      } catch (e) {
-        if (!cancelled) setError(callError((e as { errorMsg?: string })?.errorMsg) );
-      }
-    })();
-    return () => {
-      // Flag first so tearing the frame down is not mistaken for the user leaving.
-      cancelled = true;
-      frame?.destroy().catch(() => undefined);
-    };
-    // The join credentials are fixed for the life of this component.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
+    let alive = true;
+    api<Booking>(`/bookings/${reference}`).then((r) => { if (alive) setB(r); }).catch((e) => { if (alive) setError(errMsg(e)); });
+    return () => { alive = false; };
+  }, [reference, tick]);
+  const body = error ? <Alert>{error}</Alert> : !b ? <Skeleton className="h-40 w-full" /> : b.review ? (
+    <div className="space-y-3">
+      {sent && <p className="text-sm text-ink">Thank you, your feedback is in.</p>}
+      <SubmittedFeedback review={b.review} />
+    </div>
+  ) : b.canReview ? <FeedbackForm b={b} onDone={() => { setSent(true); load(); }} /> : <p className="text-sm text-ink-soft">Feedback opens once your session has finished.</p>;
+  if (bare) return <div className="rounded-3xl border border-line bg-white p-6 sm:p-8"><h2 className="font-display text-xl text-ink">Leave feedback</h2><div className="mt-4">{body}</div></div>;
   return (
-    <div className="flex h-[calc(100vh-4rem)] flex-col bg-ink/95 p-3 sm:p-4">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2 px-1 text-paper">
-        <p className="text-sm"><span className="font-medium">{info.sessionKind === "GROUP" ? "Group session" : "1:1 session"}</span> with {info.mentorName} · {fmtTime(info.startAt)}–{fmtTime(info.endAt)}</p>
-        <p className="text-xs text-paper/60">{info.isHost ? "You're the host: you can mute, remove and end the call." : "Your mentor is in the room."}</p>
-      </div>
-      {error && <div className="mb-3"><Alert>{error}</Alert></div>}
-      <div ref={box} className="min-h-0 flex-1" />
+    <div className="mx-auto max-w-lg rounded-3xl border border-line bg-white p-6 sm:p-8">
+      <h1 className="font-display text-3xl text-ink">How did it go?</h1>
+      <p className="mt-2 text-sm text-ink-soft">Your session with {mentorName} has finished. A minute of feedback helps other students and your mentor.</p>
+      <div className="mt-5">{body}</div>
+      <Link href={home}><Button variant="secondary" className="mt-6">Back to dashboard</Button></Link>
     </div>
   );
-}
-
-function callError(code?: string) {
-  if (code === "account-missing-payment-method") return "Video calling isn't available yet: the platform's video account needs a payment method added. Please contact support.";
-  return code ? `The call could not start (${code}). Please try again or contact support.` : "The call hit a problem. Please try again.";
 }
 
 function Shell({ home, children }: { home: string; children: React.ReactNode }) {

@@ -85,3 +85,21 @@ export function relative(iso: string, now: number) {
   if (h < 36) return `in ${h} h`;
   return `in ${Math.round(h / 24)} days`;
 }
+
+/** Applicant-facing card for a booked mentor interview. */
+export function InterviewCard({ iv }: { iv: { id: string; interviewAt: string; interviewDurationMin: number | null; interviewNote: string | null } }) {
+  const mins = iv.interviewDurationMin ?? 30;
+  const end = new Date(+new Date(iv.interviewAt) + mins * 60_000).toISOString();
+  return (
+    <div className="mb-8 flex flex-wrap items-center gap-5 rounded-3xl bg-lemon/60 p-5 ring-1 ring-line sm:p-6">
+      <DateTile iso={iv.interviewAt} />
+      <div className="min-w-0 flex-1">
+        <p className="text-xs font-medium uppercase tracking-[0.12em] text-ink/60">Your POINT B mentor interview</p>
+        <p className="mt-1 font-display text-2xl text-ink">{new Date(iv.interviewAt).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" })}, {new Date(iv.interviewAt).toLocaleTimeString("en-GB", { hour: "numeric", minute: "2-digit", hour12: true })}</p>
+        <p className="mt-1 text-sm text-ink-soft">{mins} minutes, until {new Date(end).toLocaleTimeString("en-GB", { hour: "numeric", minute: "2-digit", hour12: true })}. The room opens 10 minutes before and runs on POINT B, no download needed.</p>
+        {iv.interviewNote && <p className="mt-1 text-sm text-ink">{iv.interviewNote}</p>}
+      </div>
+      <a href={`/interview/${iv.id}`} className="rounded-full bg-ink px-5 py-2.5 text-sm font-medium text-white">Join interview</a>
+    </div>
+  );
+}

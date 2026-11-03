@@ -6,6 +6,7 @@ import { Alert, Button, Container, Mark, Spinner } from "@/components/ui";
 import { Reveal } from "@/components/motion";
 import { api, errMsg } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { NoticeText } from "@/lib/policy";
 
 // Must match CONTACT_TOPICS in the API.
 const TOPICS = [
@@ -18,7 +19,7 @@ const TOPICS = [
 
 const SHORTCUTS = [
   { tone: "bg-sky", title: "Manage a booking", text: "Reschedule a session or find your meeting link from your dashboard.", href: "/dashboard/student", cta: "Open dashboard" },
-  { tone: "bg-mint", title: "Rescheduling", text: "Move your session to another time for free, up to 2 days before it starts.", href: "/legal?tab=refunds", cta: "Read the policy" },
+  { tone: "bg-mint", title: "Rescheduling", text: "Move your session to another time for free, up to {notice} before it starts.", href: "/legal?tab=refunds", cta: "Read the policy" },
   { tone: "bg-peach", title: "Mentor with us", text: "Share what you know with students who are a few steps behind you.", href: "/become-a-mentor", cta: "How it works" },
 ];
 
@@ -143,7 +144,7 @@ export default function ContactPage() {
               <Reveal key={s.title} delay={i * 80}>
                 <Link href={s.href} className={`group flex h-full flex-col rounded-3xl ${s.tone} p-7 transition-transform hover:-translate-y-1`}>
                   <p className="font-display text-2xl text-ink">{s.title}</p>
-                  <p className="mt-2 flex-1 text-sm leading-relaxed text-ink/70">{s.text}</p>
+                  <p className="mt-2 flex-1 text-sm leading-relaxed text-ink/70"><NoticeText text={s.text} /></p>
                   <span className="mt-8 inline-flex items-center gap-2 text-sm font-medium text-ink">
                     {s.cta}
                     <span className="flex h-7 w-7 items-center justify-center rounded-full bg-ink text-white transition-transform group-hover:translate-x-1">

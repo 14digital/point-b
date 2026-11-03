@@ -68,14 +68,40 @@ export class DailyService {
   }
 
   /** Whether the given user id is currently in the room: 'unknown' if Daily could not tell (room missing, API error). */
-  async presence(room: string, userId: string): Promise<'yes' | 'no' | 'unknown'> {
+  async presence(room: string, who: string | ((userId: string) => boolean)): Promise<'yes' | 'no' | 'unknown'> {
     try {
       const r = await this.req('GET', `/rooms/${room}/presence`);
       if (r.status !== 200) return 'unknown';
       const list: { userId?: string }[] = Array.isArray(r.data) ? r.data : (r.data?.data ?? []);
-      return list.some((p) => p.userId === userId) ? 'yes' : 'no';
+      return list.some((p) => !!p.userId && (typeof who === 'string' ? p.userId === who : who(p.userId))) ? 'yes' : 'no';
     } catch {
       return 'unknown';
+    }
+  }
+
+  private usageCache?: { at: number; minutes: number };
+
+  /**
+   * Participant-minutes Daily has recorded across every meeting, which is what its plan allowance is measured in.
+   * Each participant's time is rounded up to a whole minute, as billing does. Cached for a minute. null if Daily cannot say.
+   */
+  async usedMinutes(): Promise<number | null> {
+    if (!this.enabled()) return null;
+    if (this.usageCache && Date.now() - this.usageCache.at < 60_000) return this.usageCache.minutes;
+    try {
+      let minutes = 0, after: string | undefined;
+      for (let page = 0; page < 50; page++) {
+        const r = await this.req('GET', `/meetings?limit=100${after ? `&starting_after=${after}` : ''}`);
+        if (r.status !== 200 || !Array.isArray(r.data?.data)) return null;
+        const rows: { id: string; participants?: { duration?: number }[] }[] = r.data.data;
+        for (const m of rows) for (const p of m.participants ?? []) minutes += Math.ceil((p.duration ?? 0) / 60);
+        if (rows.length < 100) break;
+        after = rows[rows.length - 1].id;
+      }
+      this.usageCache = { at: Date.now(), minutes };
+      return minutes;
+    } catch {
+      return null;
     }
   }
 }

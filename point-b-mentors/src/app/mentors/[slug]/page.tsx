@@ -1,5 +1,6 @@
 "use client";
 
+import { Flag } from "@/components/flag";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import type { ReactNode } from "react";
@@ -10,6 +11,7 @@ import { CATEGORY_LABEL, LEVEL_LABEL } from "@/lib/constants";
 import { formatMoney, initials } from "@/lib/format";
 import type { MentorDetail } from "@/lib/types";
 import { BookingPanel } from "./booking-flow";
+import { NoticeText } from "@/lib/policy";
 
 export default function MentorProfilePage() {
   const { slug } = useParams<{ slug: string }>();
@@ -72,10 +74,16 @@ export default function MentorProfilePage() {
                 )}
               </div>
               <div className="animate-rise min-w-0" style={{ ["--rise-delay" as string]: "80ms" }}>
-                <p className="text-sm font-medium text-ink-soft">{LEVEL_LABEL[m.level]} · {CATEGORY_LABEL[m.category]} mentor</p>
+                <p className="flex flex-wrap items-center gap-2 text-sm font-medium text-ink-soft">{LEVEL_LABEL[m.level]} · {m.category === "INTERNATIONAL" && <Flag country={m.country} />}{CATEGORY_LABEL[m.category]} mentor</p>
                 <h1 className="mt-2 font-display text-5xl leading-[0.98] text-ink sm:text-[4.25rem]">{m.name}</h1>
                 <p className="mt-4 text-lg leading-snug text-ink">{m.title}</p>
                 <p className="text-ink-soft">{m.organization}</p>
+                {m.linkedinUrl && (
+                  <a href={linkedinHref(m.linkedinUrl)} target="_blank" rel="noopener noreferrer" className="mt-5 inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-medium text-ink ring-1 ring-ink/10 transition-colors hover:ring-ink/30">
+                    <LinkedInIcon className="h-4 w-4 text-[#0A66C2]" />LinkedIn profile
+                    <svg width="12" height="12" viewBox="0 0 20 20" fill="none" aria-hidden className="text-ink-soft"><path d="M7 13L13 7M8 7h5v5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                  </a>
+                )}
               </div>
             </header>
 
@@ -83,7 +91,7 @@ export default function MentorProfilePage() {
             <dl className="animate-rise mt-10 grid grid-cols-2 overflow-hidden rounded-3xl bg-white/80 ring-1 ring-ink/5 backdrop-blur sm:grid-cols-4" style={{ ["--rise-delay" as string]: "160ms" }}>
               <Fact label="Rating" value={m.rating ? <span className="inline-flex items-center gap-1.5">{m.rating.toFixed(1)}<Star className="h-4 w-4 text-brass" /></span> : "New"} sub={m.reviewCount ? `${m.reviewCount} review${m.reviewCount === 1 ? "" : "s"}` : "No reviews yet"} />
               <Fact label="Sessions" value={m.sessionsCompleted} sub="completed" />
-              <Fact label="Based in" value={m.country} small />
+              <Fact label="Based in" value={m.category === "INTERNATIONAL" ? <span className="inline-flex items-center gap-2"><Flag country={m.country} />{m.country}</span> : m.country} small />
               <Fact label="Speaks" value={m.languages.join(", ")} small />
             </dl>
 
@@ -197,13 +205,13 @@ export default function MentorProfilePage() {
               </div>
               <BookingPanel mentor={m} onSlotTaken={reload} />
               <ul className="mt-6 space-y-2.5 border-t border-line pt-5 text-sm text-ink-soft">
-                <Assurance>Free rescheduling up to 2 days before</Assurance>
+                <Assurance><NoticeText text="Free rescheduling up to {notice} before" /></Assurance>
                 <Assurance>Private video room, link on your dashboard</Assurance>
                 <Assurance>Reminder by email 30 minutes before</Assurance>
               </ul>
               {m.linkedinUrl && (
-                <a href={m.linkedinUrl} target="_blank" rel="noreferrer" className="mt-5 flex items-center justify-between rounded-2xl bg-paper px-4 py-3 text-sm text-ink hover:bg-paper-dim">
-                  View LinkedIn profile<svg width="14" height="14" viewBox="0 0 20 20" fill="none"><path d="M7 13L13 7M8 7h5v5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                <a href={linkedinHref(m.linkedinUrl)} target="_blank" rel="noopener noreferrer" className="mt-5 flex items-center justify-between rounded-2xl bg-paper px-4 py-3 text-sm text-ink hover:bg-paper-dim">
+                  <span className="flex items-center gap-2"><LinkedInIcon className="h-4 w-4 text-[#0A66C2]" />View LinkedIn profile</span><svg width="14" height="14" viewBox="0 0 20 20" fill="none"><path d="M7 13L13 7M8 7h5v5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
                 </a>
               )}
             </div>
@@ -296,4 +304,14 @@ function CapIcon() {
 
 function AwardIcon() {
   return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" aria-hidden><circle cx="12" cy="9" r="6" /><path d="M8.5 14l-1.5 7 5-3 5 3-1.5-7" /></svg>;
+}
+
+const linkedinHref = (u: string) => (/^https?:\/\//i.test(u) ? u : `https://${u}`);
+
+function LinkedInIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden className={`shrink-0 ${className}`}>
+      <path d="M20.45 20.45h-3.56v-5.57c0-1.33-.03-3.04-1.85-3.04-1.86 0-2.14 1.45-2.14 2.94v5.67H9.34V9h3.42v1.56h.05c.48-.9 1.64-1.85 3.37-1.85 3.6 0 4.27 2.37 4.27 5.46v6.28zM5.34 7.43a2.06 2.06 0 110-4.13 2.06 2.06 0 010 4.13zM7.12 20.45H3.56V9h3.56v11.45zM22.22 0H1.77C.79 0 0 .77 0 1.73v20.54C0 23.23.79 24 1.77 24h20.45c.98 0 1.78-.77 1.78-1.73V1.73C24 .77 23.2 0 22.22 0z" />
+    </svg>
+  );
 }

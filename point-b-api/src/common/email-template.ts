@@ -5,6 +5,8 @@ export interface EmailOptions {
   cta?: { label: string; url: string };
   /** Key facts shown in a small table (mentor, date, reference). */
   facts?: [string, string][];
+  /** Keep this message to email only (e.g. password reset links). */
+  emailOnly?: boolean;
 }
 
 export const webUrl = () => (process.env.WEB_URL ?? process.env.CORS_ORIGIN ?? 'http://localhost:3000').split(',')[0].trim().replace(/\/$/, '');

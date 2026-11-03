@@ -1,0 +1,15 @@
+{
+  "name": "point-b",
+  "private": true,
+  "description": "POINT B Mentors: website (Next.js) and API (NestJS) served by one Node.js server",
+  "engines": {
+    "node": ">=20.9"
+  },
+  "scripts": {
+    "postinstall": "npm --prefix point-b-api install --include=dev && npm --prefix point-b-mentors install --include=dev",
+    "build": "node scripts/build.js",
+    "start": "node server.js",
+    "dev:api": "npm --prefix point-b-api run start:dev",
+    "dev:web": "npm --prefix point-b-mentors run dev"
+  }
+}

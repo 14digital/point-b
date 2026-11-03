@@ -12,6 +12,12 @@ export class CreateBookingDto {
   @IsString() @MinLength(10) @MaxLength(1000) currentSituation: string;
   @IsString() @MinLength(10) @MaxLength(1000) usefulOutcome: string;
   @IsOptional() @IsString() @MaxLength(1000) materialsToReview?: string;
+  @IsOptional() @IsString() @MaxLength(30) promoCode?: string;
+}
+
+export class PromoCheckDto {
+  @IsMongoId() slotId: string;
+  @IsString() @MinLength(3) @MaxLength(30) code: string;
 }
 
 export class RescheduleBookingDto {

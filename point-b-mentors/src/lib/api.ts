@@ -1,4 +1,5 @@
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api";
+// Same-origin by default: in production one server serves both the site and /api; in development next.config proxies /api.
+const BASE = process.env.NEXT_PUBLIC_API_URL || "/api";
 const TOKEN_KEY = "pointb.token";
 
 export class ApiError extends Error {

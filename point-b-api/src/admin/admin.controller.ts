@@ -2,7 +2,8 @@ import { Body, Controller, Get, Param, ParseEnumPipe, Patch, Post, Put, Query } 
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { ApplicationStatus } from '@prisma/client';
 import { AuthUser, CurrentUser, Roles } from '../common/auth';
-import { GuardianConsentDto, NotesDto, PricingRuleDto, ScorecardDto, SettingDto, StatusDto, UpdateMentorAdminDto, VerifyIdentityDto, RequestChangesDto } from './admin.dto';
+import { AdminEditApplicationDto } from '../applications/applications.dto';
+import { InterviewDto, GuardianConsentDto, NotesDto, PricingRuleDto, ScorecardDto, SettingDto, StatusDto, UpdateMentorAdminDto, VerifyIdentityDto, RequestChangesDto } from './admin.dto';
 import { AdminService } from './admin.service';
 
 @ApiTags('admin')
@@ -15,7 +16,10 @@ export class AdminController {
   @Get('stats') stats() { return this.admin.stats(); }
 
   @Get('applications') apps(@Query('status', new ParseEnumPipe(ApplicationStatus, { optional: true })) status?: ApplicationStatus) { return this.admin.listApplications(status); }
+  @Get('interviews') interviews() { return this.admin.listInterviews(); }
+  @Put('applications/:id/interview') interview(@CurrentUser() u: AuthUser, @Param('id') id: string, @Body() dto: InterviewDto) { return this.admin.scheduleInterview(u.id, id, dto); }
   @Get('applications/:id') app(@Param('id') id: string) { return this.admin.getApplication(id); }
+  @Patch('applications/:id/details') editDetails(@CurrentUser() u: AuthUser, @Param('id') id: string, @Body() dto: AdminEditApplicationDto) { return this.admin.editApplication(u.id, id, dto); }
   @Put('applications/:id/scorecard') score(@CurrentUser() u: AuthUser, @Param('id') id: string, @Body() dto: ScorecardDto) { return this.admin.saveScorecard(u.id, id, dto); }
   @Patch('applications/:id/status') status(@CurrentUser() u: AuthUser, @Param('id') id: string, @Body() dto: StatusDto) { return this.admin.setStatus(u.id, id, dto.status, dto.notes); }
   @Post('applications/:id/request-changes') requestChanges(@CurrentUser() u: AuthUser, @Param('id') id: string, @Body() dto: RequestChangesDto) { return this.admin.requestChanges(u.id, id, dto.message); }

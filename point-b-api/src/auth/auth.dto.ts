@@ -1,4 +1,5 @@
-import { IsDateString, IsEmail, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsBoolean, IsDateString, IsEmail, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsPhone } from '../common/phone';
 
 export class RegisterDto {
   @IsString() @MinLength(2) @MaxLength(80) name: string;
@@ -7,6 +8,13 @@ export class RegisterDto {
   @IsOptional() @IsDateString() dateOfBirth?: string;
   @IsOptional() @IsEmail() guardianEmail?: string;
   @IsOptional() @IsString() timezone?: string;
+  @IsPhone() phone: string;
+  @IsOptional() @IsBoolean() whatsappAlerts?: boolean;
+}
+
+export class UpdateContactDto {
+  @IsOptional() @IsPhone() phone?: string;
+  @IsOptional() @IsBoolean() whatsappAlerts?: boolean;
 }
 
 export class LoginDto {

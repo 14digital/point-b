@@ -1,7 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { createTransport, Transporter } from 'nodemailer';
 import { PrismaService } from '../prisma/prisma.service';
-import { EmailOptions, renderEmail } from './email-template';
+import { EmailOptions, renderEmail, webUrl } from './email-template';
+import { WhatsAppService } from './whatsapp.service';
 
 /**
  * Every message is stored in the Notification table (it is the in-app inbox and the admin outbox)
@@ -14,7 +15,7 @@ export class NotificationsService {
   private transport: Transporter | null = null;
   private from?: string;
 
-  constructor(private prisma: PrismaService) {
+  constructor(private prisma: PrismaService, private whatsapp: WhatsAppService) {
     // Accepts SMTP_* names, or Laravel-style MAIL_* names. The username defaults to the from-address (right for Gmail).
     const env = process.env;
     const host = env.SMTP_HOST ?? env.MAIL_HOST;
@@ -35,6 +36,7 @@ export class NotificationsService {
 
   async send(toEmail: string, subject: string, body: string, userId?: string, opts: EmailOptions = {}) {
     await this.prisma.notification.create({ data: { toEmail, subject, body, userId } });
+    if (!opts.emailOnly) await this.alsoWhatsApp(toEmail, subject, body, userId, opts);
     if (!this.transport) return this.log.log(`email (not delivered) -> ${toEmail}: ${subject}`);
     try {
       await this.transport.sendMail({
@@ -44,6 +46,19 @@ export class NotificationsService {
       this.log.log(`email -> ${toEmail}: ${subject}`);
     } catch (e) {
       this.log.error(`email to ${toEmail} failed: ${(e as Error).message}`);
+    }
+  }
+
+  /** Students who gave a number and agreed get the same alert on WhatsApp. Never blocks or breaks the email. */
+  private async alsoWhatsApp(toEmail: string, subject: string, body: string, userId: string | undefined, opts: EmailOptions) {
+    try {
+      const u = await this.prisma.user.findFirst({ where: userId ? { id: userId } : { email: toEmail.toLowerCase() }, select: { role: true, phone: true, whatsappAlerts: true, email: true } });
+      if (!u || u.role !== 'STUDENT' || !u.phone || !u.whatsappAlerts || u.email !== toEmail.toLowerCase()) return;
+      const message = body.replace(/^hi [^,\n]*,\s*/i, '');
+      const facts = opts.facts?.filter(([k]) => !/valid until|reference/i.test(k)).map(([k, v]) => `${k}: ${v}`).join(' · ');
+      await this.whatsapp.send(u.phone, subject, facts ? `${message} ${facts}` : message, opts.cta?.url ?? `${webUrl()}/dashboard/student`);
+    } catch (e) {
+      this.log.error(`whatsapp alert failed: ${(e as Error).message}`);
     }
   }
 

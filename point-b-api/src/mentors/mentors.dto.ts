@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { ArrayMaxSize, IsArray, IsDateString, IsEnum, IsInt, IsOptional, IsString, IsUrl, Max, MaxLength, Min } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsDateString, IsEnum, IsInt, IsMongoId, IsOptional, IsString, IsUrl, Max, MaxLength, Min } from 'class-validator';
 import { MentorCategory, MentorLevel, SessionKind } from '@prisma/client';
 
 export class ListMentorsQuery {
@@ -39,4 +39,11 @@ export class CreateSlotsDto {
   @IsOptional() @IsEnum(SessionKind) kind?: SessionKind;
   /** Seats for a GROUP slot (2 to 10). Ignored for ONE_TO_ONE. */
   @IsOptional() @IsInt() @Min(2) @Max(10) capacity?: number;
+}
+
+export class CreatePromoDto {
+  @IsMongoId() studentId: string;
+  /** Mentors may give at most 50% off. */
+  @IsInt() @Min(5) @Max(50) percentOff: number;
+  @IsOptional() @IsString() @MaxLength(300) note?: string;
 }

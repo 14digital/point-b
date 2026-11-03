@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Button, Container, Mark } from "@/components/ui";
 import { Reveal } from "@/components/motion";
+import { NoticeText } from "@/lib/policy";
 
 export const metadata = { title: "How It Works — POINT B Mentors" };
 
@@ -45,7 +46,7 @@ const PHASES: { tone: string; label: string; title: string; text: string; steps:
 
 const TIMELINE = [
   ["When you book", "Confirmation email and dashboard entry"],
-  ["Up to 2 days before", "Reschedule for free if plans change"],
+  ["Up to {notice} before", "Reschedule for free if plans change"],
   ["30 minutes before", "Email reminder with your link"],
   ["10 minutes before", "The call room opens"],
   ["After the call", "Leave a rating for the mentor"],
@@ -72,10 +73,10 @@ export default function HowItWorksPage() {
         </div>
 
         <dl className="animate-rise mt-16 grid grid-cols-2 overflow-hidden rounded-3xl bg-white/80 ring-1 ring-ink/5 backdrop-blur sm:grid-cols-4" style={{ ["--rise-delay" as string]: "240ms" }}>
-          {[["30 min", "per session"], ["8 steps", "search to feedback"], ["2 days", "free rescheduling window"], ["PKR · GBP", "local and international"]].map(([v, l], i) => (
+          {[["30 min", "per session"], ["8 steps", "search to feedback"], ["{notice}", "free rescheduling window"], ["PKR · GBP", "local and international"]].map(([v, l], i) => (
             <div key={l} className={`px-6 py-5 ${i ? "sm:border-l" : ""} ${i % 2 ? "border-l" : ""} ${i > 1 ? "border-t sm:border-t-0" : ""} border-line`}>
               <dt className="sr-only">{l}</dt>
-              <dd className="font-display text-3xl text-ink">{v}</dd>
+              <dd className="font-display text-3xl text-ink"><NoticeText text={v} /></dd>
               <dd className="mt-1 text-xs text-ink-soft">{l}</dd>
             </div>
           ))}
@@ -121,7 +122,7 @@ export default function HowItWorksPage() {
           {TIMELINE.map(([when, what], i) => (
             <Reveal as="li" key={when} delay={i * 80} className="relative pl-8 md:pl-0 md:pt-8">
               <span className={`absolute left-0 top-0.5 h-[15px] w-[15px] rounded-full ring-4 ring-paper ${i === 3 ? "bg-forest" : "bg-ink"}`} />
-              <p className="text-sm font-medium text-ink">{when}</p>
+              <p className="text-sm font-medium text-ink"><NoticeText text={when} /></p>
               <p className="mt-1 text-sm leading-relaxed text-ink-soft">{what}</p>
             </Reveal>
           ))}

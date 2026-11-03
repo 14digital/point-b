@@ -4,6 +4,7 @@ import { useDeferredValue, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Alert, Container, EmptyState, Skeleton } from "@/components/ui";
 import { MentorCard } from "@/components/mentor-card";
+import { MatchTeaser } from "@/components/match-teaser";
 import { useApi } from "@/lib/use-api";
 import { LEVEL_LABEL } from "@/lib/constants";
 import type { Category, Level, MentorSummary } from "@/lib/types";
@@ -43,7 +44,9 @@ export function MentorsDirectory() {
         </p>
       </div>
 
-      <div className="mt-8 grid gap-8 lg:grid-cols-[260px_1fr]">
+      <MatchTeaser compact className="mt-8" />
+
+      <div className="mt-10 grid gap-8 lg:grid-cols-[260px_1fr]">
         <aside className="space-y-5 lg:sticky lg:top-24 lg:self-start">
           <label className="block">
             <span className="mb-1.5 block text-sm font-medium text-ink">Search</span>

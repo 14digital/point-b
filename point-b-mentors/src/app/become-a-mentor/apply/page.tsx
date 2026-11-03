@@ -6,18 +6,22 @@ import { useSearchParams } from "next/navigation";
 import { Alert, Button, Container, Mark, Skeleton, Spinner } from "@/components/ui";
 import { api, errMsg } from "@/lib/api";
 import { AGENDAS } from "@/lib/constants";
+import { CountrySelect, listingNote } from "@/components/country-select";
+import { countryCode, countryIn } from "@/components/flag";
+import { PhoneInput, isValidPhone, parsePhone, toE164, type CountryCode } from "@/components/phone-input";
+import { isSupportedCountry } from "libphonenumber-js";
+import { MOTIVATION_STARTERS, draftMotivation, skillsFor, strengthsFor, topicsFor } from "./suggestions";
 
 const INDUSTRIES = ["Banking & Financial Services", "Technology", "Marketing & Brand", "Entrepreneurship", "Operations & Supply Chain", "Human Resources", "Law & Compliance", "Healthcare", "Design", "Education", "Consulting", "Other"];
 
 const STEPS = [
-  { title: "About you", blurb: "How we can reach you, and where you're based." },
-  { title: "Professional background", blurb: "The experience students will be learning from." },
-  { title: "Mentoring preferences", blurb: "What you'd like to help with, and when." },
-  { title: "Review & submit", blurb: "Check your details before sending." },
+  { title: "About you", blurb: "How we can reach you." },
+  { title: "Your experience", blurb: "What students will be learning from." },
+  { title: "Mentoring", blurb: "What you'd like to help with, and why." },
 ];
 
 const NEXT = [
-  ["Application", "You're here. It takes about 10 minutes."],
+  ["Application", "You're here. It takes about 3 minutes."],
   ["Screening", "Our team reviews your experience and background."],
   ["Short interview", "A video call so we can get to know you."],
   ["Onboarding", "Set up your profile and open your first times."],
@@ -26,7 +30,7 @@ const NEXT = [
 type Form = {
   fullName: string; email: string; phone: string; countryOfResidence: string; professionalLocation: string; linkedinUrl: string;
   headline: string; currentRole: string; organization: string; yearsExperience: string; industry: string;
-  specialistAreas: string[]; qualifications: string; languages: string[]; previousMentorshipExperience: string;
+  specialistAreas: string[]; strengths: string[]; qualifications: string; languages: string[]; previousMentorshipExperience: string;
   topicsOffered: string[]; preferredPricing: string; weeklyAvailability: string; motivation: string;
   participation: "Paid" | "Voluntary"; agreedToTerms: boolean;
 };
@@ -40,24 +44,21 @@ function validate(step: number, f: Form): Errors {
   if (step === 0) {
     if (f.fullName.trim().length < 2) e.fullName = "Please enter your full name.";
     if (!/^\S+@\S+\.\S+$/.test(f.email.trim())) e.email = "Please enter a valid email address.";
-    if (f.phone.replace(/\D/g, "").length < 6) e.phone = "Please enter a phone number we can reach you on.";
+    if (!isValidPhone(f.phone)) e.phone = "Please enter a valid phone number for the selected country code.";
     if (!/linkedin\.com\/.+/i.test(f.linkedinUrl)) e.linkedinUrl = "Please paste the link to your LinkedIn profile.";
-    if (!f.countryOfResidence.trim()) e.countryOfResidence = "Required.";
-    if (!f.professionalLocation.trim()) e.professionalLocation = "Required.";
+    if (!f.countryOfResidence) e.countryOfResidence = "Please select your country.";
   }
   if (step === 1) {
-    if (f.headline.trim().length < 5) e.headline = "A short headline helps students understand your background.";
     if (!f.currentRole.trim()) e.currentRole = "Required.";
     if (!f.organization.trim()) e.organization = "Required.";
     const y = Number(f.yearsExperience);
     if (f.yearsExperience === "" || !Number.isInteger(y) || y < 0 || y > 60) e.yearsExperience = "Enter a whole number of years.";
-    if (!f.specialistAreas.length) e.specialistAreas = "Add at least one area.";
     if (!f.languages.length) e.languages = "Add at least one language.";
   }
   if (step === 2) {
+    if (!f.specialistAreas.length) e.specialistAreas = "Choose at least one thing you're good at.";
     if (!f.topicsOffered.length) e.topicsOffered = "Choose at least one topic.";
-    if (!f.weeklyAvailability.trim()) e.weeklyAvailability = "Let us know roughly when you're free.";
-    if (f.motivation.trim().length < 20) e.motivation = "Please write at least a couple of sentences (20+ characters).";
+    if (f.motivation.trim().length < 20) e.motivation = "A sentence or two is enough (20+ characters).";
   }
   return e;
 }
@@ -73,6 +74,8 @@ function ApplyForm() {
   const token = useSearchParams().get("update");
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
   const [linkError, setLinkError] = useState<string | null>(null);
+  const [city, setCity] = useState("");
+  const [phoneIso, setPhoneIso] = useState<CountryCode>("PK");
   const [step, setStep] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -81,7 +84,7 @@ function ApplyForm() {
   const [form, setForm] = useState<Form>({
     fullName: "", email: "", phone: "", countryOfResidence: "", professionalLocation: "", linkedinUrl: "",
     headline: "", currentRole: "", organization: "", yearsExperience: "", industry: INDUSTRIES[0],
-    specialistAreas: [], qualifications: "", languages: [], previousMentorshipExperience: "",
+    specialistAreas: [], strengths: [], qualifications: "", languages: [], previousMentorshipExperience: "",
     topicsOffered: [], preferredPricing: "", weeklyAvailability: "", motivation: "", participation: "Paid", agreedToTerms: false,
   });
   useEffect(() => {
@@ -93,11 +96,20 @@ function ApplyForm() {
         setUpdate(u);
         const { changesRequested: _c, changesRequestedAt: _a, expiresAt: _e, ...fields } = u;
         void _c; void _a; void _e;
-        setForm((f) => ({ ...f, ...fields, yearsExperience: String(fields.yearsExperience), agreedToTerms: false }));
+        // Older applications stored a free-text place; keep what we can recognise and ask for the rest.
+        const phone = parsePhone(fields.phone);
+        setPhoneIso(phone.iso);
+        fields.phone = toE164(fields.phone);
+        const country = countryIn(fields.countryOfResidence) || countryIn(fields.professionalLocation);
+        const place = fields.professionalLocation.trim();
+        setCity(country && place.toLowerCase().endsWith(country.toLowerCase()) ? place.slice(0, place.length - country.length).replace(/,\s*$/, "").trim() : place);
+        setForm((f) => ({ ...f, ...fields, countryOfResidence: country, yearsExperience: String(fields.yearsExperience), agreedToTerms: false }));
       })
       .catch((e) => !cancelled && setLinkError(errMsg(e)));
     return () => { cancelled = true; };
   }, [token]);
+
+  const [drafted, setDrafted] = useState(false);
 
   const errors = showErrors ? validate(step, form) : {};
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setForm((f) => ({ ...f, [k]: v }));
@@ -114,8 +126,12 @@ function ApplyForm() {
   async function submit() {
     setBusy(true); setError(null);
     try {
+      // Fields the short form no longer asks for are derived, so the application record stays complete.
+      const location = city.trim() ? `${city.trim()}, ${form.countryOfResidence}` : form.countryOfResidence;
       const body = {
         ...form, linkedinUrl: withScheme(form.linkedinUrl.trim()), yearsExperience: Number(form.yearsExperience) || 0,
+        professionalLocation: location,
+        headline: update && form.headline ? form.headline : `${form.currentRole.trim()} at ${form.organization.trim()}`,
         preferredPricing: form.preferredPricing || "Standard rate",
       };
       if (token) {
@@ -278,60 +294,57 @@ function ApplyForm() {
                     <F label="Email" error={errors.email} hint={update ? "Contact the team if this needs to change." : undefined}><input type="email" className="input disabled:bg-paper disabled:text-ink-soft" disabled={!!update} value={form.email} onChange={(e) => set("email", e.target.value)} autoComplete="email" placeholder="you@example.com" /></F>
                   </Grid2>
                   <Grid2>
-                    <F label="Phone number" error={errors.phone} hint="Only used to arrange your interview."><input type="tel" className="input" value={form.phone} onChange={(e) => set("phone", e.target.value)} autoComplete="tel" placeholder="+92 300 0000000" /></F>
+                    <div>
+                      <label htmlFor="phone" className="mb-1.5 block text-sm font-medium text-ink">Phone number</label>
+                      <PhoneInput id="phone" value={form.phone} iso={phoneIso} onIso={setPhoneIso} invalid={!!errors.phone} onChange={(v) => set("phone", v)} />
+                      <p className={`mt-1.5 text-xs ${errors.phone ? "text-rust" : "text-ink-soft"}`}>{errors.phone ?? "Only used to arrange your interview."}</p>
+                    </div>
                     <F label="LinkedIn profile" error={errors.linkedinUrl}><input className="input" value={form.linkedinUrl} onChange={(e) => set("linkedinUrl", e.target.value)} placeholder="linkedin.com/in/your-name" /></F>
                   </Grid2>
                   <Grid2>
-                    <F label="Country of residence" error={errors.countryOfResidence}><input className="input" value={form.countryOfResidence} onChange={(e) => set("countryOfResidence", e.target.value)} autoComplete="country-name" placeholder="e.g. Pakistan" /></F>
-                    <F label="Where you work" error={errors.professionalLocation}><input className="input" value={form.professionalLocation} onChange={(e) => set("professionalLocation", e.target.value)} placeholder="e.g. Lahore, or remote for a UK company" /></F>
+                    <div>
+                      <label htmlFor="country" className="mb-1.5 block text-sm font-medium text-ink">Country</label>
+                      <CountrySelect id="country" value={form.countryOfResidence} invalid={!!errors.countryOfResidence} onChange={(c) => { set("countryOfResidence", c); if (!form.phone) { const code = countryCode(c); if (code && isSupportedCountry(code)) setPhoneIso(code); } }} />
+                      {errors.countryOfResidence ? <p className="mt-1.5 text-xs text-rust">{errors.countryOfResidence}</p>
+                        : <p className="mt-1.5 text-xs leading-relaxed text-ink-soft">{form.countryOfResidence ? listingNote(form.countryOfResidence) : "Decides whether you're listed as a local or international mentor."}</p>}
+                    </div>
+                    <F label="City (optional)"><input className="input" value={city} maxLength={60} onChange={(e) => setCity(e.target.value)} autoComplete="address-level2" placeholder="e.g. Lahore" /></F>
                   </Grid2>
                 </>
               )}
 
               {step === 1 && (
                 <>
-                  <F label="Professional headline" error={errors.headline} hint="One line, shown under your name."><input className="input" value={form.headline} maxLength={140} onChange={(e) => set("headline", e.target.value)} placeholder="e.g. Finance Manager at a regional retail group" /></F>
                   <Grid2>
                     <F label="Current role" error={errors.currentRole}><input className="input" value={form.currentRole} onChange={(e) => set("currentRole", e.target.value)} placeholder="e.g. Head of Product" /></F>
                     <F label="Organisation" error={errors.organization}><input className="input" value={form.organization} onChange={(e) => set("organization", e.target.value)} placeholder="e.g. a Lahore-based fintech" /></F>
                   </Grid2>
                   <Grid2>
                     <F label="Years of experience" error={errors.yearsExperience}><input type="number" inputMode="numeric" min={0} max={60} className="input" value={form.yearsExperience} onChange={(e) => set("yearsExperience", e.target.value)} placeholder="e.g. 8" /></F>
-                    <F label="Primary industry">
+                    <F label="Industry">
                       <select className="input" value={form.industry} onChange={(e) => set("industry", e.target.value)}>
                         {INDUSTRIES.map((i) => <option key={i}>{i}</option>)}
                       </select>
                     </F>
                   </Grid2>
-                  <F label="Specialist areas" error={errors.specialistAreas} hint="Press Enter or comma after each one. Up to 10."><TagInput value={form.specialistAreas} max={10} onChange={(v) => set("specialistAreas", v)} placeholder="e.g. Product strategy" /></F>
                   <F label="Languages you can mentor in" error={errors.languages} hint="Press Enter or comma after each one."><TagInput value={form.languages} max={8} onChange={(v) => set("languages", v)} placeholder="e.g. English, Urdu" /></F>
-                  <F label="Qualifications" hint="Optional. Degrees, certifications or professional memberships."><input className="input" value={form.qualifications} maxLength={500} onChange={(e) => set("qualifications", e.target.value)} placeholder="e.g. BSc Computer Science, FAST-NUCES" /></F>
-                  <F label="Previous mentoring experience" hint="Optional. Formal or informal both count."><textarea className="input min-h-24 leading-relaxed" maxLength={1000} value={form.previousMentorshipExperience} onChange={(e) => set("previousMentorshipExperience", e.target.value)} placeholder="e.g. I've mentored junior engineers on my team for three years." /></F>
+                  <F label="Qualifications (optional)" hint="Degrees or certifications. Shown on your profile."><input className="input" value={form.qualifications} maxLength={500} onChange={(e) => set("qualifications", e.target.value)} placeholder="e.g. BSc Computer Science, FAST-NUCES" /></F>
                 </>
               )}
 
               {step === 2 && (
                 <>
-                  <div>
-                    <div className="mb-2.5 flex items-baseline justify-between">
-                      <p className="text-sm font-medium text-ink">Topics you can help with</p>
-                      <p className="text-xs text-ink-soft">{form.topicsOffered.length} selected</p>
+                  <ChipQuestion stem="I'm good at…" hint="Tap everything that fits, or add your own." max={10} error={errors.specialistAreas}
+                    options={skillsFor(form.industry)} value={form.specialistAreas} onChange={(v) => set("specialistAreas", v)} />
+
+                  {form.specialistAreas.length > 0 && (
+                    <div className="animate-rise space-y-6">
+                      <ChipQuestion stem="My strongest points are…" hint="Based on what you picked above." max={10}
+                        options={strengthsFor(form.specialistAreas)} value={form.strengths} onChange={(v) => set("strengths", v)} />
+                      <ChipQuestion stem="I can help students with…" hint="We've put the likeliest ones first." max={12} fixed error={errors.topicsOffered}
+                        options={[...new Set([...topicsFor(form.specialistAreas, form.industry), ...AGENDAS])]} value={form.topicsOffered} onChange={(v) => set("topicsOffered", v)} />
                     </div>
-                    <div className="flex flex-wrap gap-2">
-                      {AGENDAS.map((t) => {
-                        const on = form.topicsOffered.includes(t);
-                        return (
-                          <button type="button" key={t} aria-pressed={on}
-                            onClick={() => set("topicsOffered", on ? form.topicsOffered.filter((x) => x !== t) : [...form.topicsOffered, t])}
-                            className={`inline-flex items-center gap-1.5 rounded-full border px-4 py-2 text-sm transition-colors ${on ? "border-ink bg-ink text-paper" : "border-line text-ink hover:border-ink/40"}`}>
-                            {on && <svg width="12" height="12" viewBox="0 0 20 20" fill="none" aria-hidden><path d="M4 10.5l4 4 8-9" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" /></svg>}
-                            {t}
-                          </button>
-                        );
-                      })}
-                    </div>
-                    {errors.topicsOffered && <p className="mt-2 text-xs text-rust">{errors.topicsOffered}</p>}
-                  </div>
+                  )}
 
                   <div>
                     <p className="mb-2.5 text-sm font-medium text-ink">How would you like to take part?</p>
@@ -349,41 +362,42 @@ function ApplyForm() {
                     </div>
                   </div>
 
-                  <Grid2>
-                    <F label="When are you usually free?" error={errors.weeklyAvailability}><input className="input" value={form.weeklyAvailability} maxLength={300} onChange={(e) => set("weeklyAvailability", e.target.value)} placeholder="e.g. Weekday evenings, Saturday mornings" /></F>
-                    {form.participation === "Paid" ? (
-                      <F label="Pricing preference" hint="Optional. Leave blank for the standard rate."><input className="input" value={form.preferredPricing} maxLength={200} onChange={(e) => set("preferredPricing", e.target.value)} placeholder="e.g. Standard rate" /></F>
-                    ) : <div className="hidden sm:block" />}
-                  </Grid2>
-                  <F label="Why do you want to mentor?" error={errors.motivation} hint={`${form.motivation.trim().length}/2000 · at least 20 characters`}>
-                    <textarea className="input min-h-32 leading-relaxed" maxLength={2000} value={form.motivation} onChange={(e) => set("motivation", e.target.value)} placeholder="What would you like students to take away from a conversation with you?" />
-                  </F>
-                </>
-              )}
-
-              {step === 3 && (
-                <>
-                  <Review title="About you" onEdit={() => go(0)} rows={[["Name", form.fullName], ["Email", form.email], ["Phone", form.phone], ["LinkedIn", withScheme(form.linkedinUrl)], ["Based in", `${form.professionalLocation} · ${form.countryOfResidence}`]]} />
-                  <Review title="Professional background" onEdit={() => go(1)} rows={[["Headline", form.headline], ["Role", `${form.currentRole}, ${form.organization}`], ["Experience", `${form.yearsExperience} years · ${form.industry}`], ["Specialist areas", form.specialistAreas.join(", ")], ["Languages", form.languages.join(", ")], ["Qualifications", form.qualifications || "—"]]} />
-                  <Review title="Mentoring preferences" onEdit={() => go(2)} rows={[["Topics", form.topicsOffered.join(", ")], ["Participation", form.participation], ["Availability", form.weeklyAvailability], ...(form.participation === "Paid" ? [["Pricing", form.preferredPricing || "Standard rate"] as [string, string]] : [])]} />
+                  <div>
+                    <label htmlFor="motivation" className="mb-2.5 block font-display text-2xl text-ink">Why do you want to mentor?</label>
+                    <textarea id="motivation" className={`input min-h-28 leading-relaxed ${errors.motivation ? "border-rust/60" : ""}`} maxLength={2000} value={form.motivation} onChange={(e) => set("motivation", e.target.value)} placeholder="What would you like students to take away from a conversation with you?" />
+                    {errors.motivation ? <p className="mt-1.5 text-xs text-rust">{errors.motivation}</p>
+                      : <p className="mt-1.5 text-xs text-ink-soft">{drafted ? "This is a starting point. Edit it so it sounds like you." : "A sentence or two is enough."}</p>}
+                    {!form.motivation.trim() && (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {form.specialistAreas.length > 0 && (
+                          <button type="button" onClick={() => { set("motivation", draftMotivation(form).slice(0, 2000)); setDrafted(true); }}
+                            className="rounded-full bg-ink px-3.5 py-1.5 text-xs font-medium text-paper hover:bg-ink-soft">Start from my answers</button>
+                        )}
+                        {MOTIVATION_STARTERS.map((t) => (
+                          <button type="button" key={t} onClick={() => { set("motivation", t); setDrafted(false); }} className="rounded-full border border-line px-3.5 py-1.5 text-xs text-ink-soft transition-colors hover:border-ink/40 hover:text-ink">{t.trim()}…</button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
 
                   <label className={`flex cursor-pointer items-start gap-3 rounded-2xl border p-4 text-sm leading-relaxed transition-colors ${form.agreedToTerms ? "border-ink bg-paper" : "border-line"}`}>
                     <input type="checkbox" className="mt-1 h-4 w-4 accent-ink" checked={form.agreedToTerms} onChange={(e) => set("agreedToTerms", e.target.checked)} />
                     <span className="text-ink-soft">
-                      I agree to the <Link href="/legal?tab=terms" target="_blank" className="text-ink underline underline-offset-2">POINT B mentor terms</Link> and confirm the information above is accurate. I understand approval depends on screening and an interview, and identity documents are only requested if I progress to interview.
+                      I agree to the <Link href="/legal?tab=terms" target="_blank" className="text-ink underline underline-offset-2">POINT B mentor terms</Link> and confirm my details are accurate. I understand approval depends on screening and an interview.
                     </span>
                   </label>
                   {error && <Alert>{error}</Alert>}
                 </>
               )}
+
             </div>
 
             <footer className="flex items-center justify-between gap-3 border-t border-line px-6 py-5 sm:px-10">
-              {step > 0 ? <Button variant="secondary" onClick={() => go(step - 1)}>Back</Button> : <span className="text-xs text-ink-soft">About 10 minutes in total</span>}
+              {step > 0 ? <Button variant="secondary" onClick={() => go(step - 1)}>Back</Button> : <span className="text-xs text-ink-soft">About 3 minutes in total</span>}
               {step < STEPS.length - 1 ? (
                 <Button onClick={next} className="min-w-36">Continue <Arrow /></Button>
               ) : (
-                <Button disabled={busy || !form.agreedToTerms} onClick={submit} className="min-w-44">{busy ? <Spinner /> : <>{update ? "Send updated application" : "Submit application"} <Arrow /></>}</Button>
+                <Button disabled={busy || !form.agreedToTerms} onClick={() => { if (Object.keys(validate(step, form)).length) { setShowErrors(true); return; } submit(); }} className="min-w-44">{busy ? <Spinner /> : <>{update ? "Send updated application" : "Submit application"} <Arrow /></>}</Button>
               )}
             </footer>
           </section>
@@ -394,6 +408,50 @@ function ApplyForm() {
 }
 
 const Arrow = () => <svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden><path d="M4 10h12M11 5l5 5-5 5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>;
+
+/** A sentence stem answered by tapping suggestions, with an optional "add your own". */
+function ChipQuestion({ stem, hint, options, value, onChange, max, error, fixed }: {
+  stem: string; hint: string; options: string[]; value: string[]; onChange: (v: string[]) => void; max: number; error?: string; fixed?: boolean;
+}) {
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState("");
+  const all = [...new Set([...options, ...value])];
+  const full = value.length >= max;
+  const toggle = (x: string) => onChange(value.includes(x) ? value.filter((v) => v !== x) : full ? value : [...value, x]);
+  function add() {
+    const t = draft.trim();
+    if (t && !value.some((v) => v.toLowerCase() === t.toLowerCase()) && !full) onChange([...value, t]);
+    setDraft(""); setAdding(false);
+  }
+  return (
+    <div>
+      <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+        <p className="font-display text-2xl text-ink">{stem}</p>
+        <p className="text-xs text-ink-soft">{value.length ? `${value.length} selected` : hint}</p>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {all.map((t) => {
+          const on = value.includes(t);
+          return (
+            <button type="button" key={t} aria-pressed={on} disabled={!on && full} onClick={() => toggle(t)}
+              className={`inline-flex items-center gap-1.5 rounded-full border px-4 py-2 text-sm transition-colors disabled:opacity-40 ${on ? "border-ink bg-ink text-paper" : "border-line text-ink hover:border-ink/40"}`}>
+              {on && <svg width="12" height="12" viewBox="0 0 20 20" fill="none" aria-hidden><path d="M4 10.5l4 4 8-9" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+              {t}
+            </button>
+          );
+        })}
+        {!fixed && !full && (adding ? (
+          <input autoFocus className="w-52 rounded-full border border-ink/40 bg-white px-4 py-2 text-sm text-ink outline-none placeholder:text-ink-soft/60" value={draft} maxLength={100} placeholder="Type and press Enter"
+            onChange={(e) => setDraft(e.target.value)} onBlur={add}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); add(); } if (e.key === "Escape") { setDraft(""); setAdding(false); } }} />
+        ) : (
+          <button type="button" onClick={() => setAdding(true)} className="rounded-full border border-dashed border-ink/30 px-4 py-2 text-sm text-ink-soft transition-colors hover:border-ink/50 hover:text-ink">+ Add your own</button>
+        ))}
+      </div>
+      {error && <p className="mt-2 text-xs text-rust">{error}</p>}
+    </div>
+  );
+}
 
 function Grid2({ children }: { children: ReactNode }) {
   return <div className="grid gap-6 sm:grid-cols-2">{children}</div>;
@@ -436,25 +494,6 @@ function TagInput({ value, onChange, placeholder, max }: { value: string[]; onCh
           }}
           onBlur={() => draft && add(draft)} />
       )}
-    </div>
-  );
-}
-
-function Review({ title, rows, onEdit }: { title: string; rows: [string, string][]; onEdit: () => void }) {
-  return (
-    <div className="rounded-2xl bg-paper p-5">
-      <div className="flex items-center justify-between">
-        <p className="text-sm font-medium text-ink">{title}</p>
-        <button type="button" onClick={onEdit} className="text-xs font-medium text-ink-soft underline underline-offset-2 hover:text-ink">Edit</button>
-      </div>
-      <dl className="mt-3 divide-y divide-line text-sm">
-        {rows.map(([l, v]) => (
-          <div key={l} className="grid grid-cols-[130px_1fr] gap-4 py-2">
-            <dt className="text-ink-soft">{l}</dt>
-            <dd className="break-words text-ink">{v || "—"}</dd>
-          </div>
-        ))}
-      </dl>
     </div>
   );
 }

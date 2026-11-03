@@ -3,6 +3,7 @@ import type { MentorSummary } from "@/lib/types";
 import { CATEGORY_LABEL } from "@/lib/constants";
 import { fmtDayShort, formatMoney } from "@/lib/format";
 import { MentorPhoto } from "./ui";
+import { Flag } from "./flag";
 
 /** Tall photo card: headshot with rating chips, name over a soft gradient, price and booking below. */
 export function MentorCard({ mentor: m, className = "" }: { mentor: MentorSummary; className?: string }) {
@@ -17,7 +18,7 @@ export function MentorCard({ mentor: m, className = "" }: { mentor: MentorSummar
             {m.rating ? m.rating.toFixed(1) : "New"}
           </span>
           {top && <span className="rounded-full bg-mint px-2.5 py-1 text-xs font-medium text-forest">Top mentor</span>}
-          <span className="rounded-full bg-white/80 px-2.5 py-1 text-xs text-ink">{CATEGORY_LABEL[m.category]}</span>
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-white/80 px-2.5 py-1 text-xs text-ink">{m.category === "INTERNATIONAL" && <Flag country={m.country} className="h-3 w-[18px]" />}{CATEGORY_LABEL[m.category]}</span>
         </div>
         <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 via-black/30 to-transparent px-5 pb-5 pt-20 text-white">
           <p className="flex items-center gap-1.5 font-display text-[1.7rem] leading-tight">

@@ -6,6 +6,9 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Alert, Button, Container, Field, Mark, Spinner } from "@/components/ui";
 import { HOME_BY_ROLE, useAuth } from "@/lib/auth";
 import { errMsg } from "@/lib/api";
+import { MobileField } from "@/components/mobile-field";
+import { isValidPhone, type CountryCode } from "@/components/phone-input";
+import { NoticeText } from "@/lib/policy";
 
 const age = (dob: string) => (Date.now() - new Date(dob).getTime()) / (365.25 * 86400_000);
 
@@ -17,18 +20,22 @@ export function SignInForm() {
   const [busy, setBusy] = useState(false);
   const [show, setShow] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [f, setF] = useState({ name: "", email: "", password: "", dob: "", guardianEmail: "" });
+  const [f, setF] = useState({ name: "", email: "", password: "", dob: "", guardianEmail: "", phone: "" });
+  const [phoneIso, setPhoneIso] = useState<CountryCode>("PK");
+  const [whatsapp, setWhatsapp] = useState(true);
+  const [phoneError, setPhoneError] = useState<string | null>(null);
   const set = (k: keyof typeof f, v: string) => setF((s) => ({ ...s, [k]: v }));
   const isMinor = !!f.dob && age(f.dob) < 18;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (mode === "up" && !isValidPhone(f.phone)) { setPhoneError(f.phone ? "That number doesn't look right. Check the country code and digits." : "Please add your mobile number."); document.getElementById("mobile")?.focus(); return; }
     setBusy(true); setError(null);
     try {
       const user = mode === "in"
         ? await login(f.email, f.password)
         : await register({
-            name: f.name, email: f.email, password: f.password,
+            name: f.name, email: f.email, password: f.password, phone: f.phone, whatsappAlerts: whatsapp,
             ...(f.dob ? { dateOfBirth: f.dob } : {}),
             ...(isMinor ? { guardianEmail: f.guardianEmail } : {}),
             timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -60,13 +67,13 @@ export function SignInForm() {
               {[
                 ["Screened, interviewed mentors", "Every profile is reviewed by our team before it goes live."],
                 ["Book straight into their calendar", "Private 1:1 calls or smaller-price group sessions."],
-                ["Free rescheduling", "Move your session up to 2 days before it starts."],
+                ["Free rescheduling", "Move your session up to {notice} before it starts."],
               ].map(([t, d]) => (
                 <li key={t} className="flex gap-3">
                   <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/10">
                     <svg width="11" height="11" viewBox="0 0 20 20" fill="none" aria-hidden><path d="M4 10.5l4 4 8-9" stroke="#e9c880" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
                   </span>
-                  <span><span className="block text-sm font-medium">{t}</span><span className="text-sm text-white/55">{d}</span></span>
+                  <span><span className="block text-sm font-medium">{t}</span><span className="text-sm text-white/55"><NoticeText text={d} /></span></span>
                 </li>
               ))}
             </ul>
@@ -103,6 +110,9 @@ export function SignInForm() {
                   <Field label="Full name"><input className="input" required autoComplete="name" placeholder="Your name" value={f.name} onChange={(e) => set("name", e.target.value)} /></Field>
                 )}
                 <Field label="Email"><input className="input" type="email" required autoComplete="email" placeholder="you@example.com" value={f.email} onChange={(e) => set("email", e.target.value)} /></Field>
+                {mode === "up" && (
+                  <MobileField value={f.phone} onChange={(v) => { set("phone", v); setPhoneError(null); }} iso={phoneIso} onIso={setPhoneIso} whatsapp={whatsapp} onWhatsapp={setWhatsapp} error={phoneError} />
+                )}
                 <div>
                   <div className="mb-1.5 flex items-baseline justify-between">
                     <label htmlFor="password" className="text-sm font-medium text-ink">Password</label>

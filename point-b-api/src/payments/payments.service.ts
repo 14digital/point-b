@@ -10,6 +10,15 @@ export class PaymentsService {
   private readonly log = new Logger(PaymentsService.name);
   constructor(private prisma: PrismaService, private bookings: BookingsService, private stripe: StripeService) {}
 
+  private async bankForCheckout() {
+    const row = await this.prisma.setting.findUnique({ where: { key: 'bank_details' } });
+    let d: { enabled?: boolean; accountTitle?: string; bankName?: string; accountNumber?: string; iban?: string; raastId?: string } = {};
+    try { d = row ? JSON.parse(row.value) : {}; } catch { /* unreadable settings: no bank option */ }
+    if (!d.enabled) return null;
+    const hasQr = !!(await this.prisma.setting.findUnique({ where: { key: 'bank_qr' }, select: { key: true } }));
+    return { accountTitle: d.accountTitle ?? '', bankName: d.bankName ?? '', accountNumber: d.accountNumber || null, iban: d.iban || null, raastId: d.raastId || null, qrUrl: hasQr ? '/api/payments/bank-qr' : null };
+  }
+
   verifySignature(rawBody: Buffer | undefined, signature: string | undefined) {
     const secret = process.env.PAYMENT_WEBHOOK_SECRET;
     if (!secret || !rawBody || !signature) throw new UnauthorizedException('Missing signature');
@@ -57,11 +66,14 @@ export class PaymentsService {
     const { booking, payment } = await this.pendingPayment(user, reference);
     if (booking.status === 'CONFIRMED') return { state: 'paid' as const, reference };
     if (booking.status !== 'PENDING_PAYMENT') throw new BadRequestException('This booking hold has expired. Please choose a time again.');
+    if (booking.awaitingVerification) return { state: 'verifying' as const, reference, amountMinor: payment.amountMinor, currency: payment.currency, txnRef: payment.bankTxnRef };
     const base = {
       reference,
       amountMinor: payment.amountMinor,
       currency: payment.currency,
       holdExpiresAt: new Date(booking.createdAt.getTime() + HOLD_MINUTES * 60_000).toISOString(),
+      // Pay by bank app / QR is offered for PKR sessions when an admin has set it up.
+      bank: payment.currency === 'PKR' ? await this.bankForCheckout() : null,
     };
     if (payment.provider !== 'stripe') return { ...base, state: 'ready' as const, provider: 'mock' as const, providerRef: payment.providerRef };
     if (!this.stripe.enabled()) throw new BadRequestException('Card payments are not configured. Please contact support.');

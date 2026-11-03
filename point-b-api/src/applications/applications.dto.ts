@@ -1,5 +1,5 @@
-import { OmitType } from '@nestjs/swagger';
-import { ArrayMaxSize, IsArray, IsBoolean, IsEmail, IsIn, IsInt, IsString, IsUrl, Max, MaxLength, Min, MinLength } from 'class-validator';
+import { OmitType, PartialType } from '@nestjs/swagger';
+import { ArrayMaxSize, IsArray, IsBoolean, IsEmail, IsIn, IsInt, IsOptional, IsString, IsUrl, Max, MaxLength, Min, MinLength } from 'class-validator';
 
 export class CreateApplicationDto {
   @IsString() @MinLength(2) @MaxLength(100) fullName: string;
@@ -14,6 +14,7 @@ export class CreateApplicationDto {
   @IsInt() @Min(0) @Max(60) yearsExperience: number;
   @IsString() @MaxLength(80) industry: string;
   @IsArray() @ArrayMaxSize(10) @IsString({ each: true }) specialistAreas: string[];
+  @IsOptional() @IsArray() @ArrayMaxSize(10) @IsString({ each: true }) @MaxLength(120, { each: true }) strengths?: string[];
   @IsString() @MaxLength(500) qualifications: string;
   @IsArray() @ArrayMaxSize(8) @IsString({ each: true }) languages: string[];
   @IsString() @MaxLength(1000) previousMentorshipExperience: string;
@@ -27,3 +28,6 @@ export class CreateApplicationDto {
 
 /** What an applicant can change through their update link. The email address is fixed. */
 export class UpdateApplicationDto extends OmitType(CreateApplicationDto, ['email'] as const) {}
+
+/** What an admin can correct on any application: every field, optional, including the email address. */
+export class AdminEditApplicationDto extends PartialType(OmitType(CreateApplicationDto, ['agreedToTerms'] as const)) {}

@@ -7,5 +7,5 @@ import { AdminService } from './admin.service';
 @Controller('pricing')
 export class PublicController {
   constructor(private admin: AdminService) {}
-  @Public() @Get() tiers() { return this.admin.pricing(); }
+  @Public() @Get() tiers() { return this.admin.publicPricing(); }
 }

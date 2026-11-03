@@ -9,8 +9,11 @@ import { api, errMsg } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { AGENDAS } from "@/lib/constants";
 import { Checkout } from "@/components/checkout";
+import { MobileField } from "@/components/mobile-field";
+import { isValidPhone, type CountryCode } from "@/components/phone-input";
 import { fmtDay, fmtDayShort, fmtTime, formatMoney, groupByDay, localTz } from "@/lib/format";
 import type { Booking, MentorDetail, SessionKind, Slot } from "@/lib/types";
+import { useNoticeLabel } from "@/lib/policy";
 
 export function BookingPanel({ mentor, onSlotTaken }: { mentor: MentorDetail; onSlotTaken: () => void }) {
   const hasGroup = mentor.slots.some((s) => s.kind === "GROUP");
@@ -50,7 +53,7 @@ export function BookingPanel({ mentor, onSlotTaken }: { mentor: MentorDetail; on
           </button>
         ))}
       </div>
-      <p className="mt-2.5 text-xs leading-relaxed text-ink-soft">{mode === "GROUP" ? "Share the call with a few other students. Lower price, less one-on-one time." : "Just you and the mentor, the full 30 minutes."}</p>
+      <p className="mt-2.5 text-xs leading-relaxed text-ink-soft">{mode === "GROUP" ? "Share the call with a few other students. Lower price, still the same attention" : "Just you and the mentor, the full 30 minutes."}</p>
 
       <p className="mt-6 text-sm font-medium text-ink">Choose a day</p>
       <div className="no-scrollbar -mx-1 mt-3 flex snap-x gap-2 overflow-x-auto px-1 pb-1 [mask-image:linear-gradient(90deg,#000_85%,transparent)]">
@@ -103,6 +106,7 @@ function BookingModal({ mentor, slot, price, onClose, onSlotTaken }: { mentor: M
   const { user, loading } = useAuth();
   const router = useRouter();
   const [step, setStep] = useState<Step>("agenda");
+  const notice = useNoticeLabel();
   const [agenda, setAgenda] = useState("");
   const [situation, setSituation] = useState("");
   const [outcome, setOutcome] = useState("");
@@ -110,6 +114,29 @@ function BookingModal({ mentor, slot, price, onClose, onSlotTaken }: { mentor: M
   const [booking, setBooking] = useState<Booking | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [promoInput, setPromoInput] = useState("");
+  const [promo, setPromo] = useState<{ code: string; percentOff: number; discountMinor: number; priceMinor: number } | null>(null);
+  const [promoErr, setPromoErr] = useState<string | null>(null);
+  const [promoBusy, setPromoBusy] = useState(false);
+  const [offer, setOffer] = useState<{ code: string; percentOff: number } | null>(null);
+  const total = promo ? promo.priceMinor : price;
+  const canPromo = slot.kind === "ONE_TO_ONE" && user?.role === "STUDENT";
+
+  // A code this mentor sent the student is offered automatically, so they don't have to dig it out of their email.
+  useEffect(() => {
+    if (!canPromo) return;
+    let alive = true;
+    api<{ code: string; percentOff: number; mentorId: string }[]>("/bookings/promos")
+      .then((list) => { const mine = list.find((c) => c.mentorId === mentor.id); if (alive && mine) setOffer({ code: mine.code, percentOff: mine.percentOff }); })
+      .catch(() => undefined);
+    return () => { alive = false; };
+  }, [canPromo, mentor.id]);
+
+  async function applyPromo(code: string) {
+    setPromoBusy(true); setPromoErr(null);
+    try { setPromo(await api("/bookings/promo-check", { body: { slotId: slot.id, code: code.trim() } })); setPromoInput(code.trim().toUpperCase()); }
+    catch (e) { setPromoErr(errMsg(e)); } finally { setPromoBusy(false); }
+  }
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && step !== "payment" && onClose();
@@ -126,7 +153,7 @@ function BookingModal({ mentor, slot, price, onClose, onSlotTaken }: { mentor: M
   async function hold() {
     setBusy(true); setError(null);
     try {
-      const b = await api<Booking>("/bookings", { body: { slotId: slot.id, agenda, currentSituation: situation, usefulOutcome: outcome, materialsToReview: materials || undefined } });
+      const b = await api<Booking>("/bookings", { body: { slotId: slot.id, agenda, currentSituation: situation, usefulOutcome: outcome, materialsToReview: materials || undefined, promoCode: promo?.code } });
       setBooking(b); setStep("payment");
     } catch (e) {
       const msg = errMsg(e);
@@ -146,7 +173,7 @@ function BookingModal({ mentor, slot, price, onClose, onSlotTaken }: { mentor: M
     agenda: ["What would you like to focus on?", "Pick the topic closest to what you want to talk about."],
     prepare: [`Help ${first} prepare`, `These notes go to ${first} before the call so the 30 minutes are well used.`],
     review: ["Review your booking", "Check the details before we hold your time."],
-    payment: ["Complete payment", "Your time is held while you pay. Reschedule free up to 2 days before."],
+    payment: ["Complete payment", `Your time is held while you pay. Reschedule free up to ${notice} before.`],
     done: ["You\u2019re booked in", "A confirmation email is on its way."],
   };
   const [title, subtitle] = needsAuth ? HEAD.auth : HEAD[step];
@@ -177,10 +204,10 @@ function BookingModal({ mentor, slot, price, onClose, onSlotTaken }: { mentor: M
             <SummaryItem label="Session" value={slot.kind === "GROUP" ? `Group · up to ${slot.capacity}` : "1:1 · 30 minutes"} />
             {agenda && <SummaryItem label="Focus" value={agenda} />}
           </dl>
-          <p className="mt-3 text-xs text-ink-soft sm:hidden">{fmtDayShort(slot.startAt)} · {fmtTime(slot.startAt)} · {formatMoney(price, mentor.currency)}</p>
+          <p className="mt-3 text-xs text-ink-soft sm:hidden">{fmtDayShort(slot.startAt)} · {fmtTime(slot.startAt)} · {formatMoney(total, mentor.currency)}</p>
           <div className="mt-8 hidden border-t border-line pt-4 sm:block">
             <p className="text-xs text-ink-soft">{slot.kind === "GROUP" ? "Per seat" : "Total"}</p>
-            <p className="font-display text-3xl text-ink">{formatMoney(price, mentor.currency)}</p>
+            <p className="font-display text-3xl text-ink">{formatMoney(total, mentor.currency)}</p>
           </div>
         </aside>
 
@@ -237,10 +264,37 @@ function BookingModal({ mentor, slot, price, onClose, onSlotTaken }: { mentor: M
                 <div className="rounded-2xl bg-paper p-5 text-sm">
                   <Row l="Mentor" v={mentor.name} /><Row l="Date" v={fmtDay(slot.startAt)} />
                   <Row l="Time" v={`${fmtTime(slot.startAt)}–${fmtTime(slot.endAt)} (30 minutes)`} /><Row l="Type" v={slot.kind === "GROUP" ? `Group session (up to ${slot.capacity} students)` : "1:1 session"} /><Row l="Focus" v={agenda} />
-                  <Row l={slot.kind === "GROUP" ? "Fee per seat" : "Session fee"} v={formatMoney(price, mentor.currency)} /><Row l="Taxes & processing fees" v={formatMoney(0, mentor.currency)} />
-                  <div className="mt-3 flex justify-between border-t border-line pt-3 font-medium text-ink"><span>Total due</span><span>{formatMoney(price, mentor.currency)}</span></div>
+                  <Row l={slot.kind === "GROUP" ? "Fee per seat" : "Session fee"} v={formatMoney(price, mentor.currency)} />
+                  {promo && <Row l={`Promo ${promo.code} (${promo.percentOff}% off)`} v={`− ${formatMoney(promo.discountMinor, mentor.currency)}`} />}
+                  <Row l="Taxes & processing fees" v={formatMoney(0, mentor.currency)} />
+                  <div className="mt-3 flex justify-between border-t border-line pt-3 font-medium text-ink"><span>Total due</span><span>{formatMoney(total, mentor.currency)}</span></div>
                 </div>
-                <p className="text-xs leading-relaxed text-ink-soft">We hold your {slot.kind === "GROUP" ? "seat" : "slot"} for 15 minutes while you pay. Booked sessions can&rsquo;t be cancelled, but you can reschedule for free up to 2 days before; see the <Link href="/legal?tab=refunds" className="underline" target="_blank">rescheduling policy</Link>.</p>
+                {canPromo && (
+                  <div className="rounded-2xl border border-line p-4">
+                    {promo ? (
+                      <div className="flex items-center justify-between gap-3 text-sm">
+                        <span className="text-ink"><span className="font-medium">{promo.percentOff}% off applied</span> <span className="text-ink-soft">· you save {formatMoney(promo.discountMinor, mentor.currency)}</span></span>
+                        <button type="button" onClick={() => { setPromo(null); setPromoErr(null); }} className="text-xs font-medium text-ink-soft underline underline-offset-2 hover:text-ink">Remove</button>
+                      </div>
+                    ) : (
+                      <>
+                        {offer && (
+                          <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl bg-mint/60 px-3 py-2.5 text-sm">
+                            <span className="text-ink">{first} sent you <span className="font-medium">{offer.percentOff}% off</span> this session.</span>
+                            <Button size="sm" disabled={promoBusy} onClick={() => applyPromo(offer.code)}>{promoBusy ? <Spinner /> : "Apply"}</Button>
+                          </div>
+                        )}
+                        <p className="text-xs font-medium text-ink-soft">Have a promo code from {first}?</p>
+                        <div className="mt-2 flex gap-2">
+                          <input className="input flex-1 uppercase tracking-wide" placeholder="PB-XXXXXX" maxLength={30} value={promoInput} onChange={(e) => setPromoInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && promoInput.trim() && applyPromo(promoInput)} />
+                          <Button size="sm" variant="secondary" disabled={!promoInput.trim() || promoBusy} onClick={() => applyPromo(promoInput)}>{promoBusy ? <Spinner /> : "Apply"}</Button>
+                        </div>
+                        {promoErr && <p className="mt-2 text-xs text-rust">{promoErr}</p>}
+                      </>
+                    )}
+                  </div>
+                )}
+                <p className="text-xs leading-relaxed text-ink-soft">We hold your {slot.kind === "GROUP" ? "seat" : "slot"} for 15 minutes while you pay. Booked sessions can&rsquo;t be cancelled, but you can reschedule for free up to {notice} before; see the <Link href="/legal?tab=refunds" className="underline" target="_blank">rescheduling policy</Link>.</p>
                 {error && <Alert>{error}</Alert>}
               </>
             )}
@@ -275,15 +329,20 @@ function SummaryItem({ label, value }: { label: string; value: string }) {
 function InlineAuth({ onDone }: { onDone: () => void }) {
   const { login, register } = useAuth();
   const [mode, setMode] = useState<"up" | "in">("up");
-  const [f, setF] = useState({ name: "", email: "", password: "" });
+  const [f, setF] = useState({ name: "", email: "", password: "", phone: "" });
+  const [phoneIso, setPhoneIso] = useState<CountryCode>("PK");
+  const [whatsapp, setWhatsapp] = useState(true);
+  const [phoneError, setPhoneError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function submit(e: React.FormEvent) {
-    e.preventDefault(); setBusy(true); setError(null);
+    e.preventDefault();
+    if (mode === "up" && !isValidPhone(f.phone)) { setPhoneError(f.phone ? "That number doesn't look right. Check the country code and digits." : "Please add your mobile number."); document.getElementById("inline-mobile")?.focus(); return; }
+    setBusy(true); setError(null);
     try {
       if (mode === "in") await login(f.email, f.password);
-      else await register({ ...f, timezone: localTz() });
+      else await register({ ...f, whatsappAlerts: whatsapp, timezone: localTz() });
       onDone();
     } catch (err) { setError(errMsg(err)); setBusy(false); }
   }
@@ -292,6 +351,7 @@ function InlineAuth({ onDone }: { onDone: () => void }) {
       <p className="text-sm text-ink-soft">{mode === "up" ? "Create a free account to book. It takes a few seconds." : "Welcome back. Sign in to continue your booking."}</p>
       {mode === "up" && <Field label="Full name"><input className="input" required value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} autoComplete="name" /></Field>}
       <Field label="Email"><input className="input" type="email" required value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} autoComplete="email" /></Field>
+      {mode === "up" && <MobileField id="inline-mobile" value={f.phone} onChange={(v) => { setF((s) => ({ ...s, phone: v })); setPhoneError(null); }} iso={phoneIso} onIso={setPhoneIso} whatsapp={whatsapp} onWhatsapp={setWhatsapp} error={phoneError} />}
       <Field label="Password" hint={mode === "up" ? "At least 8 characters" : undefined}><input className="input" type="password" required minLength={mode === "up" ? 8 : 1} value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} autoComplete={mode === "up" ? "new-password" : "current-password"} /></Field>
       {error && <Alert>{error}</Alert>}
       <Button type="submit" className="w-full" disabled={busy}>{busy ? <Spinner /> : mode === "up" ? "Create account & continue" : "Sign in & continue"}</Button>

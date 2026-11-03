@@ -25,9 +25,11 @@ async function main() {
   const prep = { currentSituation: 'Final-year student choosing between offers', usefulOutcome: 'A clearer way to compare the two roles' };
 
   // ---- auth
-  const reg = await call('POST', '/auth/register', { name: 'Sara Ahmed', email: `sara.${run}@example.com`, password: 'Passw0rd!x' });
+  const reg = await call('POST', '/auth/register', { name: 'Sara Ahmed', email: `sara.${run}@example.com`, password: 'Passw0rd!x', phone: '+923001234567' });
   ok(reg.status === 201 && reg.data.accessToken, 'student registers');
-  ok((await call('POST', '/auth/register', { name: 'Sara Ahmed', email: `sara.${run}@example.com`, password: 'Passw0rd!x' })).status === 409, 'duplicate email rejected');
+  ok((await call('POST', '/auth/register', { name: 'Sara Ahmed', email: `sara.${run}@example.com`, password: 'Passw0rd!x', phone: '+923001234567' })).status === 409, 'duplicate email rejected');
+  ok((await call('POST', '/auth/register', { name: 'No Phone', email: `nophone.${run}@example.com`, password: 'Passw0rd!x' })).status === 400, 'phone number required at sign-up');
+  ok((await call('POST', '/auth/register', { name: 'Bad Phone', email: `badphone.${run}@example.com`, password: 'Passw0rd!x', phone: '12345' })).status === 400, 'invalid phone number rejected');
   ok((await call('POST', '/auth/login', { email: `sara.${run}@example.com`, password: 'wrong-pass-1' })).status === 401, 'wrong password rejected');
   const sara = reg.data.accessToken as string;
   ok((await call('GET', '/auth/me', undefined, sara)).data.role === 'STUDENT', 'me returns role');
@@ -48,7 +50,7 @@ async function main() {
   const slots = detail.data.slots as { id: string; startAt: string }[];
   const far = slots.filter((s) => new Date(s.startAt).getTime() > Date.now() + 72 * 3600_000);
   const racers = await Promise.all(['a', 'b', 'c', 'd', 'e'].map(async (n) => {
-    const r = await call('POST', '/auth/register', { name: `Racer ${n}`, email: `racer.${n}.${run}@example.com`, password: 'Passw0rd!x' });
+    const r = await call('POST', '/auth/register', { name: `Racer ${n}`, email: `racer.${n}.${run}@example.com`, password: 'Passw0rd!x', phone: '+923001234567' });
     return r.data.accessToken as string;
   }));
   const results = await Promise.all(racers.map((t) => call('POST', '/bookings', { slotId: far[0].id, agenda: 'Career guidance', ...prep }, t)));
@@ -99,11 +101,36 @@ async function main() {
   ok((await call('POST', `/bookings/${pb.reference}/review`, { rating: 4, comment: 'Second review attempt' }, sara)).status === 409, 'duplicate review rejected');
   const mb = await call('GET', '/mentors/me/bookings', undefined, mtok);
   ok(mb.status === 200 && mb.data.some((x: any) => x.currentSituation && x.studentName), 'mentor sees prep notes for own bookings');
-  ok((await call('GET', '/mentors/zainab-malik')).data.rating === 5, 'mentor rating reflects verified review');
+  ok((await call('GET', '/mentors/zainab-malik')).data.reviews.every((r: any) => r.comment !== 'Practical and direct advice.'), 'pending feedback is not public');
+  const mine = await call('GET', '/mentors/me/reviews', undefined, mtok);
+  const pend = mine.data.find((r: any) => r.comment === 'Practical and direct advice.');
+  ok(pend?.status === 'PENDING', 'mentor sees new feedback as pending');
+  ok((await call('POST', `/mentors/me/reviews/${pend.id}/approve`, {}, sara)).status === 403, 'student cannot approve feedback');
+  ok((await call('POST', `/mentors/me/reviews/${pend.id}/approve`, {}, mtok)).status === 201, 'mentor approves feedback');
+  ok((await call('GET', '/mentors/zainab-malik')).data.reviews.some((r: any) => r.comment === 'Practical and direct advice.'), 'approved feedback is public');
+  await call('POST', `/mentors/me/reviews/${pend.id}/hide`, {}, mtok);
+  ok((await call('GET', '/mentors/zainab-malik')).data.reviews.every((r: any) => r.comment !== 'Practical and direct advice.'), 'hidden feedback leaves the public profile');
 
-  // ---- safeguarding
-  ok((await call('POST', '/auth/register', { name: 'Minor Kid', email: `kid.${run}@example.com`, password: 'Passw0rd!x', dateOfBirth: '2012-01-01' })).status === 400, 'under-18 needs guardian email');
-  const kid = await call('POST', '/auth/register', { name: 'Minor Kid', email: `kid2.${run}@example.com`, password: 'Passw0rd!x', dateOfBirth: '2012-01-01', guardianEmail: `parent.${run}@example.com` });
+  // ---- promo codes for returning students
+  const sts = await call('GET', '/mentors/me/students', undefined, mtok);
+  ok(sts.data.some((x: any) => x.id === sUser), 'mentor sees students who have had a session');
+  ok((await call('POST', '/mentors/me/promo-codes', { studentId: sUser, percentOff: 60 }, mtok)).status === 400, 'promo above 50% rejected');
+  const sent = await call('POST', '/mentors/me/promo-codes', { studentId: sUser, percentOff: 30, note: 'See you again' }, mtok);
+  const code = sent.data?.find((c: any) => c.state === 'ACTIVE')?.code;
+  ok(sent.status === 201 && !!code, 'mentor sends a promo code');
+  ok((await call('GET', '/bookings/promos', undefined, sara)).data.some((c: any) => c.code === code), 'student sees their promo code');
+  const promoSlot = await prisma.availabilitySlot.create({ data: { mentorId: detail.data.id, startAt: new Date(Date.now() + 9 * 86400_000), endAt: new Date(Date.now() + 9 * 86400_000 + 1800_000) } });
+  const chk = await call('POST', '/bookings/promo-check', { slotId: promoSlot.id, code }, sara);
+  ok(chk.data.percentOff === 30 && chk.data.priceMinor < chk.data.listPriceMinor, 'promo check shows the discounted price');
+  ok((await call('POST', '/bookings/promo-check', { slotId: promoSlot.id, code }, racers[2])).status === 400, 'another student cannot use the code');
+  const pbk = await call('POST', '/bookings', { slotId: promoSlot.id, agenda: 'Career guidance', ...prep, promoCode: code }, sara);
+  ok(pbk.status === 201 && pbk.data.priceMinor === chk.data.priceMinor && pbk.data.discountMinor > 0, 'booking with promo charges the discounted price');
+  const row = await prisma.booking.findUnique({ where: { reference: pbk.data.reference } });
+  ok(row?.repeatStudent === true, 'returning student is recorded for the lower platform fee');
+
+
+  ok((await call('POST', '/auth/register', { name: 'Minor Kid', email: `kid.${run}@example.com`, password: 'Passw0rd!x', phone: '+923001234567', dateOfBirth: '2012-01-01' })).status === 400, 'under-18 needs guardian email');
+  const kid = await call('POST', '/auth/register', { name: 'Minor Kid', email: `kid2.${run}@example.com`, password: 'Passw0rd!x', phone: '+923001234567', dateOfBirth: '2012-01-01', guardianEmail: `parent.${run}@example.com` });
   ok(kid.status === 201 && kid.data.user.isMinor, 'minor registers with guardian email');
   ok((await call('POST', '/bookings', { slotId: far[3].id, agenda: 'Career guidance', ...prep }, kid.data.accessToken)).status === 403, 'minor cannot book without guardian consent');
 
@@ -147,11 +174,14 @@ async function main() {
   ok((await call('POST', `/bookings`, { slotId: pub.data.slots[0].id, agenda: 'Career guidance', ...prep }, ht)).status === 403, 'mentor role cannot create student bookings');
 
   // ---- admin controls
-  const ov = await call('PATCH', `/admin/mentors/${pub.data.id}`, { priceOverrideMinor: 120000, level: 'SENIOR_SPECIALIST' }, admin);
-  ok(ov.data.priceMinor === 120000, 'admin price override applies');
+  ok((await call('PATCH', `/admin/mentors/${pub.data.id}`, { priceOverrideMinor: 120000, level: 'SENIOR_SPECIALIST' }, admin)).status === 400, 'price outside the tier range rejected');
+  const ov = await call('PATCH', `/admin/mentors/${pub.data.id}`, { priceOverrideMinor: 180000, level: 'SENIOR_SPECIALIST' }, admin);
+  ok(ov.data.priceMinor === 180000, 'admin price inside the tier range applies');
   await call('PATCH', `/admin/mentors/${pub.data.id}`, { priceOverrideMinor: null }, admin);
   ok((await call('GET', '/mentors/hira-khan')).data.priceMinor === 150000, 'clearing override returns to tier price');
-  await call('PUT', '/admin/pricing', { level: 'PROFESSIONAL', currency: 'PKR', priceMinor: 100000 }, admin);
+  ok((await call('PUT', '/admin/pricing', { level: 'PROFESSIONAL', currency: 'PKR', minMinor: 100000, maxMinor: 90000, priceMinor: 100000 }, admin)).status === 400, 'inverted tier range rejected');
+  await call('PUT', '/admin/pricing', { level: 'PROFESSIONAL', currency: 'PKR', minMinor: 100000, maxMinor: 200000, priceMinor: 100000 }, admin);
+  ok((await call('GET', '/pricing')).data.tiers.some((t: any) => t.level === 'PROFESSIONAL' && t.currency === 'PKR' && t.minMinor === 100000 && t.maxMinor === 200000), 'public pricing shows tier ranges');
   ok((await call('PUT', '/admin/settings', { key: 'commission_percent', value: '150' }, admin)).status === 400, 'commission validated');
   const stats0 = await call('GET', '/admin/stats', undefined, admin);
   ok(stats0.data.commissionConfigured === false && stats0.data.finance[0].platformRevenueMinor === null, 'commission not invented when unset');

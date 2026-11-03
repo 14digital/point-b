@@ -5,7 +5,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../common/notifications.service';
 import { webUrl } from '../common/email-template';
 import { PasswordLinksService } from '../common/password-links.service';
-import { ChangePasswordDto, LoginDto, RegisterDto, ResetPasswordDto } from './auth.dto';
+import { ChangePasswordDto, LoginDto, RegisterDto, ResetPasswordDto, UpdateContactDto } from './auth.dto';
+import { normalisePhone } from '../common/phone';
 
 const RESET_LINK_HOURS = 1;
 
@@ -24,7 +25,7 @@ export class AuthService {
     const user = await this.prisma.user.findUnique({ where: { email: rawEmail.toLowerCase() } });
     if (user?.isActive) {
       const { token } = await this.links.issue(user.id, RESET_LINK_HOURS);
-      await this.notify.send(user.email, 'Reset your POINT B password', `Hi ${user.name.split(' ')[0]},\n\nWe received a request to reset your password. Use the button below to choose a new one. The link works once and expires in ${RESET_LINK_HOURS} hour.\n\nIf you didn't ask for this, you can ignore this email and your password will stay the same.`, user.id, { cta: { label: 'Choose a new password', url: `${webUrl()}/reset-password?token=${token}` } });
+      await this.notify.send(user.email, 'Reset your POINT B password', `Hi ${user.name.split(' ')[0]},\n\nWe received a request to reset your password. Use the button below to choose a new one. The link works once and expires in ${RESET_LINK_HOURS} hour.\n\nIf you didn't ask for this, you can ignore this email and your password will stay the same.`, user.id, { cta: { label: 'Choose a new password', url: `${webUrl()}/reset-password?token=${token}` }, emailOnly: true });
     }
     return { ok: true };
   }
@@ -41,9 +42,9 @@ export class AuthService {
     return this.session(fresh);
   }
 
-  private publicUser(u: { id: string; email: string; name: string; role: string; timezone: string; dateOfBirth: Date | null; guardianConsent: boolean }) {
+  private publicUser(u: { id: string; email: string; name: string; role: string; timezone: string; dateOfBirth: Date | null; guardianConsent: boolean; phone: string | null; whatsappAlerts: boolean }) {
     const isMinor = u.dateOfBirth ? ageOn(u.dateOfBirth) < 18 : false;
-    return { id: u.id, email: u.email, name: u.name, role: u.role, timezone: u.timezone, isMinor, guardianConsent: u.guardianConsent };
+    return { id: u.id, email: u.email, name: u.name, role: u.role, timezone: u.timezone, isMinor, guardianConsent: u.guardianConsent, phone: u.phone, whatsappAlerts: u.whatsappAlerts };
   }
 
   private async session(user: Parameters<AuthService['publicUser']>[0]) {
@@ -74,6 +75,8 @@ export class AuthService {
         dateOfBirth,
         guardianEmail: dto.guardianEmail?.toLowerCase(),
         timezone: dto.timezone ?? 'Asia/Karachi',
+        phone: normalisePhone(dto.phone),
+        whatsappAlerts: dto.whatsappAlerts ?? true,
       },
     });
     await this.notify.send(email, 'Welcome to POINT B Mentors', `Hi ${user.name.split(' ')[0]},\n\nWelcome to POINT B Mentors. Your account is ready.\n\nBrowse mentors who have been where you want to go, pick a time that suits you, and book a private 30-minute conversation. Choose a 1:1 session, or a group session at a lower price per person.`, user.id, { cta: { label: 'Find a mentor', url: `${webUrl()}/mentors` } });
@@ -99,6 +102,15 @@ export class AuthService {
   async me(id: string) {
     const user = await this.prisma.user.findUniqueOrThrow({ where: { id }, include: { mentorProfile: { select: { id: true, slug: true, status: true } } } });
     return { ...this.publicUser(user), mentorProfile: user.mentorProfile };
+  }
+
+  /** Lets a signed-in user add or change their mobile number and WhatsApp alert preference. */
+  async updateContact(id: string, dto: UpdateContactDto) {
+    const data: { phone?: string | null; whatsappAlerts?: boolean } = {};
+    if (dto.phone !== undefined) data.phone = normalisePhone(dto.phone);
+    if (dto.whatsappAlerts !== undefined) data.whatsappAlerts = dto.whatsappAlerts;
+    await this.prisma.user.update({ where: { id }, data });
+    return this.me(id);
   }
 
   async changePassword(id: string, dto: ChangePasswordDto) {

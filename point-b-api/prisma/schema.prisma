@@ -65,6 +65,12 @@ enum BookingStatus {
   NO_SHOW
 }
 
+enum ReviewStatus {
+  PENDING
+  APPROVED
+  HIDDEN
+}
+
 enum PaymentStatus {
   PENDING
   SUCCEEDED
@@ -82,6 +88,8 @@ model User {
   dateOfBirth      DateTime?
   guardianEmail    String?
   guardianConsent  Boolean   @default(false)
+  phone            String?   // international format, e.g. +923001234567
+  whatsappAlerts   Boolean   @default(false) // the user agreed to receive their alerts on WhatsApp too
   isActive         Boolean   @default(true)
   // Single-use set/reset password link. Only a SHA-256 hash is stored.
   resetTokenHash      String?
@@ -149,6 +157,7 @@ model MentorApplication {
   yearsExperience     Int
   industry            String
   specialistAreas     String[]
+  strengths           String[] // "My strongest points are..." from the guided form
   qualifications      String
   languages           String[]
   previousMentorshipExperience String @default("")
@@ -168,6 +177,15 @@ model MentorApplication {
   resubmittedAt       DateTime?
   resubmissionCount   Int               @default(0)
   identityVerified    Boolean           @default(false)
+  // Interview booked by an admin. interviewAt is cleared if the application is rejected before it happens.
+  interviewAt         DateTime?
+  interviewDurationMin Int?
+  // Join credentials for the in-app interview room: only a hash of the applicant's private link is kept.
+  interviewTokenHash  String?
+  interviewHostStartedAt DateTime?
+  interviewNote       String?
+  interviewScheduledAt DateTime?
+  interviewScheduledBy String? @db.ObjectId
   mentorProfileId     String? @db.ObjectId
   submittedAt         DateTime          @default(now())
   updatedAt           DateTime          @updatedAt
@@ -228,8 +246,17 @@ model Booking {
   hostStartedAt     DateTime? // set when the mentor first opens the call room
   rescheduleCount   Int           @default(0)
   rescheduledAt     DateTime?
-  priceMinor        Int
+  priceMinor        Int           // what the student pays, after any promo discount
   currency          Currency
+  // Pricing snapshot taken when the booking is made. Unset on bookings made before these existed.
+  listPriceMinor    Int?          // price before any promo discount
+  discountMinor     Int?
+  promoCodeId       String?       @db.ObjectId
+  repeatStudent     Boolean?      // the student had already had a paid session with this mentor
+  commissionPercent Int?          // platform fee rate applied; null while no commission is configured
+  platformFeeMinor  Int?
+  // The student sent a bank / QR transfer and is waiting for an admin to verify it; the slot stays held meanwhile.
+  awaitingVerification Boolean?
   status            BookingStatus @default(PENDING_PAYMENT)
   meetingLink       String?
   cancelledAt       DateTime?
@@ -249,6 +276,24 @@ model Booking {
   @@index([slotId])
 }
 
+/** A single-use discount a mentor gives one returning student for their next 1:1 session with that mentor. */
+model PromoCode {
+  id         String    @id @default(auto()) @map("_id") @db.ObjectId
+  code       String    @unique
+  mentorId   String    @db.ObjectId
+  studentId  String    @db.ObjectId
+  percentOff Int
+  note       String    @default("")
+  expiresAt  DateTime
+  usedAt     DateTime?
+  bookingId  String?   @db.ObjectId
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([mentorId])
+  @@index([studentId])
+}
+
 model Payment {
   id            String        @id @default(auto()) @map("_id") @db.ObjectId
   bookingId     String @db.ObjectId
@@ -258,6 +303,13 @@ model Payment {
   currency      Currency
   status        PaymentStatus @default(PENDING)
   processedAt   DateTime?
+  // Bank / QR transfer details the student submitted, and the admin's review of them.
+  bankTxnRef      String?
+  bankSenderName  String?
+  bankSubmittedAt DateTime?
+  reviewedAt      DateTime?
+  reviewedBy      String? @db.ObjectId
+  reviewNote      String?
   createdAt     DateTime      @default(now())
 
   booking Booking @relation(fields: [bookingId], references: [id])
@@ -268,6 +320,9 @@ model Review {
   bookingId String @db.ObjectId   @unique
   rating    Int
   comment   String
+  // Unset on reviews created before moderation existed; those count as approved. New reviews start PENDING until the mentor approves.
+  status    ReviewStatus?
+  moderatedAt DateTime?
   createdAt DateTime @default(now())
 
   booking Booking @relation(fields: [bookingId], references: [id])
@@ -289,7 +344,10 @@ model PricingRule {
   id         String      @id @default(auto()) @map("_id") @db.ObjectId
   level      MentorLevel
   currency   Currency
-  priceMinor Int
+  priceMinor Int  // standard price: what a mentor in this tier charges unless given their own price
+  // Allowed range for this tier. Unset on rules saved before ranges existed; the defaults in pricing.ts apply.
+  minMinor   Int?
+  maxMinor   Int?
   updatedAt  DateTime    @updatedAt
 
   @@unique([level, currency])

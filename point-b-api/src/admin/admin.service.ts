@@ -2,19 +2,23 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { ApplicationStatus, MentorCategory, Prisma } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { createHash, randomBytes } from 'crypto';
+import { DailyService } from '../calls/daily.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../common/notifications.service';
 import { PasswordLinksService } from '../common/password-links.service';
 
 /** How long a new mentor's "set your password" link stays valid. */
 const SETUP_LINK_DAYS = 7;
-import { webUrl } from '../common/email-template';
+import { emailDate, webUrl } from '../common/email-template';
 
 /** How long an applicant's update link stays valid. */
 export const EDIT_LINK_DAYS = 14;
+/** Pakistan is local; anywhere else is international. Decides the mentor's listing and currency. */
+const categoryFor = (country: string): MentorCategory => (/pakistan/i.test(country) ? 'LOCAL' : 'INTERNATIONAL');
 export const hashToken = (t: string) => createHash('sha256').update(t).digest('hex');
-import { DEFAULT_PRICES, priceFor } from '../common/pricing';
-import { PricingRuleDto, ScorecardDto, SettingDto, UpdateMentorAdminDto } from './admin.dto';
+import { DEFAULT_PRICES, commissionRules, currencyFor, feeOf, groupPercent, priceFor, tierRule } from '../common/pricing';
+import { AdminEditApplicationDto } from '../applications/applications.dto';
+import { InterviewDto, PricingRuleDto, ScorecardDto, SettingDto, UpdateMentorAdminDto } from './admin.dto';
 
 const S = ApplicationStatus;
 export const TRANSITIONS: Record<ApplicationStatus, ApplicationStatus[]> = {
@@ -38,7 +42,7 @@ const slugify = (s: string) => s.toLowerCase().normalize('NFKD').replace(/[^\w\s
 
 @Injectable()
 export class AdminService {
-  constructor(private prisma: PrismaService, private notify: NotificationsService, private links: PasswordLinksService) {}
+  constructor(private prisma: PrismaService, private notify: NotificationsService, private links: PasswordLinksService, private daily: DailyService) {}
 
   audit(adminId: string, action: string, entityType: string, entityId: string, detail = '') {
     return this.prisma.auditLog.create({ data: { adminId, action, entityType, entityId, detail } });
@@ -46,13 +50,53 @@ export class AdminService {
 
   // ---------- applications ----------
   listApplications(status?: ApplicationStatus) {
-    return this.prisma.mentorApplication.findMany({ where: status ? { status } : {}, orderBy: { submittedAt: 'desc' }, include: { scorecard: true }, omit: { editTokenHash: true } });
+    return this.prisma.mentorApplication.findMany({ where: status ? { status } : {}, orderBy: { submittedAt: 'desc' }, include: { scorecard: true }, omit: { editTokenHash: true, interviewTokenHash: true } });
   }
 
   async getApplication(id: string) {
-    const a = await this.prisma.mentorApplication.findUnique({ where: { id }, include: { scorecard: true }, omit: { editTokenHash: true } });
+    const a = await this.prisma.mentorApplication.findUnique({ where: { id }, include: { scorecard: true }, omit: { editTokenHash: true, interviewTokenHash: true } });
     if (!a) throw new NotFoundException('Application not found');
     return { ...a, allowedTransitions: TRANSITIONS[a.status], passThreshold: PASS_THRESHOLD };
+  }
+
+  /** Interviews still to happen, soonest first, for the admin's agenda. */
+  listInterviews() {
+    return this.prisma.mentorApplication.findMany({
+      where: { status: 'INTERVIEW_SCHEDULED', interviewAt: { not: null } }, orderBy: { interviewAt: 'asc' },
+      select: { id: true, fullName: true, email: true, phone: true, headline: true, interviewAt: true, interviewDurationMin: true, interviewNote: true },
+    });
+  }
+
+  /** Books (or moves) the interview, marks the application Interview scheduled and emails the applicant. */
+  async scheduleInterview(adminId: string, id: string, dto: InterviewDto) {
+    const a = await this.getApplication(id);
+    if (!['SHORTLISTED', 'INTERVIEW_SCHEDULED'].includes(a.status)) throw new BadRequestException('An interview can be scheduled once the applicant is shortlisted');
+    const start = new Date(dto.startAt);
+    if (Number.isNaN(start.getTime()) || start.getTime() < Date.now()) throw new BadRequestException('Choose a date and time in the future');
+    const end = new Date(start.getTime() + dto.durationMinutes * 60_000);
+    const others = await this.prisma.mentorApplication.findMany({ where: { status: 'INTERVIEW_SCHEDULED', id: { not: id }, interviewAt: { gte: new Date(start.getTime() - 120 * 60_000), lt: end } } });
+    const clash = others.find((o) => o.interviewAt && o.interviewAt.getTime() + (o.interviewDurationMin ?? 30) * 60_000 > start.getTime());
+    if (clash) throw new BadRequestException(`That overlaps your interview with ${clash.fullName}. Pick another time.`);
+    // A fresh private link for the applicant, who has no account yet. Rescheduling replaces the old one.
+    const token = randomBytes(32).toString('base64url');
+    const joinUrl = `${webUrl()}/interview/${id}?t=${token}`;
+    const rescheduled = a.status === 'INTERVIEW_SCHEDULED';
+    await this.prisma.mentorApplication.update({
+      where: { id },
+      data: { status: 'INTERVIEW_SCHEDULED', interviewAt: start, interviewDurationMin: dto.durationMinutes, interviewTokenHash: hashToken(token), interviewHostStartedAt: null, interviewNote: dto.note?.trim() || null, interviewScheduledAt: new Date(), interviewScheduledBy: adminId },
+    });
+    await this.audit(adminId, rescheduled ? 'INTERVIEW_RESCHEDULED' : 'INTERVIEW_SCHEDULED', 'MentorApplication', id, start.toISOString());
+    const first = a.fullName.split(' ')[0];
+    const fmt = (d: Date) => d.toISOString().replace(/[-:]|\.\d{3}/g, '');
+    const gcal = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent('POINT B mentor interview')}&dates=${fmt(start)}/${fmt(end)}&details=${encodeURIComponent(`Join on POINT B: ${joinUrl}`)}`;
+    await this.notify.send(
+      a.email,
+      rescheduled ? 'Your interview has been rescheduled' : 'Your interview is scheduled',
+      `Hi ${first},\n\n${rescheduled ? 'Your mentor interview has moved to a new time.' : 'Thank you for your patience. We have booked your mentor interview.'} It is a short conversation about your background and how you would approach mentoring.${dto.note?.trim() ? `\n\nA note from our team: ${dto.note.trim()}` : ''}\n\nThe button above opens your private interview room. It becomes active 10 minutes before the start, so you can use the same link then. Please do not share it. If this time no longer works, reply to this email and we will find another.`,
+      undefined,
+      { cta: { label: 'Join your interview', url: joinUrl }, facts: [['When', emailDate(start)], ['Duration', `${dto.durationMinutes} minutes`], ['Where', 'Online, on POINT B. No download needed.'], ['Add to calendar', gcal]] },
+    );
+    return this.getApplication(id);
   }
 
   async saveScorecard(adminId: string, id: string, dto: ScorecardDto) {
@@ -62,6 +106,25 @@ export class AdminService {
     const sc = await this.prisma.interviewScorecard.upsert({ where: { applicationId: id }, create: { applicationId: id, ...dto, total, reviewerId: adminId }, update: { ...dto, total, reviewerId: adminId } });
     await this.audit(adminId, 'SCORECARD_SAVED', 'MentorApplication', id, `total=${total}`);
     return { ...sc, meetsThreshold: total >= PASS_THRESHOLD };
+  }
+
+  /** Lets an admin correct the applicant's details (e.g. after a phone call). Logged with the fields that changed. */
+  async editApplication(adminId: string, id: string, dto: AdminEditApplicationDto) {
+    const a = await this.getApplication(id);
+    const data: Record<string, unknown> = { ...dto };
+    if (dto.email !== undefined) {
+      const email = dto.email.toLowerCase();
+      if (email !== a.email) {
+        if (a.mentorProfileId) throw new BadRequestException('The email can no longer be changed because this mentor already has an account');
+        if (await this.prisma.mentorApplication.findFirst({ where: { email, id: { not: id }, status: { notIn: ['REJECTED', 'WAITLISTED'] } } })) throw new BadRequestException('Another application already uses this email');
+      }
+      data.email = email;
+    }
+    const changed = Object.keys(data).filter((k) => JSON.stringify((a as Record<string, unknown>)[k]) !== JSON.stringify(data[k]));
+    if (changed.length === 0) return a;
+    await this.prisma.mentorApplication.update({ where: { id }, data });
+    await this.audit(adminId, 'APPLICATION_EDITED', 'MentorApplication', id, changed.join(', '));
+    return this.getApplication(id);
   }
 
   async saveNotes(adminId: string, id: string, notes: string) {
@@ -110,6 +173,7 @@ export class AdminService {
   async setStatus(adminId: string, id: string, next: ApplicationStatus, notes?: string) {
     const a = await this.getApplication(id);
     if (next === 'CHANGES_REQUESTED') throw new BadRequestException('Use "Request changes" and describe what the applicant should change.');
+    if (next === 'INTERVIEW_SCHEDULED') throw new BadRequestException('Use "Schedule interview" and pick a date and time.');
     if (!TRANSITIONS[a.status].includes(next)) throw new BadRequestException(`Cannot move an application from ${a.status} to ${next}`);
     let account: { userId: string; isNew: boolean } | undefined;
 
@@ -168,7 +232,7 @@ export class AdminService {
     if (c) await this.notify.send(email, c[0], c[1]);
   }
 
-  private async createMentorAccount(a: Omit<Prisma.MentorApplicationGetPayload<object>, 'editTokenHash'>) {
+  private async createMentorAccount(a: Omit<Prisma.MentorApplicationGetPayload<object>, 'editTokenHash' | 'interviewTokenHash'>) {
     let user = await this.prisma.user.findUnique({ where: { email: a.email } });
     const isNew = !user;
     if (!user) {
@@ -180,7 +244,7 @@ export class AdminService {
       user = await this.prisma.user.update({ where: { id: user.id }, data: { role: 'MENTOR' } });
     }
     if (await this.prisma.mentorProfile.findUnique({ where: { userId: user.id } })) return { userId: user.id, isNew };
-    const category: MentorCategory = /pakistan/i.test(a.professionalLocation) ? 'LOCAL' : 'INTERNATIONAL';
+    const category = categoryFor(a.countryOfResidence || a.professionalLocation);
     let slug = slugify(a.fullName), n = 1;
     while (await this.prisma.mentorProfile.findUnique({ where: { slug } })) slug = `${slugify(a.fullName)}-${++n}`;
     const profile = await this.prisma.mentorProfile.create({
@@ -207,26 +271,40 @@ export class AdminService {
     const m = await this.prisma.mentorProfile.findUnique({ where: { id } });
     if (!m) throw new NotFoundException('Mentor not found');
     if (dto.status === 'ACTIVE' && !m.agreementAcceptedAt) throw new BadRequestException('Mentor has not accepted the agreement');
+    if (dto.country !== undefined) dto.category = categoryFor(dto.country);
+    // A mentor's own price must sit inside the range of the tier they end up in.
+    const override = dto.priceOverrideMinor !== undefined ? dto.priceOverrideMinor : m.priceOverrideMinor;
+    if (override != null) {
+      const r = await tierRule(this.prisma, dto.level ?? m.level, currencyFor(dto.category ?? m.category));
+      if (override < r.minMinor || override > r.maxMinor) {
+        const fmt = (x: number) => (r.currency === 'PKR' ? `Rs ${(x / 100).toLocaleString('en-PK')}` : `£${(x / 100).toLocaleString('en-GB')}`);
+        throw new BadRequestException(`The price must be between ${fmt(r.minMinor)} and ${fmt(r.maxMinor)} for this tier.`);
+      }
+    }
     await this.prisma.mentorProfile.update({ where: { id }, data: dto });
     await this.audit(adminId, 'MENTOR_UPDATED', 'MentorProfile', id, JSON.stringify(dto));
     return (await this.listMentors()).find((x) => x.id === id);
   }
 
   async pricing() {
-    const rules = await this.prisma.pricingRule.findMany();
-    const out: { level: string; currency: string; priceMinor: number; isDefault: boolean }[] = [];
+    const out = [];
     for (const level of Object.keys(DEFAULT_PRICES) as (keyof typeof DEFAULT_PRICES)[]) {
-      for (const currency of ['PKR', 'GBP'] as const) {
-        const r = rules.find((x) => x.level === level && x.currency === currency);
-        out.push({ level, currency, priceMinor: r?.priceMinor ?? DEFAULT_PRICES[level][currency], isDefault: !r });
-      }
+      for (const currency of ['PKR', 'GBP'] as const) out.push(await tierRule(this.prisma, level, currency));
     }
     return out;
   }
 
+  /** What the public pricing page shows: each tier's range, and the group seat discount. */
+  async publicPricing() {
+    return { tiers: await this.pricing(), groupPercent: await groupPercent(this.prisma) };
+  }
+
   async setPricing(adminId: string, dto: PricingRuleDto) {
-    await this.prisma.pricingRule.upsert({ where: { level_currency: { level: dto.level, currency: dto.currency } }, create: dto, update: { priceMinor: dto.priceMinor } });
-    await this.audit(adminId, 'PRICING_CHANGED', 'PricingRule', `${dto.level}/${dto.currency}`, String(dto.priceMinor));
+    if (dto.minMinor > dto.maxMinor) throw new BadRequestException('The lowest price cannot be above the highest price');
+    if (dto.priceMinor < dto.minMinor || dto.priceMinor > dto.maxMinor) throw new BadRequestException('The standard price must be inside the range');
+    const data = { priceMinor: dto.priceMinor, minMinor: dto.minMinor, maxMinor: dto.maxMinor };
+    await this.prisma.pricingRule.upsert({ where: { level_currency: { level: dto.level, currency: dto.currency } }, create: { level: dto.level, currency: dto.currency, ...data }, update: data });
+    await this.audit(adminId, 'PRICING_CHANGED', 'PricingRule', `${dto.level}/${dto.currency}`, `${dto.minMinor}-${dto.maxMinor}, standard ${dto.priceMinor}`);
     return this.pricing();
   }
 
@@ -237,7 +315,8 @@ export class AdminService {
 
   async setSetting(adminId: string, dto: SettingDto) {
     const n = Number(dto.value);
-    if (!Number.isFinite(n) || n < 0 || ((dto.key === 'commission_percent' || dto.key === 'group_price_percent') && n > 100) || (dto.key === 'group_price_percent' && n < 1)) throw new BadRequestException('Invalid value');
+    const percentKey = dto.key.startsWith('commission_') || dto.key === 'repeat_commission_percent' || dto.key === 'group_price_percent';
+    if (!Number.isFinite(n) || n < 0 || (percentKey && n > 100) || (dto.key === 'group_price_percent' && n < 1)) throw new BadRequestException('Invalid value');
     await this.prisma.setting.upsert({ where: { key: dto.key }, create: dto, update: { value: dto.value } });
     await this.audit(adminId, 'SETTING_CHANGED', 'Setting', dto.key, dto.value);
     return this.settings();
@@ -263,21 +342,55 @@ export class AdminService {
     return this.prisma.user.findMany({ where: { role: 'STUDENT' }, orderBy: { createdAt: 'desc' }, take: 200, select: { id: true, name: true, email: true, dateOfBirth: true, guardianEmail: true, guardianConsent: true, createdAt: true, _count: { select: { bookings: true } } } });
   }
 
+  /** Video usage in participant-minutes: Daily's own record when available, otherwise estimated from calls that opened. */
+  private async videoUsage() {
+    const limitMinutes = Number(process.env.VIDEO_MINUTES_LIMIT) || 10_000;
+    const real = await this.daily.usedMinutes();
+    if (real !== null) return { usedMinutes: real, limitMinutes, source: 'daily' as const };
+    const [bookings, interviews] = await Promise.all([
+      this.prisma.booking.findMany({
+        where: { OR: [{ status: 'COMPLETED' }, { status: 'CONFIRMED', hostStartedAt: { isSet: true, not: null } }] },
+        select: { slotId: true, sessionKind: true, slot: { select: { startAt: true, endAt: true } } },
+      }),
+      this.prisma.mentorApplication.findMany({ where: { interviewHostStartedAt: { isSet: true, not: null } }, select: { interviewDurationMin: true } }),
+    ]);
+    const mins = (b: { slot: { startAt: Date; endAt: Date } }) => Math.round((b.slot.endAt.getTime() - b.slot.startAt.getTime()) / 60_000);
+    let used = 0;
+    const hosted = new Set<string>();
+    for (const b of bookings) {
+      used += mins(b); // the student
+      if (!hosted.has(b.slotId)) { hosted.add(b.slotId); used += mins(b); } // the mentor, once per slot even for groups
+    }
+    for (const i of interviews) used += 2 * (i.interviewDurationMin ?? 30);
+    return { usedMinutes: used, limitMinutes, source: 'estimate' as const };
+  }
+
   async stats() {
-    const [apps, mentors, students, bookings, money, repeat, commission] = await Promise.all([
+    const video = await this.videoUsage();
+    const [apps, mentors, students, bookings, money, repeat, rules, paid] = await Promise.all([
       this.prisma.mentorApplication.groupBy({ by: ['status'], _count: true }),
       this.prisma.mentorProfile.groupBy({ by: ['status'], _count: true }),
       this.prisma.user.count({ where: { role: 'STUDENT' } }),
       this.prisma.booking.groupBy({ by: ['status'], _count: true }),
       this.prisma.booking.groupBy({ by: ['currency', 'status'], where: { status: { in: ['CONFIRMED', 'COMPLETED', 'CANCELLED'] } }, _sum: { priceMinor: true } }),
       this.prisma.booking.groupBy({ by: ['studentId'], where: { status: { in: ['CONFIRMED', 'COMPLETED'] } }, _count: true, having: { studentId: { _count: { gt: 1 } } } }),
-      this.prisma.setting.findUnique({ where: { key: 'commission_percent' } }),
+      commissionRules(this.prisma),
+      this.prisma.booking.findMany({ where: { status: { in: ['CONFIRMED', 'COMPLETED'] } }, select: { currency: true, priceMinor: true, platformFeeMinor: true, discountMinor: true, repeatStudent: true, mentor: { select: { level: true } } } }),
     ]);
     const sumFor = (currency: 'PKR' | 'GBP', statuses: string[]) => money.filter((m) => m.currency === currency && statuses.includes(m.status)).reduce((s, m) => s + (m._sum.priceMinor ?? 0), 0);
-    const pct = commission ? Number(commission.value) : null;
+    // Each booking's fee was fixed when it was made (tier rate, or the repeat-student rate); older ones use today's tier rate.
+    const feeFor = (b: (typeof paid)[number]) => b.platformFeeMinor ?? (rules.tier[b.mentor.level] == null ? null : feeOf(b.priceMinor, rules.tier[b.mentor.level]!));
+    const configured = Object.values(rules.tier).some((v) => v != null);
     const finance = (['PKR', 'GBP'] as const).map((currency) => {
+      const rows = paid.filter((b) => b.currency === currency);
       const gross = sumFor(currency, ['CONFIRMED', 'COMPLETED']);
-      return { currency, grossMinor: gross, refundedMinor: sumFor(currency, ['CANCELLED']), platformRevenueMinor: pct == null ? null : Math.round((gross * pct) / 100), mentorPayoutsMinor: pct == null ? null : gross - Math.round((gross * pct) / 100) };
+      const fees = rows.map(feeFor);
+      const fee = fees.some((f) => f == null) || !configured ? null : fees.reduce((a: number, f) => a + (f ?? 0), 0);
+      return {
+        currency, grossMinor: gross, refundedMinor: sumFor(currency, ['CANCELLED']),
+        platformRevenueMinor: fee, mentorPayoutsMinor: fee == null ? null : gross - fee,
+        discountsMinor: rows.reduce((a, b) => a + (b.discountMinor ?? 0), 0), repeatSessions: rows.filter((b) => b.repeatStudent).length,
+      };
     });
     const count = (rows: { status: string; _count: number }[], s: string) => rows.find((r) => r.status === s)?._count ?? 0;
     const totalBookings = bookings.reduce((s, b) => s + b._count, 0);
@@ -287,7 +400,7 @@ export class AdminService {
       bookings: Object.fromEntries(bookings.map((b) => [b.status, b._count])),
       bookingConversion: totalBookings ? (count(bookings, 'CONFIRMED') + count(bookings, 'COMPLETED')) / totalBookings : null,
       repeatStudents: repeat.length,
-      commissionPercent: pct, commissionConfigured: pct != null, finance,
+      commissionConfigured: configured, commission: rules, finance, video,
     };
   }
 
