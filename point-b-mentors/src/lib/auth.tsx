@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { api, getToken, setToken } from "./api";
+import { flushActivity, resetVisitor, track } from "./track";
 import type { Role, SessionUser } from "./types";
 
 interface AuthCtx {
@@ -43,7 +44,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     user, loading, refresh,
     login: (email, password) => start("/auth/login", { email, password }),
     register: (input) => start("/auth/register", input),
-    logout: () => { setToken(null); setUser(null); },
+    logout: () => { track("signed_out"); flushActivity(); setToken(null); setUser(null); resetVisitor(); },
   }), [user, loading, refresh, start]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

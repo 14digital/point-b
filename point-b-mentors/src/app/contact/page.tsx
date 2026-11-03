@@ -5,6 +5,7 @@ import { useState, type ReactNode } from "react";
 import { Alert, Button, Container, Mark, Spinner } from "@/components/ui";
 import { Reveal } from "@/components/motion";
 import { api, errMsg } from "@/lib/api";
+import { track } from "@/lib/track";
 import { useAuth } from "@/lib/auth";
 import { NoticeText } from "@/lib/policy";
 
@@ -41,6 +42,7 @@ export default function ContactPage() {
     setBusy(true); setError(null);
     try {
       await api("/contact", { body: { ...f, name: f.name.trim(), message: f.message.trim() } });
+      track("contact_sent", { label: f.topic });
       setSentTo(f.email);
     } catch (err) { setError(errMsg(err)); } finally { setBusy(false); }
   }

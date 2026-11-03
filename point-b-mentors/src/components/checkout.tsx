@@ -6,6 +6,7 @@ import { loadStripe, type Appearance, type Stripe } from "@stripe/stripe-js";
 import { Elements, PaymentElement, useElements, useStripe } from "@stripe/react-stripe-js";
 import { Alert, Button, Skeleton, Spinner } from "./ui";
 import { api, errMsg } from "@/lib/api";
+import { track } from "@/lib/track";
 import { formatMoney } from "@/lib/format";
 import type { Currency } from "@/lib/types";
 
@@ -274,13 +275,17 @@ function StripeForm({ info, picker, onPaid, bodyClass, footerClass, footerLead }
   async function pay() {
     if (!stripe || !elements) return;
     setBusy(true); setError(null);
+    track("payment_attempted", { reference: info.reference, label: "Card" });
     const { error: err } = await stripe.confirmPayment({
       elements,
       // Only used by payment methods that must leave the page (some bank authentications).
       confirmParams: { return_url: `${window.location.origin}/dashboard/student?paid=${info.reference}` },
       redirect: "if_required",
     });
-    if (err) { setError(err.message ?? "Your payment could not be completed."); setBusy(false); return; }
+    if (err) {
+      track("payment_failed", { reference: info.reference, label: err.message ?? "Card payment failed" });
+      setError(err.message ?? "Your payment could not be completed."); setBusy(false); return;
+    }
     try { await settle(info.reference); onPaid(); } catch (e) { setError(errMsg(e)); setBusy(false); }
   }
 
@@ -311,6 +316,7 @@ function MockForm({ info, picker, onPaid, bodyClass, footerClass, footerLead }: 
   const [error, setError] = useState<string | null>(null);
   async function pay() {
     setBusy(true); setError(null);
+    track("payment_attempted", { reference: info.reference, label: "Demo" });
     try { await api(`/payments/mock/${info.providerRef}/complete`, { method: "POST" }); onPaid(); } catch (e) { setError(errMsg(e)); setBusy(false); }
   }
   return (

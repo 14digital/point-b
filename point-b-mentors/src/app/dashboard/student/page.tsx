@@ -16,12 +16,12 @@ import { FeedbackForm, SubmittedFeedback } from "@/components/feedback";
 import { MobileField, WhatsAppIcon } from "@/components/mobile-field";
 import { isValidPhone, type CountryCode } from "@/components/phone-input";
 import { fmtDay, fmtDayShort, fmtTime, formatMoney } from "@/lib/format";
+import { useUrlTab } from "@/lib/use-url-tab";
 import { useApi, useNow } from "@/lib/use-api";
 import type { Booking } from "@/lib/types";
 import { NoticeText } from "@/lib/policy";
 
 const TABS = ["Upcoming", "Awaiting payment", "Past"] as const;
-type Tab = (typeof TABS)[number];
 
 export default function StudentDashboardPage() {
   return <RequireRole role="STUDENT"><Suspense><Dashboard /></Suspense></RequireRole>;
@@ -45,7 +45,7 @@ function Dashboard() {
   const past = (data ?? []).filter((b) => !upcoming.includes(b) && !pending.includes(b)).sort((a, b) => +new Date(b.startAt) - +new Date(a.startAt));
   const completed = past.filter((b) => b.status === "COMPLETED");
   const needsFeedback = past.filter((b) => b.canReview);
-  const [tab, setTab] = useState<Tab>("Upcoming");
+  const [tab, setTab] = useUrlTab(TABS, "Upcoming");
   const tabs = TABS.filter((t) => t !== "Awaiting payment" || pending.length > 0);
   const next = upcoming[0];
 

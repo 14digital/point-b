@@ -3,12 +3,13 @@ import { Newsreader, Inter } from "next/font/google";
 import "./globals.css";
 import { Nav } from "@/components/nav";
 import { Footer } from "@/components/footer";
+import { ActivityTracker } from "@/components/activity-tracker";
 import { AuthProvider } from "@/lib/auth";
 
 const display = Newsreader({
   variable: "--font-fraunces",
   subsets: ["latin"],
-  weight: ["300", "400"],
+  weight: ["400"],
   style: ["normal", "italic"],
 });
 
@@ -28,6 +29,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     <html lang="en" className={`${display.variable} ${inter.variable} h-full antialiased`}>
       <body className="flex min-h-full flex-col">
         <AuthProvider>
+          <ActivityTracker />
           <Nav />
           <main className="flex-1">{children}</main>
           <Footer />

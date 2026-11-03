@@ -56,7 +56,7 @@ body {
 
 .font-display {
   font-family: var(--font-display);
-  font-weight: 300;
+  font-weight: 400;
   letter-spacing: -0.035em;
 }
 

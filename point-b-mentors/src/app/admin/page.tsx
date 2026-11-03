@@ -10,13 +10,15 @@ import { LEVEL_LABEL, STATUS_LABEL } from "@/lib/constants";
 import { fmtDay, fmtDayShort, fmtTime, formatMoney, initials } from "@/lib/format";
 import { useApi } from "@/lib/use-api";
 import { ToastProvider, useToast } from "@/components/toast";
+import { UserTracking } from "@/components/user-tracking";
+import { WhatsAppDelivery } from "@/components/whatsapp-delivery";
+import { useUrlTab } from "@/lib/use-url-tab";
 import { CountrySelect, isLocalCountry } from "@/components/country-select";
 import { Flag, countryIn } from "@/components/flag";
 import { formatPhone } from "@/components/phone-input";
 import type { AdminInterview, AppStatus, Application, Booking, Currency, Level } from "@/lib/types";
 
-const TABS = ["Overview", "Applications", "Mentors", "Bookings", "Pricing & settings", "Activity"] as const;
-type Tab = (typeof TABS)[number];
+const TABS = ["Overview", "Applications", "Mentors", "Bookings", "Pricing & settings", "User tracking", "Activity"] as const;
 
 const TONE: Record<string, "neutral" | "brass" | "forest" | "rust"> = {
   SUBMITTED: "neutral", UNDER_REVIEW: "brass", SHORTLISTED: "brass", INTERVIEW_SCHEDULED: "brass", INTERVIEW_COMPLETED: "brass",
@@ -30,7 +32,7 @@ export default function AdminPage() {
 
 function Console() {
   const { user } = useAuth();
-  const [tab, setTab] = useState<Tab>("Overview");
+  const [tab, setTab] = useUrlTab(TABS, "Overview");
   const [focusId, setFocusId] = useState<string | null>(null);
   const stats = useApi<Stats>("/admin/stats");
   const s = stats.data;
@@ -51,6 +53,7 @@ function Console() {
         {tab === "Mentors" && <Mentors />}
         {tab === "Bookings" && <Bookings />}
         {tab === "Pricing & settings" && <PricingSettings />}
+        {tab === "User tracking" && <UserTracking />}
         {tab === "Activity" && <Activity />}
       </Container>
     </>
@@ -968,6 +971,8 @@ function Activity() {
   const log = useApi<{ id: string; action: string; entityType: string; entityId: string; detail: string; createdAt: string; admin: { name: string } }[]>("/admin/audit-log");
   const outbox = useApi<{ id: string; toEmail: string; subject: string; sentAt: string }[]>("/admin/outbox");
   return (
+    <div className="space-y-6">
+    <WhatsAppDelivery />
     <div className="grid gap-6 lg:grid-cols-2">
       <Panel title="Audit log" action={<span className="text-xs text-ink-soft">Latest 50</span>}>
         {log.loading ? <Skeleton className="h-32" /> : !log.data?.length ? <p className="text-sm text-ink-soft">No admin activity yet.</p> : (
@@ -1001,6 +1006,7 @@ function Activity() {
           </ul>
         )}
       </Panel>
+    </div>
     </div>
   );
 }

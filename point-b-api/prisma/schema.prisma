@@ -359,6 +359,51 @@ model Setting {
   updatedAt DateTime @updatedAt
 }
 
+/** What users and anonymous guests do, for the admin tracking view. Deleted after 90 days. */
+model ActivityEvent {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String?  @db.ObjectId // null while a guest; filled in when they sign in or sign up
+  visitorId String?  // random browser ID, no personal data
+  type      String
+  page      String?
+  label     String?
+  reference String?
+  device    String?
+  referrer  String?  // the other site they arrived from: host only
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([visitorId, createdAt])
+  @@index([type, createdAt])
+  @@index([createdAt])
+}
+
+/** Every WhatsApp message we try to send, with the delivery status Meta reports back. */
+model WhatsAppMessage {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  wamid       String?  // Meta's message ID
+  toPhone     String
+  title       String
+  template    String
+  status      String   // rejected, accepted, sent, delivered, read or failed
+  errorCode   Int?
+  errorTitle  String?
+  errorDetail String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([wamid])
+  @@index([createdAt])
+}
+
+/** A trigger an admin has marked as handled, so it stops showing. */
+model HandledTrigger {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  triggerId String   @unique
+  adminId   String   @db.ObjectId
+  createdAt DateTime @default(now())
+}
+
 model AuditLog {
   id         String   @id @default(auto()) @map("_id") @db.ObjectId
   adminId    String @db.ObjectId

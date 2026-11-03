@@ -4,6 +4,7 @@ import { NotificationsService } from '../common/notifications.service';
 import { emailDate, webUrl } from '../common/email-template';
 import { AuthUser } from '../common/auth';
 import { HOLD_MINUTES } from '../bookings/bookings.service';
+import { ActivityService } from '../activity/activity.service';
 import { PaymentsService } from './payments.service';
 import { BankSettingsDto, BankTransferDto } from './bank.dto';
 
@@ -18,7 +19,7 @@ const money = (minor: number) => `Rs ${(minor / 100).toLocaleString('en-PK')}`;
  */
 @Injectable()
 export class BankTransferService {
-  constructor(private prisma: PrismaService, private notify: NotificationsService, private payments: PaymentsService) {}
+  constructor(private prisma: PrismaService, private notify: NotificationsService, private payments: PaymentsService, private activity: ActivityService) {}
 
   async details(): Promise<BankDetails | null> {
     const row = await this.prisma.setting.findUnique({ where: { key: DETAILS } });
@@ -68,6 +69,7 @@ export class BankTransferService {
     const facts: [string, string][] = [['Amount', money(p.amountMinor)], ['Transaction ID', dto.txnRef.trim()], ['Session', `${b.mentor.user.name}, ${emailDate(b.slot.startAt)}`], ['Reference', b.reference]];
     await this.notify.send(b.student.email, 'We have received your payment details', `Hi ${first},\n\nThank you. We have your bank transfer details and are checking the payment now. Your session time is held for you while we do. You will get a confirmation as soon as it is verified, usually within a few hours.`, b.studentId, { facts });
     const inbox = process.env.SUPPORT_EMAIL ?? process.env.MAIL_FROM_ADDRESS ?? process.env.SMTP_USER;
+    this.activity.record(user.id, 'bank_transfer_submitted', { reference: b.reference });
     if (inbox) await this.notify.send(inbox, `Bank payment to verify: ${b.reference}`, `${b.student.name} says they paid ${money(p.amountMinor)} by bank transfer. Check it against the bank statement, then approve or reject it in the admin Overview.`, undefined, { cta: { label: 'Open admin', url: `${webUrl()}/admin` }, facts: [...facts, ['Sender name', dto.senderName.trim()]], emailOnly: true });
     return { ok: true };
   }
@@ -108,6 +110,7 @@ export class BankTransferService {
       this.prisma.booking.update({ where: { id: b.id }, data: { status: 'CANCELLED', awaitingVerification: false, cancelledAt: new Date(), cancelReason: 'Bank payment could not be verified' } }),
       this.prisma.availabilitySlot.update({ where: { id: b.slotId }, data: { isBooked: false, seatsTaken: { decrement: 1 } } }),
     ]);
+    this.activity.record(b.studentId, 'bank_transfer_rejected', { reference: b.reference, label: reason.slice(0, 100) });
     await this.prisma.auditLog.create({ data: { adminId, action: 'BANK_PAYMENT_REJECTED', entityType: 'Payment', entityId: id, detail: `${b.reference}: ${reason.trim().slice(0, 300)}` } });
     await this.notify.send(b.student.email, 'We could not verify your payment', `Hi ${b.student.name.split(' ')[0]},\n\nWe could not match your bank transfer for your session with ${b.mentor.user.name}, so the booking has been released.\n\nReason: ${reason.trim()}\n\nIf you did send the money, reply to this email with a screenshot of the transfer and we will sort it out straight away. Otherwise you are welcome to book again.`, b.studentId, { facts: [['Transaction ID you gave', p.bankTxnRef ?? '—'], ['Amount', money(p.amountMinor)], ['Reference', b.reference]] });
     return this.pending();

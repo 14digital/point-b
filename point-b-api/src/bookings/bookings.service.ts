@@ -7,6 +7,7 @@ import { AuthUser } from '../common/auth';
 import { commissionFor, commissionRules, feeOf, priceFor } from '../common/pricing';
 import { DailyService } from '../calls/daily.service';
 import { StripeService } from '../payments/stripe.service';
+import { ActivityService } from '../activity/activity.service';
 import { emailDate, webUrl } from '../common/email-template';
 import { CancelBookingDto, CreateBookingDto, CreateReviewDto, PromoCheckDto } from './bookings.dto';
 
@@ -34,7 +35,7 @@ type FullBooking = Prisma.BookingGetPayload<{ include: typeof include }>;
 export class BookingsService implements OnModuleInit, OnModuleDestroy {
   private log = new Logger('Bookings');
   private timer?: NodeJS.Timeout;
-  constructor(private prisma: PrismaService, private notify: NotificationsService, private daily: DailyService, private stripe: StripeService) {}
+  constructor(private prisma: PrismaService, private notify: NotificationsService, private daily: DailyService, private stripe: StripeService, private activity: ActivityService) {}
 
   onModuleInit() {
     this.timer = setInterval(() => this.sendReminders().catch((e) => this.log.error(`reminders failed: ${e.message}`)), 60_000);
@@ -93,7 +94,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
   async releaseExpiredHolds() {
     const cutoff = new Date(Date.now() - HOLD_MINUTES * 60_000);
     // Bookings waiting for an admin to check a bank transfer keep their slot until it is approved or rejected.
-    const stale = await this.prisma.booking.findMany({ where: { status: 'PENDING_PAYMENT', createdAt: { lt: cutoff }, OR: [{ awaitingVerification: null }, { awaitingVerification: false }, { awaitingVerification: { isSet: false } }] }, select: { id: true, slotId: true, payments: { select: { provider: true, providerRef: true, status: true } } } });
+    const stale = await this.prisma.booking.findMany({ where: { status: 'PENDING_PAYMENT', createdAt: { lt: cutoff }, OR: [{ awaitingVerification: null }, { awaitingVerification: false }, { awaitingVerification: { isSet: false } }] }, select: { id: true, slotId: true, studentId: true, reference: true, payments: { select: { provider: true, providerRef: true, status: true } } } });
     for (const b of stale) {
       for (const p of b.payments) if (p.provider === 'stripe' && p.status === 'PENDING' && p.providerRef.startsWith('pi_')) await this.stripe.cancelIntent(p.providerRef);
       await this.prisma.$transaction([
@@ -101,6 +102,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
         this.prisma.payment.updateMany({ where: { bookingId: b.id, status: 'PENDING' }, data: { status: 'FAILED' } }),
         this.prisma.availabilitySlot.update({ where: { id: b.slotId }, data: { isBooked: false, seatsTaken: { decrement: 1 } } }),
       ]);
+      this.activity.record(b.studentId, 'hold_expired', { reference: b.reference });
     }
   }
 
@@ -154,6 +156,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
         await tx.payment.create({ data: { bookingId: b.id, provider: this.stripe.enabled() ? 'stripe' : (process.env.PAYMENTS_PROVIDER ?? 'mock'), providerRef: 'pay_' + randomBytes(10).toString('hex'), amountMinor: priceMinor, currency } });
         return b;
       }));
+      this.activity.record(user.id, 'booking_held', { reference: booking.reference });
       return this.get(user, booking.reference);
     } catch (e) {
       if ((e as { code?: string }).code === 'P2002' || (e as { code?: string }).code === 'P2034') throw new ConflictException('Sorry, that slot was just taken. Please choose another time.');
@@ -242,6 +245,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     const url = await this.daily.ensureRoom(room, slot.endAt, slot.capacity + 2);
     if (isHost && !b.hostStartedAt) await this.prisma.booking.updateMany({ where: { id: b.id, hostStartedAt: { isSet: false } }, data: { hostStartedAt: new Date() } });
     const token = await this.daily.token(room, { userId: user.id, userName: user.name, owner: isHost, startAt: slot.startAt, endAt: slot.endAt });
+    if (user.role !== 'ADMIN') this.activity.record(user.id, 'session_joined', { reference: b.reference });
     return { ...base, state: 'ready' as const, url, token, isHost };
   }
 
@@ -254,6 +258,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
       throw new ConflictException('Booking is no longer awaiting payment');
     }
     await this.prisma.booking.update({ where: { id: b.id }, data: { status: 'CONFIRMED', meetingLink: sessionUrl(b.reference) } });
+    this.activity.record(b.studentId, 'payment_succeeded', { reference: b.reference, label: b.mentor.user.name });
     if (b.promoCodeId) await this.prisma.promoCode.updateMany({ where: { id: b.promoCodeId, usedAt: null }, data: { usedAt: new Date(), bookingId: b.id } });
     const when = b.slot.startAt.toISOString();
     const mentorUserId = (await this.prisma.mentorProfile.findUnique({ where: { id: b.mentorId }, select: { userId: true } }))?.userId;
@@ -307,6 +312,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     const facts = (who: [string, string]): [string, string][] => [who, ['New time', emailDate(slot.startAt)], ['Previously', emailDate(oldStart)], ['Reference', b.reference]];
     await this.notify.send(b.student.email, 'Your session has been rescheduled', `Hi ${b.student.name.split(' ')[0]},\n\nYour session with ${b.mentor.user.name} has been moved to a new time. Your payment carries over, so there is nothing more to pay.\n\nWe will email you a reminder 30 minutes before it starts.`, b.student.id, { cta: { label: 'View your session', url: sessionUrl(b.reference) }, facts: facts(['Mentor', b.mentor.user.name]) });
     await this.notify.send(b.mentor.user.email, 'A session has been rescheduled', `Hi ${b.mentor.user.name.split(' ')[0]},\n\n${b.student.name} has moved their session with you to a new time. The original time is open again for other students.`, mentorUserId, { cta: { label: 'Open your dashboard', url: `${webUrl()}/dashboard/mentor` }, facts: facts(['Student', b.student.name]) });
+    this.activity.record(user.id, 'rescheduled', { reference: b.reference });
     return this.get(user, reference);
   }
 
@@ -342,6 +348,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     const cf = (who: [string, string]): [string, string][] => [who, ['Was scheduled for', emailDate(b.slot.startAt)], ['Reference', b.reference]];
     await this.notify.send(b.student.email, 'Your booking has been cancelled', `Hi ${b.student.name.split(' ')[0]},\n\nYour session with ${b.mentor.user.name} has been cancelled${isStudent ? '' : ` by ${by}`}.${refunded ? ' A full refund has been issued to your original payment method.' : ' You were not charged.'}\n\nYou are welcome to book another time whenever suits you.`, b.student.id, { cta: { label: 'Find another time', url: `${webUrl()}/mentors/${b.mentor.slug}` }, facts: cf(['Mentor', b.mentor.user.name]) });
     await this.notify.send(b.mentor.user.email, 'A session has been cancelled', `Hi ${b.mentor.user.name.split(' ')[0]},\n\nThe session with ${b.student.name} has been cancelled${isStudent ? ' by the student' : ''}. The time slot is open again for other students.`, (await this.prisma.mentorProfile.findUnique({ where: { id: b.mentorId }, select: { userId: true } }))?.userId, { cta: { label: 'Open your dashboard', url: `${webUrl()}/dashboard/mentor` }, facts: cf(['Student', b.student.name]) });
+    this.activity.record(b.studentId, 'booking_cancelled', { reference: b.reference, label: isStudent ? 'By the student' : 'By the team' });
     return this.get(user, reference);
   }
 
@@ -376,6 +383,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     await this.prisma.review.create({ data: { bookingId: b.id, rating: dto.rating, comment: dto.comment, status: 'PENDING' } });
     const mentorUserId = (await this.prisma.mentorProfile.findUnique({ where: { id: b.mentorId }, select: { userId: true } }))?.userId;
     await this.notify.send(b.mentor.user.email, `New feedback from ${b.student.name.split(' ')[0]}`, `Hi ${b.mentor.user.name.split(' ')[0]},\n\n${b.student.name} has left feedback on your session. It is private until you approve it. Open your dashboard to read it and choose whether it appears on your public profile.`, mentorUserId, { cta: { label: 'Review feedback', url: `${webUrl()}/dashboard/mentor` }, facts: [['Rating', `${dto.rating} out of 5`], ['Session', emailDate(b.slot.startAt)]] });
+    this.activity.record(user.id, 'review_left', { reference: b.reference });
     return this.get(user, reference);
   }
 }

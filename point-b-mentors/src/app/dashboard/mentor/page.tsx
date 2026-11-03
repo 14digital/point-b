@@ -10,6 +10,7 @@ import { Reveal } from "@/components/motion";
 import { api, errMsg } from "@/lib/api";
 import { STATUS_LABEL } from "@/lib/constants";
 import { fmtDay, fmtDayShort, fmtTime, formatMoney, groupByDay, initials, localTz } from "@/lib/format";
+import { useUrlTab } from "@/lib/use-url-tab";
 import { useApi, useNow } from "@/lib/use-api";
 import type { Booking, Interview, MentorSummary, MyReview } from "@/lib/types";
 
@@ -28,7 +29,7 @@ export default function MentorDashboardPage() {
 }
 
 function Dashboard() {
-  const [tab, setTab] = useState<Tab>("Sessions");
+  const [tab, setTab] = useUrlTab(TABS, "Sessions");
   const profile = useApi<Profile>("/mentors/me/profile");
   const slots = useApi<MySlot[]>("/mentors/me/slots");
   const bookings = useApi<MyBooking[]>("/mentors/me/bookings");

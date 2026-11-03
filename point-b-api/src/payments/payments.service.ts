@@ -3,12 +3,13 @@ import { createHmac, timingSafeEqual } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { BookingsService, HOLD_MINUTES } from '../bookings/bookings.service';
 import { AuthUser } from '../common/auth';
+import { ActivityService } from '../activity/activity.service';
 import { StripeService } from './stripe.service';
 
 @Injectable()
 export class PaymentsService {
   private readonly log = new Logger(PaymentsService.name);
-  constructor(private prisma: PrismaService, private bookings: BookingsService, private stripe: StripeService) {}
+  constructor(private prisma: PrismaService, private bookings: BookingsService, private stripe: StripeService, private activity: ActivityService) {}
 
   private async bankForCheckout() {
     const row = await this.prisma.setting.findUnique({ where: { key: 'bank_details' } });
@@ -66,6 +67,7 @@ export class PaymentsService {
     const { booking, payment } = await this.pendingPayment(user, reference);
     if (booking.status === 'CONFIRMED') return { state: 'paid' as const, reference };
     if (booking.status !== 'PENDING_PAYMENT') throw new BadRequestException('This booking hold has expired. Please choose a time again.');
+    if (!booking.awaitingVerification) this.activity.record(user.id, 'checkout_opened', { reference });
     if (booking.awaitingVerification) return { state: 'verifying' as const, reference, amountMinor: payment.amountMinor, currency: payment.currency, txnRef: payment.bankTxnRef };
     const base = {
       reference,

@@ -1,10 +1,11 @@
 "use client";
 
-import { useDeferredValue, useState } from "react";
+import { useDeferredValue, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Alert, Container, EmptyState, Skeleton } from "@/components/ui";
 import { MentorCard } from "@/components/mentor-card";
 import { MatchTeaser } from "@/components/match-teaser";
+import { track } from "@/lib/track";
 import { useApi } from "@/lib/use-api";
 import { LEVEL_LABEL } from "@/lib/constants";
 import type { Category, Level, MentorSummary } from "@/lib/types";
@@ -31,6 +32,14 @@ export function MentorsDirectory() {
 
   const facets = useApi<Facets>("/mentors/facets");
   const res = useApi<{ total: number; items: MentorSummary[] }>(`/mentors?${params}`);
+  // Records what people look for, once they've paused typing.
+  useEffect(() => {
+    const q = query.trim();
+    if (q.length < 2) return;
+    const t = setTimeout(() => track("searched", { label: q }), 1200);
+    return () => clearTimeout(t);
+  }, [query]);
+
   const clear = () => { setCategory(""); setExpertise(""); setLevel(""); setLanguage(""); setQuery(""); };
   const active = !!(category || expertise || level || language || query);
 

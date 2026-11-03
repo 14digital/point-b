@@ -9,6 +9,7 @@ import { api, errMsg } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { AGENDAS } from "@/lib/constants";
 import { Checkout } from "@/components/checkout";
+import { track } from "@/lib/track";
 import { MobileField } from "@/components/mobile-field";
 import { isValidPhone, type CountryCode } from "@/components/phone-input";
 import { fmtDay, fmtDayShort, fmtTime, formatMoney, groupByDay, localTz } from "@/lib/format";
@@ -77,7 +78,7 @@ export function BookingPanel({ mentor, onSlotTaken }: { mentor: MentorDetail; on
       </div>
       <div className="mt-3 grid grid-cols-3 gap-2">
         {day?.slots.map((s) => (
-          <button key={s.id} onClick={() => setSlot(s)} aria-pressed={slot?.id === s.id}
+          <button key={s.id} onClick={() => { track("slot_selected", { label: mentor.name }); setSlot(s); }} aria-pressed={slot?.id === s.id}
             className={`rounded-full border py-2.5 text-sm transition-colors ${slot?.id === s.id ? "border-ink bg-ink text-paper" : "border-line text-ink hover:border-ink"}`}>
             {fmtTime(s.startAt)}
             {s.kind === "GROUP" && <span className={`block text-[10px] leading-tight ${slot?.id === s.id ? "text-paper/70" : "text-ink-soft"}`}>{s.seatsLeft} of {s.capacity} seats</span>}
@@ -88,7 +89,7 @@ export function BookingPanel({ mentor, onSlotTaken }: { mentor: MentorDetail; on
         <svg width="12" height="12" viewBox="0 0 20 20" fill="none" aria-hidden><circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="1.4" /><path d="M2 10h16M10 2c2.5 2.5 2.5 13.5 0 16M10 2c-2.5 2.5-2.5 13.5 0 16" stroke="currentColor" strokeWidth="1.2" /></svg>
         Times in your timezone · {localTz()}
       </p>
-      <Button className="mt-6 w-full" size="lg" disabled={!slot} onClick={() => setOpen(true)}>
+      <Button className="mt-6 w-full" size="lg" disabled={!slot} onClick={() => { track("booking_started", { label: mentor.name }); setOpen(true); }}>
         {slot ? `Book ${fmtTime(slot.startAt)}, ${fmtDayShort(slot.startAt)}` : "Select a time"}
       </Button>
       {open && slot && <BookingModal mentor={mentor} slot={slot} price={price} onClose={() => setOpen(false)} onSlotTaken={() => { setOpen(false); setSlot(null); onSlotTaken(); }} />}
@@ -146,6 +147,11 @@ function BookingModal({ mentor, slot, price, onClose, onSlotTaken }: { mentor: M
   }, [onClose, step]);
 
   const needsAuth = !loading && !user;
+  useEffect(() => {
+    if (loading) return;
+    if (needsAuth) track("auth_prompted", { label: mentor.name });
+    else track("booking_step", { label: step });
+  }, [step, needsAuth, loading, mentor.name]);
   const wrongRole = !!user && user.role !== "STUDENT";
   const minorBlocked = !!user && user.isMinor && !user.guardianConsent;
   const index = STEPS.indexOf(step);

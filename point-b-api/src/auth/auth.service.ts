@@ -7,6 +7,7 @@ import { webUrl } from '../common/email-template';
 import { PasswordLinksService } from '../common/password-links.service';
 import { ChangePasswordDto, LoginDto, RegisterDto, ResetPasswordDto, UpdateContactDto } from './auth.dto';
 import { normalisePhone } from '../common/phone';
+import { ActivityService } from '../activity/activity.service';
 
 const RESET_LINK_HOURS = 1;
 
@@ -19,6 +20,7 @@ export class AuthService {
     private jwt: JwtService,
     private notify: NotificationsService,
     private links: PasswordLinksService,
+    private activity: ActivityService,
   ) {}
 
   async forgotPassword(rawEmail: string) {
@@ -89,6 +91,7 @@ export class AuthService {
         { cta: { label: 'Contact support', url: `${webUrl()}/contact` } },
       );
     }
+    this.activity.record(user.id, 'registered');
     return this.session(user);
   }
 
@@ -96,6 +99,7 @@ export class AuthService {
     const user = await this.prisma.user.findUnique({ where: { email: dto.email.toLowerCase() } });
     const ok = user && user.isActive && (await bcrypt.compare(dto.password, user.passwordHash));
     if (!user || !ok) throw new UnauthorizedException('Incorrect email or password');
+    if (user.role !== 'ADMIN') this.activity.record(user.id, 'signed_in');
     return this.session(user);
   }
 

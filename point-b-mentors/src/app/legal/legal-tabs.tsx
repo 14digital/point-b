@@ -49,11 +49,11 @@ const CONTENT: Record<TabId, { title: string; summary: string; inShort: string[]
     sections: [
       {
         heading: "What we collect",
-        body: "Account details, booking information, preparation notes you share with a mentor, and payment confirmation (not full card details, which are handled by our payment provider).",
+        body: "Account details, booking information, preparation notes you share with a mentor, and payment confirmation (not full card details, which are handled by our payment provider). We also record the pages you open and key steps such as starting a booking or attempting a payment, and keep this activity for 90 days. If you are not signed in this is linked only to a random ID stored in your browser, and it is linked to your account if you later sign in or sign up. Browsers that send a Global Privacy Control signal are not tracked as guests.",
       },
       {
         heading: "How it's used",
-        body: "To operate bookings, facilitate sessions, process payments, and improve the platform. Preparation notes are visible only to you, your mentor, and authorised POINT B staff reviewing a dispute or safeguarding concern.",
+        body: "To operate bookings, facilitate sessions, process payments, help you if something goes wrong, and improve the platform. Activity records are visible only to authorised POINT B staff. Preparation notes are visible only to you, your mentor, and authorised POINT B staff reviewing a dispute or safeguarding concern.",
       },
       {
         heading: "Data retention",

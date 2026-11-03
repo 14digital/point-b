@@ -5,6 +5,7 @@ import { Suspense, useEffect, useState, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import { Alert, Button, Container, Mark, Skeleton, Spinner } from "@/components/ui";
 import { api, errMsg } from "@/lib/api";
+import { track } from "@/lib/track";
 import { AGENDAS } from "@/lib/constants";
 import { CountrySelect, listingNote } from "@/components/country-select";
 import { countryCode, countryIn } from "@/components/flag";
@@ -111,6 +112,8 @@ function ApplyForm() {
 
   const [drafted, setDrafted] = useState(false);
 
+  useEffect(() => { if (!token) track("application_step", { label: STEPS[step].title }); }, [step, token]);
+
   const errors = showErrors ? validate(step, form) : {};
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -141,6 +144,7 @@ function ApplyForm() {
       } else {
         await api("/applications", { body });
       }
+      track("application_submitted");
       setSubmitted(true);
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (e) { setError(errMsg(e)); } finally { setBusy(false); }

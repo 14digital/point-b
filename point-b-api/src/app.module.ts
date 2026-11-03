@@ -11,11 +11,12 @@ import { MentorsModule } from './mentors/mentors.module';
 import { PaymentsModule } from './payments/payments.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { MatchModule } from './match/match.module';
+import { ActivityModule } from './activity/activity.module';
 
 @Module({
   imports: [
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 120 }]),
-    PrismaModule, CommonModule, AuthModule, MentorsModule, ApplicationsModule, BookingsModule, PaymentsModule, AdminModule, MatchModule,
+    PrismaModule, ActivityModule, CommonModule, AuthModule, MentorsModule, ApplicationsModule, BookingsModule, PaymentsModule, AdminModule, MatchModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },
