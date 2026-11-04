@@ -21,6 +21,7 @@
   --color-lilac: #ddd3f5;
 }
 
+
 @theme inline {
   --color-ink: var(--color-ink);
   --color-ink-soft: var(--color-ink-soft);
