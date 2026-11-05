@@ -1,4 +1,4 @@
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsDateString, IsBoolean, IsEnum, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsMongoId, IsDateString, IsBoolean, IsEnum, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
 import { ApplicationStatus, Currency, MentorCategory, MentorLevel, MentorStatus } from '@prisma/client';
 
 export class ScorecardDto {
@@ -12,6 +12,13 @@ export class ScorecardDto {
 export class InterviewDto {
   @IsDateString() startAt: string;
   @IsOptional() @IsString() @MaxLength(1000) note?: string;
+}
+
+export class RecordPayoutDto {
+  @IsMongoId() mentorId: string;
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(500) @IsMongoId({ each: true }) bookingIds: string[];
+  @IsOptional() @IsString() @MaxLength(120) reference?: string;
+  @IsOptional() @IsString() @MaxLength(500) note?: string;
 }
 
 export class InterviewSlotSettingsDto {

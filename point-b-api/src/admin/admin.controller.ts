@@ -1,28 +1,35 @@
-import { BadRequestException, Body, Controller, Get, Param, ParseEnumPipe, Patch, Post, Put, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, ParseEnumPipe, Patch, Post, Put, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { ApplicationStatus } from '@prisma/client';
+import { ApplicationStatus, Currency } from '@prisma/client';
 import { AuthUser, CurrentUser, Roles } from '../common/auth';
 import { AdminEditApplicationDto } from '../applications/applications.dto';
-import { InterviewDto, InterviewSlotSettingsDto, GuardianConsentDto, NotesDto, PricingRuleDto, ScorecardDto, SettingDto, StatusDto, UpdateMentorAdminDto, VerifyIdentityDto, RequestChangesDto } from './admin.dto';
+import { InterviewDto, InterviewSlotSettingsDto, RecordPayoutDto, GuardianConsentDto, NotesDto, PricingRuleDto, ScorecardDto, SettingDto, StatusDto, UpdateMentorAdminDto, VerifyIdentityDto, RequestChangesDto } from './admin.dto';
 import { AdminService } from './admin.service';
 import { InterviewSlotsService } from './interview-slots.service';
+import { PayoutsService } from './payouts.service';
+
+/** An ISO date from the query string, or undefined when it's left out. */
+const parseDate = (v?: string) => {
+  if (!v) return undefined;
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) throw new BadRequestException('Choose a valid date range');
+  return d;
+};
 
 @ApiTags('admin')
 @ApiBearerAuth()
 @Roles('ADMIN')
 @Controller('admin')
 export class AdminController {
-  constructor(private admin: AdminService, private slots: InterviewSlotsService) {}
+  constructor(private admin: AdminService, private slots: InterviewSlotsService, private payouts: PayoutsService) {}
 
-  @Get('stats') stats(@Query('from') from?: string, @Query('to') to?: string) {
-    const parse = (v?: string) => {
-      if (!v) return undefined;
-      const d = new Date(v);
-      if (Number.isNaN(d.getTime())) throw new BadRequestException('Choose a valid date range');
-      return d;
-    };
-    return this.admin.stats(parse(from), parse(to));
+  @Get('stats') stats(@Query('from') from?: string, @Query('to') to?: string) { return this.admin.stats(parseDate(from), parseDate(to)); }
+
+  @Get('payouts/mentors/:mentorId') mentorPayouts(@Param('mentorId') mentorId: string, @Query('currency', new ParseEnumPipe(Currency)) currency: Currency, @Query('from') from?: string, @Query('to') to?: string) {
+    return this.payouts.mentorSessions(mentorId, currency, parseDate(from), parseDate(to));
   }
+  @Post('payouts') recordPayout(@CurrentUser() u: AuthUser, @Body() dto: RecordPayoutDto) { return this.payouts.record(u.id, dto); }
+  @Delete('payouts/:id') undoPayout(@CurrentUser() u: AuthUser, @Param('id') id: string) { return this.payouts.undo(u.id, id); }
 
   @Get('applications') apps(@Query('status', new ParseEnumPipe(ApplicationStatus, { optional: true })) status?: ApplicationStatus) { return this.admin.listApplications(status); }
   @Get('interviews') interviews() { return this.admin.listInterviews(); }

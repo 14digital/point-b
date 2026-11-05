@@ -79,27 +79,27 @@ enum PaymentStatus {
 }
 
 model User {
-  id               String    @id @default(auto()) @map("_id") @db.ObjectId
-  email            String    @unique
-  passwordHash     String
-  name             String
-  role             Role      @default(STUDENT)
-  timezone         String    @default("Asia/Karachi")
-  dateOfBirth      DateTime?
-  guardianEmail    String?
-  guardianConsent  Boolean   @default(false)
-  phone            String?   // international format, e.g. +923001234567
-  whatsappAlerts   Boolean   @default(false) // the user agreed to receive their alerts on WhatsApp too
-  isActive         Boolean   @default(true)
+  id                  String    @id @default(auto()) @map("_id") @db.ObjectId
+  email               String    @unique
+  passwordHash        String
+  name                String
+  role                Role      @default(STUDENT)
+  timezone            String    @default("Asia/Karachi")
+  dateOfBirth         DateTime?
+  guardianEmail       String?
+  guardianConsent     Boolean   @default(false)
+  phone               String? // international format, e.g. +923001234567
+  whatsappAlerts      Boolean   @default(false) // the user agreed to receive their alerts on WhatsApp too
+  isActive            Boolean   @default(true)
   // Single-use set/reset password link. Only a SHA-256 hash is stored.
   resetTokenHash      String?
   resetTokenExpiresAt DateTime?
   passwordChangedAt   DateTime?
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
   mentorProfile MentorProfile?
-  bookings      Booking[]      @relation("StudentBookings")
+  bookings      Booking[]           @relation("StudentBookings")
   applications  MentorApplication[]
   savedMentors  SavedMentor[]
   auditLogs     AuditLog[]
@@ -107,90 +107,91 @@ model User {
 }
 
 model MentorProfile {
-  id                 String         @id @default(auto()) @map("_id") @db.ObjectId
-  userId             String @db.ObjectId         @unique
-  slug               String         @unique
-  title              String
-  organization       String
-  country            String
-  category           MentorCategory
-  level              MentorLevel
-  languages          String[]
-  expertise          String[]
-  industries         String[]
-  introduction       String
-  careerSummary      String
-  qualifications     String[]
-  achievements       String[]
-  helpTopics         String[]
-  outsideScope       String[]
-  linkedinUrl        String?
-  photoUrl           String?
-  priceOverrideMinor Int?
-  verified           Boolean        @default(false)
-  isDemo             Boolean        @default(false)
-  status             MentorStatus   @default(ONBOARDING)
+  id                  String         @id @default(auto()) @map("_id") @db.ObjectId
+  userId              String         @unique @db.ObjectId
+  slug                String         @unique
+  title               String
+  organization        String
+  country             String
+  category            MentorCategory
+  level               MentorLevel
+  languages           String[]
+  expertise           String[]
+  industries          String[]
+  introduction        String
+  careerSummary       String
+  qualifications      String[]
+  achievements        String[]
+  helpTopics          String[]
+  outsideScope        String[]
+  linkedinUrl         String?
+  photoUrl            String?
+  priceOverrideMinor  Int?
+  verified            Boolean        @default(false)
+  isDemo              Boolean        @default(false)
+  status              MentorStatus   @default(ONBOARDING)
   agreementAcceptedAt DateTime?
-  createdAt          DateTime       @default(now())
-  updatedAt          DateTime       @updatedAt
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
 
   user     User               @relation(fields: [userId], references: [id])
   slots    AvailabilitySlot[]
   bookings Booking[]
   saved    SavedMentor[]
+  payouts  MentorPayout[]
 
   @@index([status, category])
 }
 
 model MentorApplication {
-  id                  String            @id @default(auto()) @map("_id") @db.ObjectId
-  userId              String? @db.ObjectId
-  fullName            String
-  email               String
-  phone               String
-  countryOfResidence  String
-  professionalLocation String
-  linkedinUrl         String
-  headline            String
-  currentRole         String
-  organization        String
-  yearsExperience     Int
-  industry            String
-  specialistAreas     String[]
-  strengths           String[] // "My strongest points are..." from the guided form
-  qualifications      String
-  languages           String[]
-  previousMentorshipExperience String @default("")
-  topicsOffered       String[]
-  preferredPricing    String
-  weeklyAvailability  String
-  motivation          String
-  participation       String
-  agreedToTerms       Boolean
-  status              ApplicationStatus @default(SUBMITTED)
-  internalNotes       String            @default("")
-  changesRequested    String? // what the applicant was asked to change, as sent to them
-  changesRequestedAt  DateTime?
+  id                           String            @id @default(auto()) @map("_id") @db.ObjectId
+  userId                       String?           @db.ObjectId
+  fullName                     String
+  email                        String
+  phone                        String
+  countryOfResidence           String
+  professionalLocation         String
+  linkedinUrl                  String
+  headline                     String
+  currentRole                  String
+  organization                 String
+  yearsExperience              Int
+  industry                     String
+  specialistAreas              String[]
+  strengths                    String[] // "My strongest points are..." from the guided form
+  qualifications               String
+  languages                    String[]
+  previousMentorshipExperience String            @default("")
+  topicsOffered                String[]
+  preferredPricing             String
+  weeklyAvailability           String
+  motivation                   String
+  participation                String
+  agreedToTerms                Boolean
+  status                       ApplicationStatus @default(SUBMITTED)
+  internalNotes                String            @default("")
+  changesRequested             String? // what the applicant was asked to change, as sent to them
+  changesRequestedAt           DateTime?
   // Secure "update your application" link. Only a SHA-256 hash is stored; cleared on use or on any status change.
-  editTokenHash       String?
-  editTokenExpiresAt  DateTime?
-  resubmittedAt       DateTime?
-  resubmissionCount   Int               @default(0)
-  identityVerified    Boolean           @default(false)
+  editTokenHash                String?
+  editTokenExpiresAt           DateTime?
+  resubmittedAt                DateTime?
+  resubmissionCount            Int               @default(0)
+  identityVerified             Boolean           @default(false)
   // Interview booked by an admin. interviewAt is cleared if the application is rejected before it happens.
-  interviewAt         DateTime?
-  interviewDurationMin Int?
+  interviewAt                  DateTime?
+  interviewDurationMin         Int?
   // Join credentials for the in-app interview room: only a hash of the applicant's private link is kept.
-  interviewTokenHash  String?
-  interviewHostStartedAt DateTime?
-  interviewNote       String?
-  interviewScheduledAt DateTime?
-  interviewScheduledBy String? @db.ObjectId
-  mentorProfileId     String? @db.ObjectId
-  submittedAt         DateTime          @default(now())
-  updatedAt           DateTime          @updatedAt
+  interviewTokenHash           String?
+  interviewHostStartedAt       DateTime?
+  interviewNote                String?
+  interviewScheduledAt         DateTime?
+  interviewScheduledBy         String?           @db.ObjectId
+  mentorProfileId              String?           @db.ObjectId
+  submittedAt                  DateTime          @default(now())
+  updatedAt                    DateTime          @updatedAt
 
-  user      User?              @relation(fields: [userId], references: [id])
+  user      User?               @relation(fields: [userId], references: [id])
   scorecard InterviewScorecard?
 
   @@index([status])
@@ -199,14 +200,14 @@ model MentorApplication {
 
 model InterviewScorecard {
   id            String   @id @default(auto()) @map("_id") @db.ObjectId
-  applicationId String @db.ObjectId   @unique
+  applicationId String   @unique @db.ObjectId
   experience    Int
   expertise     Int
   communication Int
   approach      Int
   conduct       Int
   total         Int
-  reviewerId    String @db.ObjectId
+  reviewerId    String   @db.ObjectId
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -214,15 +215,15 @@ model InterviewScorecard {
 }
 
 model AvailabilitySlot {
-  id        String   @id @default(auto()) @map("_id") @db.ObjectId
-  mentorId  String @db.ObjectId
-  startAt   DateTime
-  endAt     DateTime
-  isBooked  Boolean  @default(false) // true once every seat is taken
-  kind      SessionKind @default(ONE_TO_ONE)
-  capacity  Int      @default(1)
-  seatsTaken Int     @default(0)
-  createdAt DateTime @default(now())
+  id         String      @id @default(auto()) @map("_id") @db.ObjectId
+  mentorId   String      @db.ObjectId
+  startAt    DateTime
+  endAt      DateTime
+  isBooked   Boolean     @default(false) // true once every seat is taken
+  kind       SessionKind @default(ONE_TO_ONE)
+  capacity   Int         @default(1)
+  seatsTaken Int         @default(0)
+  createdAt  DateTime    @default(now())
 
   mentor   MentorProfile @relation(fields: [mentorId], references: [id], onDelete: Cascade)
   bookings Booking[]
@@ -232,51 +233,57 @@ model AvailabilitySlot {
 }
 
 model Booking {
-  id                String        @id @default(auto()) @map("_id") @db.ObjectId
-  reference         String        @unique
-  studentId         String @db.ObjectId
-  mentorId          String @db.ObjectId
-  slotId            String @db.ObjectId
-  agenda            String
-  currentSituation  String
-  usefulOutcome     String
-  materialsToReview String        @default("")
-  sessionKind       SessionKind   @default(ONE_TO_ONE)
-  reminderSentAt    DateTime?
-  hostStartedAt     DateTime? // set when the mentor first opens the call room
-  rescheduleCount   Int           @default(0)
-  rescheduledAt     DateTime?
-  priceMinor        Int           // what the student pays, after any promo discount
-  currency          Currency
+  id                   String        @id @default(auto()) @map("_id") @db.ObjectId
+  reference            String        @unique
+  studentId            String        @db.ObjectId
+  mentorId             String        @db.ObjectId
+  slotId               String        @db.ObjectId
+  agenda               String
+  currentSituation     String
+  usefulOutcome        String
+  materialsToReview    String        @default("")
+  sessionKind          SessionKind   @default(ONE_TO_ONE)
+  reminderSentAt       DateTime?
+  hostStartedAt        DateTime? // set when the mentor first opens the call room
+  rescheduleCount      Int           @default(0)
+  rescheduledAt        DateTime?
+  priceMinor           Int // what the student pays, after any promo discount
+  currency             Currency
   // Pricing snapshot taken when the booking is made. Unset on bookings made before these existed.
-  listPriceMinor    Int?          // price before any promo discount
-  discountMinor     Int?
-  promoCodeId       String?       @db.ObjectId
-  repeatStudent     Boolean?      // the student had already had a paid session with this mentor
-  commissionPercent Int?          // platform fee rate applied; null while no commission is configured
-  platformFeeMinor  Int?
+  listPriceMinor       Int? // price before any promo discount
+  discountMinor        Int?
+  promoCodeId          String?       @db.ObjectId
+  repeatStudent        Boolean? // the student had already had a paid session with this mentor
+  commissionPercent    Int? // platform fee rate applied; null while no commission is configured
+  platformFeeMinor     Int?
+  // Set once an admin records that the mentor has been paid for this session.
+  payoutId             String?       @db.ObjectId
   // The student sent a bank / QR transfer and is waiting for an admin to verify it; the slot stays held meanwhile.
   awaitingVerification Boolean?
-  status            BookingStatus @default(PENDING_PAYMENT)
-  meetingLink       String?
-  cancelledAt       DateTime?
-  cancelReason      String?
-  completedAt       DateTime?
-  createdAt         DateTime      @default(now())
-  updatedAt         DateTime      @updatedAt
+  status               BookingStatus @default(PENDING_PAYMENT)
+  meetingLink          String?
+  cancelledAt          DateTime?
+  cancelReason         String?
+  completedAt          DateTime?
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
 
   student  User             @relation("StudentBookings", fields: [studentId], references: [id])
   mentor   MentorProfile    @relation(fields: [mentorId], references: [id])
   slot     AvailabilitySlot @relation(fields: [slotId], references: [id])
   payments Payment[]
+  payout   MentorPayout?    @relation(fields: [payoutId], references: [id])
   review   Review?
 
   @@index([studentId, status])
   @@index([mentorId, status])
   @@index([slotId])
+  @@index([payoutId])
 }
 
-/** A single-use discount a mentor gives one returning student for their next 1:1 session with that mentor. */
+/**
+ * A single-use discount a mentor gives one returning student for their next 1:1 session with that mentor.
+ */
 model PromoCode {
   id         String    @id @default(auto()) @map("_id") @db.ObjectId
   code       String    @unique
@@ -294,44 +301,64 @@ model PromoCode {
   @@index([studentId])
 }
 
+/**
+ * Money an admin has sent a mentor, covering one or more of their paid sessions. Deleting it marks those sessions unpaid again.
+ */
+model MentorPayout {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  mentorId    String   @db.ObjectId
+  currency    Currency
+  amountMinor Int
+  sessions    Int
+  reference   String? // bank transfer or other payment reference
+  note        String?
+  paidBy      String   @db.ObjectId
+  createdAt   DateTime @default(now())
+
+  mentor   MentorProfile @relation(fields: [mentorId], references: [id])
+  bookings Booking[]
+
+  @@index([mentorId])
+}
+
 model Payment {
-  id            String        @id @default(auto()) @map("_id") @db.ObjectId
-  bookingId     String @db.ObjectId
-  provider      String
-  providerRef   String        @unique
-  amountMinor   Int
-  currency      Currency
-  status        PaymentStatus @default(PENDING)
-  processedAt   DateTime?
+  id              String        @id @default(auto()) @map("_id") @db.ObjectId
+  bookingId       String        @db.ObjectId
+  provider        String
+  providerRef     String        @unique
+  amountMinor     Int
+  currency        Currency
+  status          PaymentStatus @default(PENDING)
+  processedAt     DateTime?
   // Bank / QR transfer details the student submitted, and the admin's review of them.
   bankTxnRef      String?
   bankSenderName  String?
   bankSubmittedAt DateTime?
   reviewedAt      DateTime?
-  reviewedBy      String? @db.ObjectId
+  reviewedBy      String?       @db.ObjectId
   reviewNote      String?
-  createdAt     DateTime      @default(now())
+  createdAt       DateTime      @default(now())
 
   booking Booking @relation(fields: [bookingId], references: [id])
 }
 
 model Review {
-  id        String   @id @default(auto()) @map("_id") @db.ObjectId
-  bookingId String @db.ObjectId   @unique
-  rating    Int
-  comment   String
+  id          String        @id @default(auto()) @map("_id") @db.ObjectId
+  bookingId   String        @unique @db.ObjectId
+  rating      Int
+  comment     String
   // Unset on reviews created before moderation existed; those count as approved. New reviews start PENDING until the mentor approves.
-  status    ReviewStatus?
+  status      ReviewStatus?
   moderatedAt DateTime?
-  createdAt DateTime @default(now())
+  createdAt   DateTime      @default(now())
 
   booking Booking @relation(fields: [bookingId], references: [id])
 }
 
 model SavedMentor {
-  id       String   @id @default(auto()) @map("_id") @db.ObjectId
-  userId   String @db.ObjectId
-  mentorId String @db.ObjectId
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String   @db.ObjectId
+  mentorId  String   @db.ObjectId
   createdAt DateTime @default(now())
 
   user   User          @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -344,7 +371,7 @@ model PricingRule {
   id         String      @id @default(auto()) @map("_id") @db.ObjectId
   level      MentorLevel
   currency   Currency
-  priceMinor Int  // standard price: what a mentor in this tier charges unless given their own price
+  priceMinor Int // standard price: what a mentor in this tier charges unless given their own price
   // Allowed range for this tier. Unset on rules saved before ranges existed; the defaults in pricing.ts apply.
   minMinor   Int?
   maxMinor   Int?
@@ -359,17 +386,19 @@ model Setting {
   updatedAt DateTime @updatedAt
 }
 
-/** What users and anonymous guests do, for the admin tracking view. Deleted after 90 days. */
+/**
+ * What users and anonymous guests do, for the admin tracking view. Deleted after 90 days.
+ */
 model ActivityEvent {
   id        String   @id @default(auto()) @map("_id") @db.ObjectId
   userId    String?  @db.ObjectId // null while a guest; filled in when they sign in or sign up
-  visitorId String?  // random browser ID, no personal data
+  visitorId String? // random browser ID, no personal data
   type      String
   page      String?
   label     String?
   reference String?
   device    String?
-  referrer  String?  // the other site they arrived from: host only
+  referrer  String? // the other site they arrived from: host only
   createdAt DateTime @default(now())
 
   @@index([userId, createdAt])
@@ -378,14 +407,16 @@ model ActivityEvent {
   @@index([createdAt])
 }
 
-/** Every WhatsApp message we try to send, with the delivery status Meta reports back. */
+/**
+ * Every WhatsApp message we try to send, with the delivery status Meta reports back.
+ */
 model WhatsAppMessage {
   id          String   @id @default(auto()) @map("_id") @db.ObjectId
-  wamid       String?  // Meta's message ID
+  wamid       String? // Meta's message ID
   toPhone     String
   title       String
   template    String
-  status      String   // rejected, accepted, sent, delivered, read or failed
+  status      String // rejected, accepted, sent, delivered, read or failed
   errorCode   Int?
   errorTitle  String?
   errorDetail String?
@@ -396,7 +427,9 @@ model WhatsAppMessage {
   @@index([createdAt])
 }
 
-/** A trigger an admin has marked as handled, so it stops showing. */
+/**
+ * A trigger an admin has marked as handled, so it stops showing.
+ */
 model HandledTrigger {
   id        String   @id @default(auto()) @map("_id") @db.ObjectId
   triggerId String   @unique
@@ -406,7 +439,7 @@ model HandledTrigger {
 
 model AuditLog {
   id         String   @id @default(auto()) @map("_id") @db.ObjectId
-  adminId    String @db.ObjectId
+  adminId    String   @db.ObjectId
   action     String
   entityType String
   entityId   String
@@ -419,13 +452,13 @@ model AuditLog {
 }
 
 model Notification {
-  id        String   @id @default(auto()) @map("_id") @db.ObjectId
-  userId    String? @db.ObjectId
-  toEmail   String
-  subject   String
-  body      String
-  sentAt    DateTime @default(now())
-  readAt    DateTime?
+  id      String    @id @default(auto()) @map("_id") @db.ObjectId
+  userId  String?   @db.ObjectId
+  toEmail String
+  subject String
+  body    String
+  sentAt  DateTime  @default(now())
+  readAt  DateTime?
 
   user User? @relation(fields: [userId], references: [id])
 }

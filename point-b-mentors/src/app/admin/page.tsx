@@ -77,7 +77,7 @@ function Overview({ onReview, onOpenApp }: { onReview: () => void; onOpenApp: (i
   const [range, setRange] = useUrlDateRange();
   const query = rangeQuery(range);
   const filtered = query !== "";
-  const { data: s, loading, error } = useApi<Stats>(`/admin/stats${filtered ? `?${query}` : ""}`);
+  const { data: s, loading, error, reload } = useApi<Stats>(`/admin/stats${filtered ? `?${query}` : ""}`);
   const interviews = useApi<AdminInterview[]>("/admin/interviews");
   const head = (
     <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
@@ -161,7 +161,7 @@ function Overview({ onReview, onOpenApp }: { onReview: () => void; onOpenApp: (i
       {!s.commissionConfigured && <Alert tone="info">No platform commission is configured for every tier, so platform revenue and mentor payouts are not calculated. Set the tier rates under Pricing &amp; settings.</Alert>}
 
       <div className="grid gap-6 md:grid-cols-2">
-        {s.finance.map((f) => <FinanceBreakdown key={f.currency} f={f} period={rangeLabel(range)} repeatPercent={s.commission.repeat} />)}
+        {s.finance.map((f) => <FinanceBreakdown key={f.currency} f={f} period={rangeLabel(range)} query={query} repeatPercent={s.commission.repeat} onChanged={reload} />)}
       </div>
     </div>
   );

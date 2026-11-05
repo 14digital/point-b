@@ -394,7 +394,7 @@ export class AdminService {
       this.prisma.booking.findMany({
         where: { status: { in: ['CONFIRMED', 'COMPLETED'] }, ...made },
         select: {
-          currency: true, priceMinor: true, listPriceMinor: true, platformFeeMinor: true, commissionPercent: true, discountMinor: true, repeatStudent: true, sessionKind: true,
+          currency: true, priceMinor: true, listPriceMinor: true, platformFeeMinor: true, commissionPercent: true, discountMinor: true, repeatStudent: true, sessionKind: true, payoutId: true,
           payments: { where: { status: 'SUCCEEDED' }, select: { provider: true }, take: 1 },
           mentor: { select: { id: true, level: true, user: { select: { name: true } } } },
         },
@@ -407,7 +407,9 @@ export class AdminService {
       const grossMinor = rows.reduce((a, b) => a + b.priceMinor, 0);
       const fees = rows.map(feeFor);
       const feeMinor = fees.some((f) => f == null) ? null : fees.reduce((a: number, f) => a + (f ?? 0), 0);
-      return { sessions: rows.length, grossMinor, feeMinor, payoutMinor: feeMinor == null ? null : grossMinor - feeMinor };
+      const payoutMinor = feeMinor == null ? null : grossMinor - feeMinor;
+      const paidOutMinor = payoutMinor == null ? null : rows.filter((b) => b.payoutId).reduce((a, b) => a + b.priceMinor - feeFor(b)!, 0);
+      return { sessions: rows.length, grossMinor, feeMinor, payoutMinor, paidOutMinor, dueMinor: payoutMinor == null ? null : payoutMinor - paidOutMinor!, unpaidSessions: rows.filter((b) => !b.payoutId).length };
     };
     const groupRows = (rows: typeof paid, key: (b: (typeof paid)[number]) => string) => {
       const groups = new Map<string, typeof paid>();
@@ -425,6 +427,7 @@ export class AdminService {
         currency, grossMinor: total.grossMinor, refundedMinor: sum(refunded), refundedCount: refunded.length,
         unpaidCancelledMinor: sum(dropped) - sum(refunded), unpaidCancelledCount: dropped.length - refunded.length,
         platformRevenueMinor: configured ? total.feeMinor : null, mentorPayoutsMinor: configured ? total.payoutMinor : null,
+        payoutsPaidMinor: configured ? total.paidOutMinor : null, payoutsDueMinor: configured ? total.dueMinor : null,
         listValueMinor: rows.reduce((a, b) => a + (b.listPriceMinor ?? b.priceMinor), 0),
         discountsMinor: rows.reduce((a, b) => a + (b.discountMinor ?? 0), 0), repeatSessions: rows.filter((b) => b.repeatStudent).length,
         sessions: total.sessions,
