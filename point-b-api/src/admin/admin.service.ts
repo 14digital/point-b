@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { ApplicationStatus, MentorCategory, Prisma } from '@prisma/client';
+import { ApplicationStatus, MentorCategory, MentorLevel, Prisma } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { createHash, randomBytes } from 'crypto';
 import { DailyService } from '../calls/daily.service';
@@ -18,7 +18,8 @@ const categoryFor = (country: string): MentorCategory => (/pakistan/i.test(count
 export const hashToken = (t: string) => createHash('sha256').update(t).digest('hex');
 import { DEFAULT_PRICES, commissionRules, currencyFor, feeOf, groupPercent, priceFor, tierRule } from '../common/pricing';
 import { AdminEditApplicationDto } from '../applications/applications.dto';
-import { InterviewDto, PricingRuleDto, ScorecardDto, SettingDto, UpdateMentorAdminDto } from './admin.dto';
+import { InterviewDto, InterviewSlotSettingsDto, PricingRuleDto, ScorecardDto, SettingDto, UpdateMentorAdminDto } from './admin.dto';
+import { INTERVIEW_MINUTES, InterviewSlotsService } from './interview-slots.service';
 
 const S = ApplicationStatus;
 export const TRANSITIONS: Record<ApplicationStatus, ApplicationStatus[]> = {
@@ -42,7 +43,7 @@ const slugify = (s: string) => s.toLowerCase().normalize('NFKD').replace(/[^\w\s
 
 @Injectable()
 export class AdminService {
-  constructor(private prisma: PrismaService, private notify: NotificationsService, private links: PasswordLinksService, private daily: DailyService) {}
+  constructor(private prisma: PrismaService, private notify: NotificationsService, private links: PasswordLinksService, private daily: DailyService, private slots: InterviewSlotsService) {}
 
   audit(adminId: string, action: string, entityType: string, entityId: string, detail = '') {
     return this.prisma.auditLog.create({ data: { adminId, action, entityType, entityId, detail } });
@@ -72,18 +73,19 @@ export class AdminService {
     const a = await this.getApplication(id);
     if (!['SHORTLISTED', 'INTERVIEW_SCHEDULED'].includes(a.status)) throw new BadRequestException('An interview can be scheduled once the applicant is shortlisted');
     const start = new Date(dto.startAt);
-    if (Number.isNaN(start.getTime()) || start.getTime() < Date.now()) throw new BadRequestException('Choose a date and time in the future');
-    const end = new Date(start.getTime() + dto.durationMinutes * 60_000);
+    if (Number.isNaN(start.getTime()) || start.getTime() < Date.now()) throw new BadRequestException('Choose a slot in the future');
+    await this.slots.assertOffered(start);
+    const end = new Date(start.getTime() + INTERVIEW_MINUTES * 60_000);
     const others = await this.prisma.mentorApplication.findMany({ where: { status: 'INTERVIEW_SCHEDULED', id: { not: id }, interviewAt: { gte: new Date(start.getTime() - 120 * 60_000), lt: end } } });
     const clash = others.find((o) => o.interviewAt && o.interviewAt.getTime() + (o.interviewDurationMin ?? 30) * 60_000 > start.getTime());
-    if (clash) throw new BadRequestException(`That overlaps your interview with ${clash.fullName}. Pick another time.`);
+    if (clash) throw new BadRequestException(`That slot is taken by your interview with ${clash.fullName}. Pick another.`);
     // A fresh private link for the applicant, who has no account yet. Rescheduling replaces the old one.
     const token = randomBytes(32).toString('base64url');
     const joinUrl = `${webUrl()}/interview/${id}?t=${token}`;
     const rescheduled = a.status === 'INTERVIEW_SCHEDULED';
     await this.prisma.mentorApplication.update({
       where: { id },
-      data: { status: 'INTERVIEW_SCHEDULED', interviewAt: start, interviewDurationMin: dto.durationMinutes, interviewTokenHash: hashToken(token), interviewHostStartedAt: null, interviewNote: dto.note?.trim() || null, interviewScheduledAt: new Date(), interviewScheduledBy: adminId },
+      data: { status: 'INTERVIEW_SCHEDULED', interviewAt: start, interviewDurationMin: INTERVIEW_MINUTES, interviewTokenHash: hashToken(token), interviewHostStartedAt: null, interviewNote: dto.note?.trim() || null, interviewScheduledAt: new Date(), interviewScheduledBy: adminId },
     });
     await this.audit(adminId, rescheduled ? 'INTERVIEW_RESCHEDULED' : 'INTERVIEW_SCHEDULED', 'MentorApplication', id, start.toISOString());
     const first = a.fullName.split(' ')[0];
@@ -94,9 +96,15 @@ export class AdminService {
       rescheduled ? 'Your interview has been rescheduled' : 'Your interview is scheduled',
       `Hi ${first},\n\n${rescheduled ? 'Your mentor interview has moved to a new time.' : 'Thank you for your patience. We have booked your mentor interview.'} It is a short conversation about your background and how you would approach mentoring.${dto.note?.trim() ? `\n\nA note from our team: ${dto.note.trim()}` : ''}\n\nThe button above opens your private interview room. It becomes active 10 minutes before the start, so you can use the same link then. Please do not share it. If this time no longer works, reply to this email and we will find another.`,
       undefined,
-      { cta: { label: 'Join your interview', url: joinUrl }, facts: [['When', emailDate(start)], ['Duration', `${dto.durationMinutes} minutes`], ['Where', 'Online, on POINT B. No download needed.'], ['Add to calendar', gcal]] },
+      { cta: { label: 'Join your interview', url: joinUrl }, facts: [['When', emailDate(start, (await this.slots.settings()).timezone)], ['Duration', `${INTERVIEW_MINUTES} minutes`], ['Where', 'Online, on POINT B. No download needed.'], ['Add to calendar', gcal]] },
     );
     return this.getApplication(id);
+  }
+
+  async saveInterviewSlots(adminId: string, dto: InterviewSlotSettingsDto) {
+    const saved = await this.slots.saveSettings(dto);
+    await this.audit(adminId, 'INTERVIEW_SLOTS_CHANGED', 'Setting', 'interview_slots', `${saved.weekly.flat().length} weekly slots, ${saved.timezone}`);
+    return saved;
   }
 
   async saveScorecard(adminId: string, id: string, dto: ScorecardDto) {
@@ -173,7 +181,7 @@ export class AdminService {
   async setStatus(adminId: string, id: string, next: ApplicationStatus, notes?: string) {
     const a = await this.getApplication(id);
     if (next === 'CHANGES_REQUESTED') throw new BadRequestException('Use "Request changes" and describe what the applicant should change.');
-    if (next === 'INTERVIEW_SCHEDULED') throw new BadRequestException('Use "Schedule interview" and pick a date and time.');
+    if (next === 'INTERVIEW_SCHEDULED') throw new BadRequestException('Use "Schedule interview" and pick a slot.');
     if (!TRANSITIONS[a.status].includes(next)) throw new BadRequestException(`Cannot move an application from ${a.status} to ${next}`);
     let account: { userId: string; isNew: boolean } | undefined;
 
@@ -343,60 +351,104 @@ export class AdminService {
   }
 
   /** Video usage in participant-minutes: Daily's own record when available, otherwise estimated from calls that opened. */
-  private async videoUsage() {
+  private async videoUsage(from?: Date, to?: Date) {
     const limitMinutes = Number(process.env.VIDEO_MINUTES_LIMIT) || 10_000;
-    const real = await this.daily.usedMinutes();
-    if (real !== null) return { usedMinutes: real, limitMinutes, source: 'daily' as const };
+    const within = (at: Date) => (!from || at >= from) && (!to || at < to);
+    const real = await this.daily.usedMinutes(from, to);
+    if (real !== null) return { usedMinutes: real.total, periodMinutes: real.period, limitMinutes, source: 'daily' as const };
     const [bookings, interviews] = await Promise.all([
       this.prisma.booking.findMany({
         where: { OR: [{ status: 'COMPLETED' }, { status: 'CONFIRMED', hostStartedAt: { isSet: true, not: null } }] },
         select: { slotId: true, sessionKind: true, slot: { select: { startAt: true, endAt: true } } },
       }),
-      this.prisma.mentorApplication.findMany({ where: { interviewHostStartedAt: { isSet: true, not: null } }, select: { interviewDurationMin: true } }),
+      this.prisma.mentorApplication.findMany({ where: { interviewHostStartedAt: { isSet: true, not: null } }, select: { interviewDurationMin: true, interviewAt: true } }),
     ]);
     const mins = (b: { slot: { startAt: Date; endAt: Date } }) => Math.round((b.slot.endAt.getTime() - b.slot.startAt.getTime()) / 60_000);
-    let used = 0;
+    let used = 0, period = 0;
+    const add = (n: number, at: Date | null) => { used += n; if (at && within(at)) period += n; };
     const hosted = new Set<string>();
     for (const b of bookings) {
-      used += mins(b); // the student
-      if (!hosted.has(b.slotId)) { hosted.add(b.slotId); used += mins(b); } // the mentor, once per slot even for groups
+      add(mins(b), b.slot.startAt); // the student
+      if (!hosted.has(b.slotId)) { hosted.add(b.slotId); add(mins(b), b.slot.startAt); } // the mentor, once per slot even for groups
     }
-    for (const i of interviews) used += 2 * (i.interviewDurationMin ?? 30);
-    return { usedMinutes: used, limitMinutes, source: 'estimate' as const };
+    for (const i of interviews) add(2 * (i.interviewDurationMin ?? 30), i.interviewAt);
+    return { usedMinutes: used, periodMinutes: period, limitMinutes, source: 'estimate' as const };
   }
 
-  async stats() {
-    const video = await this.videoUsage();
-    const [apps, mentors, students, bookings, money, repeat, rules, paid] = await Promise.all([
+  /** Dashboard figures. Bookings count from when they were made, applications from when they were submitted. */
+  async stats(from?: Date, to?: Date) {
+    const inRange = from || to ? { ...(from && { gte: from }), ...(to && { lt: to }) } : undefined;
+    const made = inRange ? { createdAt: inRange } : {};
+    const video = await this.videoUsage(from, to);
+    const [apps, appsOverall, mentors, newMentors, studentsTotal, students, bookings, cancelled, repeat, rules, paid] = await Promise.all([
+      this.prisma.mentorApplication.groupBy({ by: ['status'], where: inRange ? { submittedAt: inRange } : {}, _count: true }),
       this.prisma.mentorApplication.groupBy({ by: ['status'], _count: true }),
       this.prisma.mentorProfile.groupBy({ by: ['status'], _count: true }),
+      this.prisma.mentorProfile.count({ where: { status: 'ACTIVE', ...made } }),
       this.prisma.user.count({ where: { role: 'STUDENT' } }),
-      this.prisma.booking.groupBy({ by: ['status'], _count: true }),
-      this.prisma.booking.groupBy({ by: ['currency', 'status'], where: { status: { in: ['CONFIRMED', 'COMPLETED', 'CANCELLED'] } }, _sum: { priceMinor: true } }),
-      this.prisma.booking.groupBy({ by: ['studentId'], where: { status: { in: ['CONFIRMED', 'COMPLETED'] } }, _count: true, having: { studentId: { _count: { gt: 1 } } } }),
+      this.prisma.user.count({ where: { role: 'STUDENT', ...made } }),
+      this.prisma.booking.groupBy({ by: ['status'], where: made, _count: true }),
+      this.prisma.booking.findMany({ where: { status: 'CANCELLED', ...made }, select: { currency: true, priceMinor: true, payments: { where: { status: 'REFUNDED' }, select: { id: true } } } }),
+      this.prisma.booking.groupBy({ by: ['studentId'], where: { status: { in: ['CONFIRMED', 'COMPLETED'] }, ...made }, _count: true, having: { studentId: { _count: { gt: 1 } } } }),
       commissionRules(this.prisma),
-      this.prisma.booking.findMany({ where: { status: { in: ['CONFIRMED', 'COMPLETED'] } }, select: { currency: true, priceMinor: true, platformFeeMinor: true, discountMinor: true, repeatStudent: true, mentor: { select: { level: true } } } }),
+      this.prisma.booking.findMany({
+        where: { status: { in: ['CONFIRMED', 'COMPLETED'] }, ...made },
+        select: {
+          currency: true, priceMinor: true, listPriceMinor: true, platformFeeMinor: true, commissionPercent: true, discountMinor: true, repeatStudent: true, sessionKind: true,
+          payments: { where: { status: 'SUCCEEDED' }, select: { provider: true }, take: 1 },
+          mentor: { select: { id: true, level: true, user: { select: { name: true } } } },
+        },
+      }),
     ]);
-    const sumFor = (currency: 'PKR' | 'GBP', statuses: string[]) => money.filter((m) => m.currency === currency && statuses.includes(m.status)).reduce((s, m) => s + (m._sum.priceMinor ?? 0), 0);
     // Each booking's fee was fixed when it was made (tier rate, or the repeat-student rate); older ones use today's tier rate.
     const feeFor = (b: (typeof paid)[number]) => b.platformFeeMinor ?? (rules.tier[b.mentor.level] == null ? null : feeOf(b.priceMinor, rules.tier[b.mentor.level]!));
+    const rateFor = (b: (typeof paid)[number]) => b.commissionPercent ?? rules.tier[b.mentor.level];
+    const tally = (rows: typeof paid) => {
+      const grossMinor = rows.reduce((a, b) => a + b.priceMinor, 0);
+      const fees = rows.map(feeFor);
+      const feeMinor = fees.some((f) => f == null) ? null : fees.reduce((a: number, f) => a + (f ?? 0), 0);
+      return { sessions: rows.length, grossMinor, feeMinor, payoutMinor: feeMinor == null ? null : grossMinor - feeMinor };
+    };
+    const groupRows = (rows: typeof paid, key: (b: (typeof paid)[number]) => string) => {
+      const groups = new Map<string, typeof paid>();
+      for (const b of rows) groups.set(key(b), [...(groups.get(key(b)) ?? []), b]);
+      return [...groups.values()];
+    };
     const configured = Object.values(rules.tier).some((v) => v != null);
     const finance = (['PKR', 'GBP'] as const).map((currency) => {
       const rows = paid.filter((b) => b.currency === currency);
-      const gross = sumFor(currency, ['CONFIRMED', 'COMPLETED']);
-      const fees = rows.map(feeFor);
-      const fee = fees.some((f) => f == null) || !configured ? null : fees.reduce((a: number, f) => a + (f ?? 0), 0);
+      const total = tally(rows);
+      const dropped = cancelled.filter((b) => b.currency === currency);
+      const refunded = dropped.filter((b) => b.payments.length > 0);
+      const sum = (list: { priceMinor: number }[]) => list.reduce((a, b) => a + b.priceMinor, 0);
       return {
-        currency, grossMinor: gross, refundedMinor: sumFor(currency, ['CANCELLED']),
-        platformRevenueMinor: fee, mentorPayoutsMinor: fee == null ? null : gross - fee,
+        currency, grossMinor: total.grossMinor, refundedMinor: sum(refunded), refundedCount: refunded.length,
+        unpaidCancelledMinor: sum(dropped) - sum(refunded), unpaidCancelledCount: dropped.length - refunded.length,
+        platformRevenueMinor: configured ? total.feeMinor : null, mentorPayoutsMinor: configured ? total.payoutMinor : null,
+        listValueMinor: rows.reduce((a, b) => a + (b.listPriceMinor ?? b.priceMinor), 0),
         discountsMinor: rows.reduce((a, b) => a + (b.discountMinor ?? 0), 0), repeatSessions: rows.filter((b) => b.repeatStudent).length,
+        sessions: total.sessions,
+        tiers: (Object.keys(rules.tier) as MentorLevel[]).map((level) => {
+          const inTier = rows.filter((b) => b.mentor.level === level);
+          return {
+            level, currentPercent: rules.tier[level], ...tally(inTier),
+            // Split by the rate actually charged, so a tier whose rate has changed still adds up.
+            rates: groupRows(inTier, (b) => `${b.repeatStudent ? 'r' : 's'}${rateFor(b)}`)
+              .map((g) => ({ returning: !!g[0].repeatStudent, percent: rateFor(g[0]), ...tally(g) }))
+              .sort((x, y) => (y.percent ?? 0) - (x.percent ?? 0)),
+          };
+        }),
+        kinds: (['ONE_TO_ONE', 'GROUP'] as const).map((kind) => ({ kind, ...tally(rows.filter((b) => b.sessionKind === kind)) })),
+        methods: groupRows(rows, (b) => b.payments[0]?.provider ?? 'unknown').map((g) => ({ method: g[0].payments[0]?.provider ?? 'unknown', ...tally(g) })).sort((x, y) => y.grossMinor - x.grossMinor),
+        mentors: groupRows(rows, (b) => b.mentor.id).map((g) => ({ id: g[0].mentor.id, name: g[0].mentor.user.name, level: g[0].mentor.level, ...tally(g) })).sort((x, y) => y.grossMinor - x.grossMinor),
       };
     });
     const count = (rows: { status: string; _count: number }[], s: string) => rows.find((r) => r.status === s)?._count ?? 0;
     const totalBookings = bookings.reduce((s, b) => s + b._count, 0);
     return {
       applications: Object.fromEntries(apps.map((a) => [a.status, a._count])),
-      activeMentors: count(mentors, 'ACTIVE'), students,
+      applicationsOverall: Object.fromEntries(appsOverall.map((a) => [a.status, a._count])),
+      activeMentors: count(mentors, 'ACTIVE'), newMentors, students, studentsTotal,
       bookings: Object.fromEntries(bookings.map((b) => [b.status, b._count])),
       bookingConversion: totalBookings ? (count(bookings, 'CONFIRMED') + count(bookings, 'COMPLETED')) / totalBookings : null,
       repeatStudents: repeat.length,

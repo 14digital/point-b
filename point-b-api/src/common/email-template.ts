@@ -13,9 +13,11 @@ export const webUrl = () => (process.env.WEB_URL ?? process.env.CORS_ORIGIN ?? '
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-/** "Friday 30 October 2026, 5:00 pm" in UTC, clearly labelled. */
-export const emailDate = (d: Date) =>
-  new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'UTC' }).format(d).replace(/\bam\b/, 'am').replace(/\bpm\b/, 'pm') + ' UTC';
+/** "Friday 30 October 2026, 5:00 pm" with its timezone clearly labelled: UTC unless another is given. */
+export const emailDate = (d: Date, timeZone = 'UTC') => {
+  const label = timeZone === 'UTC' ? 'UTC' : new Intl.DateTimeFormat('en-GB', { timeZone, timeZoneName: 'long' }).formatToParts(d).find((p) => p.type === 'timeZoneName')?.value ?? timeZone;
+  return `${new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true, timeZone }).format(d).replace(/\bam\b/, 'am').replace(/\bpm\b/, 'pm')} ${label}`;
+};
 
 const BRASS = '#8a6a2f', INK = '#17181c', SOFT = '#5c5f66', LINE = '#e6e2d8', PAPER = '#faf8f3';
 

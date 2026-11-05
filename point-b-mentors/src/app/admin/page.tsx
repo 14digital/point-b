@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useCallback, useState, type ReactNode } from "react";
 import { RequireRole } from "@/components/require-role";
 import { Alert, Badge, Button, Container, EmptyState, Field, Mark, Skeleton, Spinner, pastelFor } from "@/components/ui";
 import { DashboardHero, DateTile, Panel, StatTile, Tabs, greeting } from "@/components/dashboard";
@@ -10,6 +10,9 @@ import { LEVEL_LABEL, STATUS_LABEL } from "@/lib/constants";
 import { fmtDay, fmtDayShort, fmtTime, formatMoney, initials } from "@/lib/format";
 import { useApi } from "@/lib/use-api";
 import { ToastProvider, useToast } from "@/components/toast";
+import { DateRangePicker, rangeLabel, rangeQuery, useUrlDateRange } from "@/components/date-range-picker";
+import { FinanceBreakdown, type FinanceSummary } from "@/components/finance-breakdown";
+import { InterviewSlotEditor, InterviewSlotPicker } from "@/components/interview-slots";
 import { UserTracking } from "@/components/user-tracking";
 import { WhatsAppDelivery } from "@/components/whatsapp-delivery";
 import { useUrlTab } from "@/lib/use-url-tab";
@@ -48,7 +51,7 @@ function Console() {
         <div className="mt-10"><Tabs tabs={TABS} value={tab} onChange={setTab} counts={toReview ? { Applications: toReview } : {}} /></div>
       </DashboardHero>
       <Container className="py-10 sm:py-12">
-        {tab === "Overview" && <Overview stats={stats} onReview={() => setTab("Applications")} onOpenApp={(id) => { setFocusId(id); setTab("Applications"); }} />}
+        {tab === "Overview" && <Overview onReview={() => setTab("Applications")} onOpenApp={(id) => { setFocusId(id); setTab("Applications"); }} />}
         {tab === "Applications" && <Applications initialId={focusId} />}
         {tab === "Mentors" && <Mentors />}
         {tab === "Bookings" && <Bookings />}
@@ -61,35 +64,50 @@ function Console() {
 }
 
 interface Stats {
-  applications: Record<string, number>; activeMentors: number; students: number; bookings: Record<string, number>;
+  applications: Record<string, number>; applicationsOverall: Record<string, number>; activeMentors: number; newMentors: number; students: number; studentsTotal: number; bookings: Record<string, number>;
   bookingConversion: number | null; repeatStudents: number; commissionConfigured: boolean; commission: { tier: Record<Level, number | null>; repeat: number };
-  video: { usedMinutes: number; limitMinutes: number; source: "daily" | "estimate" };
-  finance: { currency: Currency; grossMinor: number; refundedMinor: number; platformRevenueMinor: number | null; mentorPayoutsMinor: number | null; discountsMinor: number; repeatSessions: number }[];
+  video: { usedMinutes: number; periodMinutes: number; limitMinutes: number; source: "daily" | "estimate" };
+  finance: FinanceSummary[];
 }
 
 const BOOKING_BARS = [["CONFIRMED", "Confirmed", "bg-sky"], ["COMPLETED", "Completed", "bg-mint"], ["PENDING_PAYMENT", "Awaiting payment", "bg-lemon"], ["CANCELLED", "Cancelled", "bg-peach"], ["NO_SHOW", "No-show", "bg-rust/40"]] as const;
 const PIPELINE = ["SUBMITTED", "UNDER_REVIEW", "CHANGES_REQUESTED", "SHORTLISTED", "INTERVIEW_SCHEDULED", "INTERVIEW_COMPLETED", "APPROVED", "ONBOARDING"] as const;
 
-function Overview({ stats, onReview, onOpenApp }: { stats: { data: Stats | null; loading: boolean; error: string | null }; onReview: () => void; onOpenApp: (id: string) => void }) {
-  const { data: s, loading, error } = stats;
+function Overview({ onReview, onOpenApp }: { onReview: () => void; onOpenApp: (id: string) => void }) {
+  const [range, setRange] = useUrlDateRange();
+  const query = rangeQuery(range);
+  const filtered = query !== "";
+  const { data: s, loading, error } = useApi<Stats>(`/admin/stats${filtered ? `?${query}` : ""}`);
   const interviews = useApi<AdminInterview[]>("/admin/interviews");
-  if (loading) return <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-32 rounded-3xl" />)}</div>;
-  if (error || !s) return <Alert>{error}</Alert>;
-  const pipeline = (["SUBMITTED", "UNDER_REVIEW", "SHORTLISTED", "INTERVIEW_SCHEDULED", "INTERVIEW_COMPLETED"] as const).reduce((n, k) => n + (s.applications[k] ?? 0), 0);
+  const head = (
+    <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
+      <div className="min-w-0">
+        <p className="font-display text-2xl leading-tight text-ink">{rangeLabel(range)}</p>
+        <p className="mt-1 text-xs text-ink-soft">Counted from when bookings were made and applications submitted.</p>
+      </div>
+      <DateRangePicker value={range} onChange={setRange} />
+    </div>
+  );
+  if (loading) return <div className="space-y-8">{head}<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-32 rounded-3xl" />)}</div></div>;
+  if (error || !s) return <div className="space-y-8">{head}<Alert>{error}</Alert></div>;
+  const pipelineOf = (counts: Record<string, number>) => (["SUBMITTED", "UNDER_REVIEW", "SHORTLISTED", "INTERVIEW_SCHEDULED", "INTERVIEW_COMPLETED"] as const).reduce((n, k) => n + (counts[k] ?? 0), 0);
+  const pipeline = pipelineOf(s.applications);
+  const pipelineOverall = pipelineOf(s.applicationsOverall);
   const totalBookings = BOOKING_BARS.reduce((n, [k]) => n + (s.bookings[k] ?? 0), 0);
   const maxStage = Math.max(1, ...PIPELINE.map((k) => s.applications[k] ?? 0));
   return (
     <div className="space-y-8">
+      {head}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatTile label="Active mentors" value={s.activeMentors} tone="mint" />
-        <StatTile label="Applications in pipeline" value={pipeline} note={`${s.applications.SUBMITTED ?? 0} awaiting first review`} tone="sky" delay={60} />
-        <StatTile label="Registered students" value={s.students} tone="peach" delay={120} />
-        <StatTile label="Booking conversion" value={s.bookingConversion == null ? "—" : `${Math.round(s.bookingConversion * 100)}%`} note={`${s.repeatStudents} repeat students`} tone="lilac" delay={180} />
+        <StatTile label="Active mentors" value={s.activeMentors} note={filtered ? `${s.newMentors} joined in this period` : undefined} tone="mint" />
+        <StatTile label="Applications in pipeline" value={pipeline} note={filtered ? `${s.applications.SUBMITTED ?? 0} awaiting first review · ${pipelineOverall} in pipeline overall` : `${s.applications.SUBMITTED ?? 0} awaiting first review`} tone="sky" delay={60} />
+        <StatTile label={filtered ? "New students" : "Registered students"} value={s.students} note={filtered ? `${s.studentsTotal} registered in total` : undefined} tone="peach" delay={120} />
+        <StatTile label="Booking conversion" value={s.bookingConversion == null ? "—" : `${Math.round(s.bookingConversion * 100)}%`} note={`${s.repeatStudents} repeat student${s.repeatStudents === 1 ? "" : "s"}`} tone="lilac" delay={180} />
       </div>
 
       <BankTransfers />
 
-      <VideoUsage v={s.video} />
+      <VideoUsage v={s.video} period={filtered ? rangeLabel(range) : null} />
 
       <Panel title="Mentor interviews" action={<span className="text-sm text-ink-soft">{interviews.data?.length ?? 0} scheduled</span>}>
         {interviews.loading ? <Skeleton className="h-20 rounded-2xl" /> : !interviews.data?.length ? (
@@ -113,7 +131,7 @@ function Overview({ stats, onReview, onOpenApp }: { stats: { data: Stats | null;
       </Panel>
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
-        <Panel title="Bookings" action={<span className="text-sm text-ink-soft">{totalBookings} in total</span>}>
+        <Panel title="Bookings" action={<span className="text-sm text-ink-soft">{totalBookings} {filtered ? "in this period" : "in total"}</span>}>
           <div className="flex h-3 overflow-hidden rounded-full bg-paper-dim" aria-hidden>
             {totalBookings > 0 && BOOKING_BARS.map(([k, , c]) => (s.bookings[k] ?? 0) > 0 && <span key={k} className={`${c} h-full`} style={{ width: `${((s.bookings[k] ?? 0) / totalBookings) * 100}%` }} />)}
           </div>
@@ -127,7 +145,7 @@ function Overview({ stats, onReview, onOpenApp }: { stats: { data: Stats | null;
           </dl>
         </Panel>
 
-        <Panel title="Application pipeline" action={pipeline > 0 ? <button onClick={onReview} className="text-sm font-medium text-ink underline underline-offset-4">Review</button> : undefined}>
+        <Panel title="Application pipeline" action={pipelineOverall > 0 ? <button onClick={onReview} className="text-sm font-medium text-ink underline underline-offset-4">Review</button> : undefined}>
           <ul className="space-y-2.5">
             {PIPELINE.map((k) => (
               <li key={k} className="grid grid-cols-[130px_1fr_28px] items-center gap-3 text-sm">
@@ -143,23 +161,7 @@ function Overview({ stats, onReview, onOpenApp }: { stats: { data: Stats | null;
       {!s.commissionConfigured && <Alert tone="info">No platform commission is configured for every tier, so platform revenue and mentor payouts are not calculated. Set the tier rates under Pricing &amp; settings.</Alert>}
 
       <div className="grid gap-6 md:grid-cols-2">
-        {s.finance.map((f) => (
-          <Panel key={f.currency}>
-            <div className="flex items-center justify-between">
-              <span className={`rounded-full px-3 py-1.5 text-xs font-medium text-ink ${f.currency === "PKR" ? "bg-mint" : "bg-sky"}`}>{f.currency === "PKR" ? "Local · PKR" : "International · GBP"}</span>
-              {s.commissionConfigured && <span className="text-xs text-ink-soft">Tier commission · {s.commission.repeat}% for returning students</span>}
-            </div>
-            <p className="mt-6 text-sm text-ink-soft">Gross booking value</p>
-            <p className="font-display text-5xl leading-tight text-ink">{formatMoney(f.grossMinor, f.currency)}</p>
-            <dl className="mt-6 divide-y divide-line text-sm">
-              <Line l="Refunded / cancelled" v={formatMoney(f.refundedMinor, f.currency)} />
-              <Line l="Platform revenue" v={f.platformRevenueMinor == null ? "Not configured" : formatMoney(f.platformRevenueMinor, f.currency)} />
-              <Line l="Mentor payouts due" v={f.mentorPayoutsMinor == null ? "Not configured" : formatMoney(f.mentorPayoutsMinor, f.currency)} />
-              <Line l="Promo discounts given" v={formatMoney(f.discountsMinor, f.currency)} />
-              <Line l="Returning-student sessions" v={String(f.repeatSessions)} />
-            </dl>
-          </Panel>
-        ))}
+        {s.finance.map((f) => <FinanceBreakdown key={f.currency} f={f} period={rangeLabel(range)} repeatPercent={s.commission.repeat} />)}
       </div>
     </div>
   );
@@ -167,7 +169,7 @@ function Overview({ stats, onReview, onOpenApp }: { stats: { data: Stats | null;
 /** Green below 60% of the video allowance, amber from 60%, red from 85%. */
 const ZONES = [{ to: 60, label: "Healthy", bar: "bg-forest", soft: "bg-mint", text: "text-forest" }, { to: 85, label: "Getting high", bar: "bg-brass", soft: "bg-lemon", text: "text-brass-dark" }, { to: 100, label: "Near the limit", bar: "bg-rust", soft: "bg-peach", text: "text-rust" }] as const;
 
-function VideoUsage({ v }: { v: Stats["video"] }) {
+function VideoUsage({ v, period }: { v: Stats["video"]; period: string | null }) {
   const pct = Math.min(100, (v.usedMinutes / v.limitMinutes) * 100);
   const zone = ZONES.find((z) => pct <= z.to) ?? ZONES[2];
   const left = Math.max(0, v.limitMinutes - v.usedMinutes);
@@ -176,16 +178,16 @@ function VideoUsage({ v }: { v: Stats["video"] }) {
     <Panel title="Video minutes" action={<span className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium ${zone.soft} ${zone.text}`}><span className={`h-2 w-2 rounded-full ${zone.bar}`} />{zone.label}</span>}>
       <div className="grid gap-8 lg:grid-cols-[minmax(0,15rem)_minmax(0,1fr)] lg:items-end">
         <div>
-          <p className="text-xs font-medium uppercase tracking-[0.12em] text-ink-soft">Used so far</p>
+          <p className="text-xs font-medium uppercase tracking-[0.12em] text-ink-soft">{period ? `Used in ${period}` : "Used so far"}</p>
           <p className="mt-2 flex items-baseline gap-2 tabular-nums">
-            <span className="font-display text-6xl leading-none tracking-normal text-ink">{n(v.usedMinutes)}</span>
+            <span className="font-display text-6xl leading-none tracking-normal text-ink">{n(period ? v.periodMinutes : v.usedMinutes)}</span>
             <span className="text-sm font-medium text-ink-soft">min</span>
           </p>
-          <p className="mt-2 text-sm text-ink-soft tabular-nums">of {n(v.limitMinutes)} minute allowance</p>
+          <p className="mt-2 text-sm text-ink-soft tabular-nums">{period ? `${n(v.usedMinutes)} min used in total, of ${n(v.limitMinutes)} allowance` : `of ${n(v.limitMinutes)} minute allowance`}</p>
         </div>
         <div>
           <div className="mb-3 flex items-baseline justify-between text-sm tabular-nums">
-            <span className="font-medium text-ink">{pct < 10 ? pct.toFixed(1) : Math.round(pct)}% used</span>
+            <span className="font-medium text-ink">{pct < 10 ? pct.toFixed(1) : Math.round(pct)}% of allowance used{period ? " in total" : ""}</span>
             <span className="text-ink-soft">{n(left)} min remaining</span>
           </div>
           <div className="relative">
@@ -287,7 +289,8 @@ function ApplicationDetail({ id, onChanged }: { id: string; onChanged: () => voi
   const [requesting, setRequesting] = useState(false);
   const [reqText, setReqText] = useState("");
   const [edit, setEdit] = useState<Record<string, string> | null>(null);
-  const [iv, setIv] = useState<{ at: string; mins: number; note: string } | null>(null);
+  const [iv, setIv] = useState<{ at: string; note: string } | null>(null);
+  const pickSlot = useCallback((at: string) => setIv((cur) => (cur ? { ...cur, at } : cur)), []);
 
   if (loading) return <Skeleton className="h-96 rounded-3xl" />;
   if (error || !a) return <Alert>{error}</Alert>;
@@ -368,7 +371,7 @@ function ApplicationDetail({ id, onChanged }: { id: string; onChanged: () => voi
             <div className="flex w-full flex-wrap items-center gap-2 border-t border-ink/10 pt-4">
               <a href={`/interview/${a.id}`} className="rounded-full bg-ink px-4 py-2 text-xs font-medium text-white">Join interview</a>
               <Button size="sm" variant="secondary" disabled={!!busy} onClick={() => { if (new Date(a.interviewAt!).getTime() > Date.now() && !window.confirm("This interview hasn't started yet. Mark it completed anyway?")) return; run("done", () => api(`/admin/applications/${id}/status`, { method: "PATCH", body: { status: "INTERVIEW_COMPLETED" } }), "Interview marked completed. Next, record the scorecard below, then make your decision."); }}>{busy === "done" ? <Spinner /> : "Mark interview completed"}</Button>
-              <Button size="sm" variant="secondary" onClick={() => setIv({ at: toLocalInput(a.interviewAt!), mins: a.interviewDurationMin ?? 30, note: a.interviewNote ?? "" })}>Reschedule</Button>
+              <Button size="sm" variant="secondary" onClick={() => setIv({ at: "", note: a.interviewNote ?? "" })}>Reschedule</Button>
             </div>
           </div>
         )}
@@ -384,21 +387,18 @@ function ApplicationDetail({ id, onChanged }: { id: string; onChanged: () => voi
         {!canSchedule && !a.interviewAt && <p className="text-sm text-ink-soft">Available once the applicant is shortlisted.</p>}
         {canSchedule && !a.interviewAt && !iv && (
           <div className="rounded-2xl bg-paper p-4 text-sm text-ink-soft">
-            Call {a.fullName.split(" ")[0]} on {a.phone}, agree a time, then record it here. A video room is created in POINT B and they are emailed a private join link. It appears on your Overview.
-            <div className="mt-3"><Button size="sm" onClick={() => setIv({ at: "", mins: 30, note: "" })}>Schedule interview</Button></div>
+            Call {a.fullName.split(" ")[0]} on {a.phone}, agree a slot, then book it here. A video room is created in POINT B and they are emailed a private join link. It appears on your Overview.
+            <div className="mt-3"><Button size="sm" onClick={() => setIv({ at: "", note: "" })}>Schedule interview</Button></div>
           </div>
         )}
         {iv && (
           <div className="rounded-2xl bg-paper p-5">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Date and time (your timezone)"><input type="datetime-local" className="input" value={iv.at} min={toLocalInput(new Date().toISOString())} onChange={(e) => setIv({ ...iv, at: e.target.value })} /></Field>
-              <Field label="Duration"><select className="input" value={iv.mins} onChange={(e) => setIv({ ...iv, mins: Number(e.target.value) })}>{[20, 30, 45, 60].map((m) => <option key={m} value={m}>{m} minutes</option>)}</select></Field>
-            </div>
+            <InterviewSlotPicker applicationId={id} value={iv.at} onChange={pickSlot} />
             <p className="mt-4 rounded-xl bg-white px-4 py-3 text-xs text-ink-soft">The interview runs in a POINT B video room, like mentoring sessions. The applicant gets a private join link by email; you join from here or your Overview.</p>
             <div className="mt-4"><Field label="Note to the applicant (optional)"><textarea className="input min-h-16" maxLength={1000} value={iv.note} onChange={(e) => setIv({ ...iv, note: e.target.value })} /></Field></div>
             <div className="mt-4 flex flex-wrap justify-end gap-2">
               <Button size="sm" variant="secondary" disabled={busy === "iv"} onClick={() => setIv(null)}>Cancel</Button>
-              <Button size="sm" disabled={!iv.at || busy === "iv"} onClick={() => run("iv", async () => { await api(`/admin/applications/${id}/interview`, { method: "PUT", body: { startAt: new Date(iv.at).toISOString(), durationMinutes: iv.mins, note: iv.note || undefined } }); setIv(null); }, `Interview booked. ${a.fullName.split(" ")[0]} has been emailed the details.`)}>{busy === "iv" ? <Spinner /> : a.status === "INTERVIEW_SCHEDULED" ? "Save new time" : "Book and email"}</Button>
+              <Button size="sm" disabled={!iv.at || busy === "iv"} onClick={() => run("iv", async () => { await api(`/admin/applications/${id}/interview`, { method: "PUT", body: { startAt: iv.at, note: iv.note || undefined } }); setIv(null); }, `Interview booked. ${a.fullName.split(" ")[0]} has been emailed the details.`)}>{busy === "iv" ? <Spinner /> : a.status === "INTERVIEW_SCHEDULED" ? "Save new time" : "Book and email"}</Button>
             </div>
           </div>
         )}
@@ -478,8 +478,6 @@ function ApplicationDetail({ id, onChanged }: { id: string; onChanged: () => voi
     </div>
   );
 }
-
-const toLocalInput = (iso: string) => { const d = new Date(iso); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
 
 const EDIT_FIELDS = [
   ["fullName", "Full name", "text"], ["email", "Email", "text"], ["phone", "Phone", "text"], ["linkedinUrl", "LinkedIn URL", "text"],
@@ -760,6 +758,10 @@ function PricingSettings() {
             );
           })}
         </div>
+      </SettingsSection>
+
+      <SettingsSection title="Interview slots" text="The half-hour slots you offer when scheduling a mentor interview. Slots already booked can't be picked again.">
+        <div className="rounded-3xl bg-white p-5 ring-1 ring-line sm:p-6"><InterviewSlotEditor /></div>
       </SettingsSection>
 
       <SettingsSection title="Booking rules" text="Platform-wide rules. Changes apply to new bookings straight away.">

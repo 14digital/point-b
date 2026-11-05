@@ -79,27 +79,32 @@ export class DailyService {
     }
   }
 
-  private usageCache?: { at: number; minutes: number };
+  private usageCache?: { at: number; meetings: { start: number; minutes: number }[] };
 
   /**
-   * Participant-minutes Daily has recorded across every meeting, which is what its plan allowance is measured in.
+   * Participant-minutes Daily has recorded across every meeting, which is what its plan allowance is measured in,
+   * plus those from meetings that started in the given period.
    * Each participant's time is rounded up to a whole minute, as billing does. Cached for a minute. null if Daily cannot say.
    */
-  async usedMinutes(): Promise<number | null> {
+  async usedMinutes(from?: Date, to?: Date): Promise<{ total: number; period: number } | null> {
     if (!this.enabled()) return null;
-    if (this.usageCache && Date.now() - this.usageCache.at < 60_000) return this.usageCache.minutes;
     try {
-      let minutes = 0, after: string | undefined;
-      for (let page = 0; page < 50; page++) {
-        const r = await this.req('GET', `/meetings?limit=100${after ? `&starting_after=${after}` : ''}`);
-        if (r.status !== 200 || !Array.isArray(r.data?.data)) return null;
-        const rows: { id: string; participants?: { duration?: number }[] }[] = r.data.data;
-        for (const m of rows) for (const p of m.participants ?? []) minutes += Math.ceil((p.duration ?? 0) / 60);
-        if (rows.length < 100) break;
-        after = rows[rows.length - 1].id;
+      if (!this.usageCache || Date.now() - this.usageCache.at >= 60_000) {
+        const meetings: { start: number; minutes: number }[] = [];
+        let after: string | undefined;
+        for (let page = 0; page < 50; page++) {
+          const r = await this.req('GET', `/meetings?limit=100${after ? `&starting_after=${after}` : ''}`);
+          if (r.status !== 200 || !Array.isArray(r.data?.data)) return null;
+          const rows: { id: string; start_time?: number; participants?: { duration?: number }[] }[] = r.data.data;
+          for (const m of rows) meetings.push({ start: (m.start_time ?? 0) * 1000, minutes: (m.participants ?? []).reduce((n, p) => n + Math.ceil((p.duration ?? 0) / 60), 0) });
+          if (rows.length < 100) break;
+          after = rows[rows.length - 1].id;
+        }
+        this.usageCache = { at: Date.now(), meetings };
       }
-      this.usageCache = { at: Date.now(), minutes };
-      return minutes;
+      const { meetings } = this.usageCache;
+      const sum = (list: typeof meetings) => list.reduce((n, m) => n + m.minutes, 0);
+      return { total: sum(meetings), period: sum(meetings.filter((m) => (!from || m.start >= from.getTime()) && (!to || m.start < to.getTime()))) };
     } catch {
       return null;
     }

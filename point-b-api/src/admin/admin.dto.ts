@@ -1,4 +1,4 @@
-import { IsDateString, IsBoolean, IsEnum, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsDateString, IsBoolean, IsEnum, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
 import { ApplicationStatus, Currency, MentorCategory, MentorLevel, MentorStatus } from '@prisma/client';
 
 export class ScorecardDto {
@@ -11,8 +11,13 @@ export class ScorecardDto {
 
 export class InterviewDto {
   @IsDateString() startAt: string;
-  @IsInt() @Min(15) @Max(120) durationMinutes: number;
   @IsOptional() @IsString() @MaxLength(1000) note?: string;
+}
+
+export class InterviewSlotSettingsDto {
+  @IsString() @MaxLength(64) timezone: string;
+  /** Half-hour start times per weekday, Sunday first. */
+  @IsArray() @ArrayMinSize(7) @ArrayMaxSize(7) @IsArray({ each: true }) weekly: string[][];
 }
 
 export class RequestChangesDto {
