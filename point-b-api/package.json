@@ -13,6 +13,7 @@
     "test:e2e": "ts-node --transpile-only test/e2e.ts",
     "db:seed:demo": "ts-node --transpile-only prisma/seed.ts --demo",
     "db:push": "prisma db push",
+    "whatsapp:templates": "node scripts/whatsapp-templates.js",
     "db:local": "node scripts/local-mongo.js"
   },
   "keywords": [],

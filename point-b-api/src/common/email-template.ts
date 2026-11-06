@@ -1,3 +1,5 @@
+import type { WhatsAppAlert } from './whatsapp-templates';
+
 export interface EmailOptions {
   /** Address that replies go to (e.g. the person who filled in the contact form). */
   replyTo?: string;
@@ -7,6 +9,8 @@ export interface EmailOptions {
   facts?: [string, string][];
   /** Keep this message to email only (e.g. password reset links). */
   emailOnly?: boolean;
+  /** The student's WhatsApp copy: its own template and values (dates are shown in the student's timezone), or false for none. */
+  whatsapp?: { alert: WhatsAppAlert; params: (string | Date)[] } | false;
 }
 
 export const webUrl = () => (process.env.WEB_URL ?? process.env.CORS_ORIGIN ?? 'http://localhost:3000').split(',')[0].trim().replace(/\/$/, '');

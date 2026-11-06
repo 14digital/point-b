@@ -81,7 +81,7 @@ export class AuthService {
         whatsappAlerts: dto.whatsappAlerts ?? true,
       },
     });
-    await this.notify.send(email, 'Welcome to POINT B Mentors', `Hi ${user.name.split(' ')[0]},\n\nWelcome to POINT B Mentors. Your account is ready.\n\nBrowse mentors who have been where you want to go, pick a time that suits you, and book a private 30-minute conversation. Choose a 1:1 session, or a group session at a lower price per person.`, user.id, { cta: { label: 'Find a mentor', url: `${webUrl()}/mentors` } });
+    await this.notify.send(email, 'Welcome to POINT B Mentors', `Hi ${user.name.split(' ')[0]},\n\nWelcome to POINT B Mentors. Your account is ready.\n\nBrowse mentors who have been where you want to go, pick a time that suits you, and book a private 30-minute conversation. Choose a 1:1 session, or a group session at a lower price per person.`, user.id, { cta: { label: 'Find a mentor', url: `${webUrl()}/mentors` }, whatsapp: false });
     if (dateOfBirth && user.guardianEmail && ageOn(dateOfBirth) < 18) {
       await this.notify.send(
         user.guardianEmail,

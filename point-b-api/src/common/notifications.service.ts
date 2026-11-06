@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { createTransport, Transporter } from 'nodemailer';
 import { PrismaService } from '../prisma/prisma.service';
-import { EmailOptions, renderEmail, webUrl } from './email-template';
+import { EmailOptions, emailDate, renderEmail, webUrl } from './email-template';
 import { WhatsAppService } from './whatsapp.service';
 
 /**
@@ -52,11 +52,16 @@ export class NotificationsService {
   /** Students who gave a number and agreed get the same alert on WhatsApp. Never blocks or breaks the email. */
   private async alsoWhatsApp(toEmail: string, subject: string, body: string, userId: string | undefined, opts: EmailOptions) {
     try {
-      const u = await this.prisma.user.findFirst({ where: userId ? { id: userId } : { email: toEmail.toLowerCase() }, select: { role: true, phone: true, whatsappAlerts: true, email: true } });
+      if (opts.whatsapp === false) return;
+      const u = await this.prisma.user.findFirst({ where: userId ? { id: userId } : { email: toEmail.toLowerCase() }, select: { role: true, phone: true, whatsappAlerts: true, email: true, timezone: true } });
       if (!u || u.role !== 'STUDENT' || !u.phone || !u.whatsappAlerts || u.email !== toEmail.toLowerCase()) return;
       const message = body.replace(/^hi [^,\n]*,\s*/i, '');
       const facts = opts.facts?.filter(([k]) => !/valid until|reference/i.test(k)).map(([k, v]) => `${k}: ${v}`).join(' · ');
-      await this.whatsapp.send(u.phone, subject, facts ? `${message} ${facts}` : message, opts.cta?.url ?? `${webUrl()}/dashboard/student`);
+      const generic = { message: facts ? `${message} ${facts}` : message, link: opts.cta?.url ?? `${webUrl()}/dashboard/student` };
+      if (!opts.whatsapp) return this.whatsapp.send(u.phone, subject, generic.message, generic.link);
+      const tz = u.timezone || 'Asia/Karachi';
+      const params = opts.whatsapp.params.map((p) => (p instanceof Date ? emailDate(p, tz) : p));
+      await this.whatsapp.sendAlert(u.phone, subject, opts.whatsapp.alert, params, generic);
     } catch (e) {
       this.log.error(`whatsapp alert failed: ${(e as Error).message}`);
     }

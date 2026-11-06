@@ -252,7 +252,7 @@ export class MentorsService {
       `${p.user.name} sent you ${dto.percentOff}% off your next session`,
       `Hi ${st.name.split(' ')[0]},\n\n${p.user.name} would like to meet with you again and has sent you a promo code for ${dto.percentOff}% off your next 1:1 session with them.${dto.note?.trim() ? `\n\nA note from ${p.user.name.split(' ')[0]}: ${dto.note.trim()}` : ''}\n\nChoose a time on their profile and enter the code at checkout. It works once, for a 1:1 session with ${p.user.name.split(' ')[0]}.`,
       st.id,
-      { cta: { label: `Book with ${p.user.name.split(' ')[0]}`, url: `${webUrl()}/mentors/${p.slug}` }, facts: [['Promo code', code], ['Discount', `${dto.percentOff}% off one 1:1 session`], ['Valid until', emailDate(expiresAt)]] },
+      { whatsapp: false, cta: { label: `Book with ${p.user.name.split(' ')[0]}`, url: `${webUrl()}/mentors/${p.slug}` }, facts: [['Promo code', code], ['Discount', `${dto.percentOff}% off one 1:1 session`], ['Valid until', emailDate(expiresAt)]] },
     );
     return this.myPromos(userId);
   }
