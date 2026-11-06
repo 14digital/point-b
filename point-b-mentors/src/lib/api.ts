@@ -37,3 +37,11 @@ export async function api<T>(path: string, opts: { method?: string; body?: unkno
 }
 
 export const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Something went wrong");
+
+/** An authenticated file (e.g. a receipt image) as a local object URL for <img>. Revoke it when done. */
+export async function apiObjectUrl(path: string): Promise<string> {
+  const token = getToken();
+  const res = await fetch(BASE + path, { headers: token ? { authorization: `Bearer ${token}` } : {}, cache: "no-store" });
+  if (!res.ok) throw new ApiError(res.status, "Couldn't load the file.");
+  return URL.createObjectURL(await res.blob());
+}

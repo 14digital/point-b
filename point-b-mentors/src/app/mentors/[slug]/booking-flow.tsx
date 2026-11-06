@@ -9,6 +9,7 @@ import { api, errMsg } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { AGENDAS } from "@/lib/constants";
 import { Checkout } from "@/components/checkout";
+import { paymentChanged } from "@/lib/events";
 import { track } from "@/lib/track";
 import { MobileField } from "@/components/mobile-field";
 import { isValidPhone, type CountryCode } from "@/components/phone-input";
@@ -92,7 +93,7 @@ export function BookingPanel({ mentor, onSlotTaken }: { mentor: MentorDetail; on
       <Button className="mt-6 w-full" size="lg" disabled={!slot} onClick={() => { track("booking_started", { label: mentor.name }); setOpen(true); }}>
         {slot ? `Book ${fmtTime(slot.startAt)}, ${fmtDayShort(slot.startAt)}` : "Select a time"}
       </Button>
-      {open && slot && <BookingModal mentor={mentor} slot={slot} price={price} onClose={() => setOpen(false)} onSlotTaken={() => { setOpen(false); setSlot(null); onSlotTaken(); }} />}
+      {open && slot && <BookingModal mentor={mentor} slot={slot} price={price} onClose={(held) => { setOpen(false); paymentChanged(); if (held) { setSlot(null); onSlotTaken(); } }} onSlotTaken={() => { setOpen(false); setSlot(null); onSlotTaken(); }} />}
     </div>
   );
 }
@@ -103,7 +104,7 @@ const FOOT = "flex items-center justify-end gap-2 border-t border-line bg-white 
 type Step = "auth" | "agenda" | "prepare" | "review" | "payment" | "done";
 const STEPS: Step[] = ["agenda", "prepare", "review", "payment"];
 
-function BookingModal({ mentor, slot, price, onClose, onSlotTaken }: { mentor: MentorDetail; slot: Slot; price: number; onClose: () => void; onSlotTaken: () => void }) {
+function BookingModal({ mentor, slot, price, onClose: close, onSlotTaken }: { mentor: MentorDetail; slot: Slot; price: number; onClose: (held: boolean) => void; onSlotTaken: () => void }) {
   const { user, loading } = useAuth();
   const router = useRouter();
   const [step, setStep] = useState<Step>("agenda");
@@ -113,6 +114,8 @@ function BookingModal({ mentor, slot, price, onClose, onSlotTaken }: { mentor: M
   const [outcome, setOutcome] = useState("");
   const [materials, setMaterials] = useState("");
   const [booking, setBooking] = useState<Booking | null>(null);
+  // Once a time is held (or paid), closing also refreshes the times on the page so that one isn't offered again.
+  const onClose = useCallback(() => close(!!booking), [close, booking]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [promoInput, setPromoInput] = useState("");
@@ -140,7 +143,7 @@ function BookingModal({ mentor, slot, price, onClose, onSlotTaken }: { mentor: M
   }
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && step !== "payment" && onClose();
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     document.addEventListener("keydown", onKey);
     document.body.style.overflow = "hidden";
     return () => { document.removeEventListener("keydown", onKey); document.body.style.overflow = ""; };
@@ -161,6 +164,7 @@ function BookingModal({ mentor, slot, price, onClose, onSlotTaken }: { mentor: M
     try {
       const b = await api<Booking>("/bookings", { body: { slotId: slot.id, agenda, currentSituation: situation, usefulOutcome: outcome, materialsToReview: materials || undefined, promoCode: promo?.code } });
       setBooking(b); setStep("payment");
+      paymentChanged();
     } catch (e) {
       const msg = errMsg(e);
       if (/just taken|no longer available/i.test(msg)) { setError(msg); setTimeout(onSlotTaken, 1800); } else setError(msg);
@@ -225,11 +229,9 @@ function BookingModal({ mentor, slot, price, onClose, onSlotTaken }: { mentor: M
               <h2 className="mt-1.5 font-display text-[1.75rem] leading-tight text-ink">{title}</h2>
               <p className="mt-1 text-sm text-ink-soft">{subtitle}</p>
             </div>
-            {step !== "payment" && (
-              <button onClick={onClose} aria-label="Close" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-paper text-ink-soft transition-colors hover:bg-paper-dim hover:text-ink">
-                <svg width="16" height="16" viewBox="0 0 20 20" fill="none"><path d="M5 5l10 10M15 5L5 15" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
-              </button>
-            )}
+            <button onClick={onClose} aria-label={step === "payment" ? "Close and pay later" : "Close"} title={step === "payment" ? "Your time stays held. You can finish paying from the bar at the bottom of the page." : undefined} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-paper text-ink-soft transition-colors hover:bg-paper-dim hover:text-ink">
+              <svg width="16" height="16" viewBox="0 0 20 20" fill="none"><path d="M5 5l10 10M15 5L5 15" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
+            </button>
           </header>
           {!blocked && index >= 0 && (
             <div className="mt-5 flex gap-1.5 px-6 sm:px-8" aria-hidden>{STEPS.map((s, i) => <span key={s} className={`h-1 flex-1 rounded-full transition-colors ${i <= index ? "bg-ink" : "bg-paper-dim"}`} />)}</div>

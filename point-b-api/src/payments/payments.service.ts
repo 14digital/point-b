@@ -68,7 +68,7 @@ export class PaymentsService {
     if (booking.status === 'CONFIRMED') return { state: 'paid' as const, reference };
     if (booking.status !== 'PENDING_PAYMENT') throw new BadRequestException('This booking hold has expired. Please choose a time again.');
     if (!booking.awaitingVerification) this.activity.record(user.id, 'checkout_opened', { reference });
-    if (booking.awaitingVerification) return { state: 'verifying' as const, reference, amountMinor: payment.amountMinor, currency: payment.currency, txnRef: payment.bankTxnRef };
+    if (booking.awaitingVerification) return { state: 'verifying' as const, reference, amountMinor: payment.amountMinor, currency: payment.currency, txnRef: payment.bankTxnRef, submittedAt: payment.bankSubmittedAt };
     const base = {
       reference,
       amountMinor: payment.amountMinor,

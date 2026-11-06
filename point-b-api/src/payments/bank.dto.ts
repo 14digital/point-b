@@ -1,8 +1,10 @@
 import { IsBoolean, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator';
 
 export class BankTransferDto {
-  @IsString() @MinLength(4) @MaxLength(60) txnRef: string;
-  @IsString() @MinLength(2) @MaxLength(80) senderName: string;
+  /** The receipt screenshot as a JPEG, PNG or WebP data URL (the browser shrinks it first). */
+  @IsString() @MaxLength(2_800_000) @Matches(/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/, { message: 'Upload a screenshot of your payment receipt (JPEG, PNG or WebP).' }) proof: string;
+  @IsOptional() @IsString() @MaxLength(60) txnRef?: string;
+  @IsOptional() @IsString() @MaxLength(80) senderName?: string;
 }
 
 export class BankSettingsDto {

@@ -49,6 +49,7 @@ export class AdminController {
   @Patch('mentors/:id') updateMentor(@CurrentUser() u: AuthUser, @Param('id') id: string, @Body() dto: UpdateMentorAdminDto) { return this.admin.updateMentor(u.id, id, dto); }
 
   @Get('bookings') bookings(@Query('status') status?: string) { return this.admin.listBookings(status); }
+  @Get('bookings/:reference') booking(@Param('reference') reference: string) { return this.admin.bookingDetail(reference); }
   @Get('students') students() { return this.admin.students(); }
   @Patch('users/:id/guardian-consent') consent(@CurrentUser() u: AuthUser, @Param('id') id: string, @Body() dto: GuardianConsentDto) { return this.admin.setGuardianConsent(u.id, id, dto.consent); }
 

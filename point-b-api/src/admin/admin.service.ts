@@ -346,6 +346,39 @@ export class AdminService {
     });
   }
 
+  /** Everything about one booking for the admin: people, session, money, payment checks, payout, review and history. */
+  async bookingDetail(reference: string) {
+    const b = await this.prisma.booking.findUnique({
+      where: { reference },
+      include: {
+        slot: { select: { startAt: true, endAt: true, kind: true, capacity: true } },
+        student: { select: { id: true, name: true, email: true, phone: true } },
+        mentor: { select: { id: true, slug: true, level: true, user: { select: { name: true, email: true } } } },
+        payments: { orderBy: { createdAt: 'desc' }, include: { proof: { select: { createdAt: true } } } },
+        payout: { select: { id: true, createdAt: true, reference: true, note: true, amountMinor: true, sessions: true } },
+        review: { select: { rating: true, comment: true, status: true, createdAt: true } },
+      },
+    });
+    if (!b) throw new NotFoundException('Booking not found');
+    const rules = await commissionRules(this.prisma);
+    const percent = b.commissionPercent ?? rules.tier[b.mentor.level];
+    const feeMinor = b.platformFeeMinor ?? (percent == null ? null : feeOf(b.priceMinor, percent));
+    const reviewerIds = [...new Set(b.payments.map((p) => p.reviewedBy).filter((x): x is string => !!x))];
+    const [reviewers, history, promo] = await Promise.all([
+      this.prisma.user.findMany({ where: { id: { in: reviewerIds } }, select: { id: true, name: true } }),
+      this.prisma.auditLog.findMany({ where: { OR: [{ entityId: b.id }, { detail: { contains: b.reference } }] }, orderBy: { createdAt: 'asc' }, include: { admin: { select: { name: true } } } }),
+      b.promoCodeId ? this.prisma.promoCode.findUnique({ where: { id: b.promoCodeId }, select: { code: true, percentOff: true } }) : null,
+    ]);
+    const { payments, ...rest } = b;
+    return {
+      ...rest,
+      promo,
+      money: { listPriceMinor: b.listPriceMinor ?? b.priceMinor, discountMinor: b.discountMinor ?? 0, paidMinor: b.priceMinor, commissionPercent: percent, feeMinor, payoutMinor: feeMinor == null ? null : b.priceMinor - feeMinor, feeIsEstimate: b.platformFeeMinor == null },
+      payments: payments.map(({ proof, reviewedBy, ...p }) => ({ ...p, hasProof: !!proof, reviewedByName: reviewers.find((r) => r.id === reviewedBy)?.name ?? null })),
+      history: history.map((h) => ({ action: h.action, detail: h.detail, at: h.createdAt, by: h.admin.name })),
+    };
+  }
+
   async students() {
     return this.prisma.user.findMany({ where: { role: 'STUDENT' }, orderBy: { createdAt: 'desc' }, take: 200, select: { id: true, name: true, email: true, dateOfBirth: true, guardianEmail: true, guardianConsent: true, createdAt: true, _count: { select: { bookings: true } } } });
   }

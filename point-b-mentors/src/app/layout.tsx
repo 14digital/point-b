@@ -4,6 +4,7 @@ import "./globals.css";
 import { Nav } from "@/components/nav";
 import { Footer } from "@/components/footer";
 import { ActivityTracker } from "@/components/activity-tracker";
+import { PaymentDueBar } from "@/components/payment-due-bar";
 import { AuthProvider } from "@/lib/auth";
 
 const display = Newsreader({
@@ -33,6 +34,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           <Nav />
           <main className="flex-1">{children}</main>
           <Footer />
+          <PaymentDueBar />
         </AuthProvider>
       </body>
     </html>

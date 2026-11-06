@@ -7,11 +7,13 @@ import { DashboardHero, DateTile, Panel, StatTile, Tabs, greeting } from "@/comp
 import { useAuth } from "@/lib/auth";
 import { api, errMsg } from "@/lib/api";
 import { LEVEL_LABEL, STATUS_LABEL } from "@/lib/constants";
-import { fmtDay, fmtDayShort, fmtTime, formatMoney, initials } from "@/lib/format";
+import { fmtDay, fmtTime, formatMoney, initials } from "@/lib/format";
 import { useApi } from "@/lib/use-api";
 import { ToastProvider, useToast } from "@/components/toast";
 import { DateRangePicker, rangeLabel, rangeQuery, useUrlDateRange } from "@/components/date-range-picker";
 import { FinanceBreakdown, type FinanceSummary } from "@/components/finance-breakdown";
+import { BankTransfers } from "@/components/bank-verification";
+import { BookingDetailModal, cancelExplanation } from "@/components/booking-detail";
 import { InterviewSlotEditor, InterviewSlotPicker } from "@/components/interview-slots";
 import { UserTracking } from "@/components/user-tracking";
 import { WhatsAppDelivery } from "@/components/whatsapp-delivery";
@@ -640,11 +642,23 @@ function MentorRow({ m, tiers, onSaved }: { m: AdminMentor; tiers: TierRule[]; o
   );
 }
 
-type AdminBooking = Booking & { student: { name: string; email: string }; slot: { startAt: string }; mentor: { user: { name: string } }; payments: { status: string }[] };
+type AdminBooking = Booking & { student: { name: string; email: string }; slot: { startAt: string }; mentor: { user: { name: string } }; payments: { status: string; provider: string; bankSubmittedAt: string | null; reviewNote: string | null }[] };
+
+/** "Card · Paid", "Bank · Rejected", "Bank · Checking" — how the student paid and where it stands. */
+function paymentLabel(b: AdminBooking) {
+  const p = b.payments.find((x) => x.status !== "FAILED") ?? b.payments[0];
+  if (!p) return "—";
+  // Until money moves, the method is only the default and says nothing about what the student chose.
+  if (!p.bankSubmittedAt && (p.status === "PENDING" || p.status === "FAILED")) return p.status === "PENDING" ? "Waiting" : "Not paid";
+  const method = p.bankSubmittedAt ? "Bank" : p.provider === "stripe" ? "Card" : p.provider === "mock" ? "Demo" : "Bank";
+  const state = p.status === "SUCCEEDED" ? "Paid" : p.status === "REFUNDED" ? "Refunded" : p.status === "FAILED" ? "Rejected" : "Checking";
+  return `${method} · ${state}`;
+}
 
 function Bookings() {
   const [status, setStatus] = useState("");
-  const { data, loading, error } = useApi<AdminBooking[]>(`/admin/bookings${status ? `?status=${status}` : ""}`);
+  const [open, setOpen] = useState<string | null>(null);
+  const { data, loading, error, reload } = useApi<AdminBooking[]>(`/admin/bookings${status ? `?status=${status}` : ""}`);
   return (
     <Panel title="Bookings" action={data ? <span className="text-sm text-ink-soft">{data.length} shown</span> : undefined}>
       <div className="no-scrollbar -mx-1 mb-5 flex gap-2 overflow-x-auto px-1">
@@ -655,21 +669,29 @@ function Bookings() {
       {error && <Alert>{error}</Alert>}
       {loading ? <Skeleton className="h-48" /> : !data?.length ? <EmptyState title="No bookings" description="Bookings appear here as students book sessions." /> : (
         <div className="-mx-6 overflow-x-auto sm:-mx-7">
-          <table className="w-full min-w-[760px] text-left text-sm">
+          <table className="w-full min-w-[860px] text-left text-sm">
             <thead className="text-xs text-ink-soft"><tr className="border-y border-line bg-paper/60">{["Booking", "Student", "Mentor", "When", "Amount", "Payment", "Status"].map((h) => <th key={h} className="px-4 py-3 font-medium first:pl-6 last:pr-6 sm:first:pl-7 sm:last:pr-7">{h}</th>)}</tr></thead>
-            <tbody className="divide-y divide-line">{data.map((b) => (
-              <tr key={b.id} className="transition-colors hover:bg-paper/60">
-                <td className="py-3.5 pl-6 pr-4 font-mono text-xs text-ink sm:pl-7">{b.reference}</td>
-                <td className="px-4 py-3.5"><span className="flex items-center gap-2.5"><Avatar name={b.student.name} size="h-7 w-7 text-[10px]" /><span className="text-ink">{b.student.name}</span></span></td>
-                <td className="px-4 py-3.5 text-ink">{b.mentor.user.name}</td>
-                <td className="whitespace-nowrap px-4 py-3.5 text-ink-soft">{new Date(b.slot.startAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} · {fmtTime(b.slot.startAt)}</td>
-                <td className="whitespace-nowrap px-4 py-3.5 text-ink">{formatMoney(b.priceMinor, b.currency)}</td>
-                <td className="px-4 py-3.5 text-xs text-ink-soft">{b.payments[0]?.status ? b.payments[0].status.charAt(0) + b.payments[0].status.slice(1).toLowerCase() : "—"}</td>
-                <td className="py-3.5 pl-4 pr-6 sm:pr-7"><Badge tone={TONE[b.status]}>{STATUS_LABEL[b.status]}</Badge></td>
-              </tr>))}</tbody>
+            <tbody className="divide-y divide-line">{data.map((b) => {
+              const why = cancelExplanation(b);
+              return (
+                <tr key={b.id} onClick={() => setOpen(b.reference)} className="cursor-pointer align-top transition-colors hover:bg-paper/60">
+                  <td className="py-3.5 pl-6 pr-4 sm:pl-7"><button type="button" onClick={(e) => { e.stopPropagation(); setOpen(b.reference); }} className="whitespace-nowrap font-mono text-xs text-ink underline-offset-4 hover:underline">{b.reference}</button></td>
+                  <td className="px-4 py-3.5"><span className="flex items-center gap-2.5"><Avatar name={b.student.name} size="h-7 w-7 text-[10px]" /><span className="text-ink">{b.student.name}</span></span></td>
+                  <td className="px-4 py-3.5 text-ink">{b.mentor.user.name}</td>
+                  <td className="whitespace-nowrap px-4 py-3.5 text-ink-soft">{new Date(b.slot.startAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} · {fmtTime(b.slot.startAt)}</td>
+                  <td className="whitespace-nowrap px-4 py-3.5 text-ink">{formatMoney(b.priceMinor, b.currency)}</td>
+                  <td className="whitespace-nowrap px-4 py-3.5 text-xs text-ink-soft">{paymentLabel(b)}</td>
+                  <td className="py-3.5 pl-4 pr-6 sm:pr-7">
+                    <Badge tone={b.awaitingVerification ? "brass" : TONE[b.status]}>{b.awaitingVerification ? "Checking payment" : STATUS_LABEL[b.status]}</Badge>
+                    {why && <p className="mt-1.5 line-clamp-2 max-w-[15rem] text-xs text-rust" title={why}>{why}</p>}
+                  </td>
+                </tr>
+              );
+            })}</tbody>
           </table>
         </div>
       )}
+      {open && <BookingDetailModal reference={open} onClose={() => setOpen(null)} onChanged={reload} />}
     </Panel>
   );
 }
@@ -801,63 +823,6 @@ function SettingInput({ value, onChange, dirty, busy, onSave, unit, max, placeho
       </span>
       <Button size="sm" variant={dirty ? "primary" : "secondary"} disabled={!dirty || busy} onClick={onSave}>{busy ? <Spinner /> : "Save"}</Button>
     </div>
-  );
-}
-
-interface BankTransfer { id: string; amountMinor: number; currency: Currency; txnRef: string | null; senderName: string | null; submittedAt: string; reference: string; startAt: string; studentName: string; studentEmail: string; mentorName: string }
-
-/** Bank / QR transfers students say they've made, waiting to be matched against the bank statement. */
-function BankTransfers() {
-  const toast = useToast();
-  const list = useApi<BankTransfer[]>("/payments/admin/bank-transfers");
-  const [rejecting, setRejecting] = useState<string | null>(null);
-  const [reason, setReason] = useState("");
-  const [busy, setBusy] = useState<string | null>(null);
-  async function act(id: string, kind: "approve" | "reject", body: unknown = {}) {
-    setBusy(id + kind);
-    try {
-      list.setData(await api<BankTransfer[]>(`/payments/admin/bank-transfers/${id}/${kind}`, { body }));
-      toast(kind === "approve" ? "Payment approved. The booking is confirmed and both sides have been emailed." : "Payment rejected. The slot is released and the student has been emailed.");
-      setRejecting(null); setReason("");
-    } catch (e) { toast(errMsg(e), "error"); } finally { setBusy(null); }
-  }
-  if (!list.data?.length) return null;
-  return (
-    <Panel title="Bank payments to verify" action={<span className="rounded-full bg-lemon px-3 py-1 text-xs font-medium text-ink">{list.data.length} waiting</span>}>
-      <p className="-mt-2 mb-4 text-sm text-ink-soft">Match each transfer against your bank statement (amount, transaction ID and the booking reference in the note) before approving.</p>
-      <ul className="space-y-3">
-        {list.data.map((t) => (
-          <li key={t.id} className="rounded-2xl bg-paper p-4 sm:p-5">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div className="min-w-0">
-                <p className="text-xl font-semibold tracking-[-0.02em] tabular-nums text-ink">{formatMoney(t.amountMinor, t.currency)}</p>
-                <p className="mt-0.5 text-sm text-ink">{t.studentName} <span className="text-ink-soft">· session with {t.mentorName}</span></p>
-                <p className="text-xs text-ink-soft">{fmtDay(t.startAt)}, {fmtTime(t.startAt)} · sent {fmtDayShort(t.submittedAt)} {fmtTime(t.submittedAt)}</p>
-              </div>
-              <dl className="grid grid-cols-[auto_auto] gap-x-5 gap-y-1 text-xs">
-                <dt className="text-ink-soft">Transaction ID</dt><dd className="font-mono font-medium text-ink">{t.txnRef}</dd>
-                <dt className="text-ink-soft">Sender</dt><dd className="font-medium text-ink">{t.senderName}</dd>
-                <dt className="text-ink-soft">Reference</dt><dd className="font-mono font-medium text-ink">{t.reference}</dd>
-              </dl>
-            </div>
-            {rejecting === t.id ? (
-              <div className="mt-4 space-y-2">
-                <textarea className="input min-h-16 bg-white" maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why it couldn't be verified (sent to the student), e.g. No transfer with this ID has arrived." />
-                <div className="flex justify-end gap-2">
-                  <Button size="sm" variant="ghost" onClick={() => { setRejecting(null); setReason(""); }}>Cancel</Button>
-                  <Button size="sm" variant="danger" disabled={reason.trim().length < 5 || !!busy} onClick={() => act(t.id, "reject", { reason })}>{busy === t.id + "reject" ? <Spinner /> : "Reject and release slot"}</Button>
-                </div>
-              </div>
-            ) : (
-              <div className="mt-4 flex flex-wrap justify-end gap-2">
-                <Button size="sm" variant="secondary" disabled={!!busy} onClick={() => { setRejecting(t.id); setReason(""); }}>Reject</Button>
-                <Button size="sm" disabled={!!busy} onClick={() => act(t.id, "approve")}>{busy === t.id + "approve" ? <Spinner /> : "Approve and confirm booking"}</Button>
-              </div>
-            )}
-          </li>
-        ))}
-      </ul>
-    </Panel>
   );
 }
 

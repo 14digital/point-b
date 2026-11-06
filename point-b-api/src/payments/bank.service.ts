@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { createHash } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../common/notifications.service';
 import { emailDate, webUrl } from '../common/email-template';
@@ -11,11 +12,15 @@ import { BankSettingsDto, BankTransferDto } from './bank.dto';
 export interface BankDetails { enabled: boolean; accountTitle: string; bankName: string; accountNumber?: string; iban?: string; raastId?: string }
 const DETAILS = 'bank_details', QR = 'bank_qr';
 const money = (minor: number) => `Rs ${(minor / 100).toLocaleString('en-PK')}`;
+/** Transaction IDs compared loosely: banks print them with spaces, dashes and mixed case. */
+const normTxn = (s: string) => s.replace(/[^a-z0-9]/gi, '').toUpperCase();
+const normName = (s: string) => s.toLowerCase().replace(/[^a-z\s]/g, ' ').split(/\s+/).filter((w) => w.length > 1);
 
 /**
- * Pay by bank app / QR code (Raast) for PKR sessions. The student transfers the exact amount, then sends the
- * transaction ID; an admin checks it against the bank statement and approves or rejects. Nothing is confirmed
- * automatically, and the slot stays held while the transfer is being checked.
+ * Pay by bank app / QR code (Raast) for PKR sessions. The student transfers the exact amount, then uploads the
+ * receipt screenshot (and the transaction ID if they have it). An admin checks it against the account statement,
+ * helped by automatic checks for reused transaction IDs and screenshots, and approves or rejects. Nothing is
+ * confirmed automatically, and the slot stays held while the transfer is being checked.
  */
 @Injectable()
 export class BankTransferService {
@@ -61,29 +66,69 @@ export class BankTransferService {
     if (!b.awaitingVerification && b.createdAt.getTime() + HOLD_MINUTES * 60_000 < Date.now()) throw new BadRequestException('This booking hold has expired. Please choose a time again.');
     const p = b.payments[0];
     if (!p) throw new NotFoundException('Payment not found');
+    const [, mime, base64] = dto.proof.match(/^data:(image\/(?:png|jpeg|webp));base64,(.+)$/)!;
+    const data = Buffer.from(base64, 'base64');
+    if (data.length < 2_000) throw new BadRequestException('That image looks empty. Please upload the screenshot of your payment receipt.');
+    const txnRef = dto.txnRef?.trim() || null;
+    const senderName = dto.senderName?.trim() || null;
+    const sha256 = createHash('sha256').update(data).digest('hex');
     await this.prisma.$transaction([
-      this.prisma.payment.update({ where: { id: p.id }, data: { bankTxnRef: dto.txnRef.trim(), bankSenderName: dto.senderName.trim(), bankSubmittedAt: new Date(), reviewedAt: null, reviewNote: null } }),
+      this.prisma.payment.update({ where: { id: p.id }, data: { bankTxnRef: txnRef, bankSenderName: senderName, bankSubmittedAt: new Date(), reviewedAt: null, reviewNote: null } }),
+      this.prisma.paymentProof.upsert({ where: { paymentId: p.id }, create: { paymentId: p.id, mime, data, sha256 }, update: { mime, data, sha256, createdAt: new Date() } }),
       this.prisma.booking.update({ where: { id: b.id }, data: { awaitingVerification: true } }),
     ]);
     const first = b.student.name.split(' ')[0];
-    const facts: [string, string][] = [['Amount', money(p.amountMinor)], ['Transaction ID', dto.txnRef.trim()], ['Session', `${b.mentor.user.name}, ${emailDate(b.slot.startAt)}`], ['Reference', b.reference]];
-    await this.notify.send(b.student.email, 'We have received your payment details', `Hi ${first},\n\nThank you. We have your bank transfer details and are checking the payment now. Your session time is held for you while we do. You will get a confirmation as soon as it is verified, usually within a few hours.`, b.studentId, { facts, whatsapp: { alert: 'paymentReceived', params: [first, b.mentor.user.name, money(p.amountMinor), dto.txnRef.trim(), b.reference] } });
+    const facts: [string, string][] = [['Amount', money(p.amountMinor)], ...(txnRef ? [['Transaction ID', txnRef] as [string, string]] : []), ['Receipt', 'Screenshot received'], ['Session', `${b.mentor.user.name}, ${emailDate(b.slot.startAt)}`], ['Reference', b.reference]];
+    await this.notify.send(b.student.email, 'We have received your payment details', `Hi ${first},\n\nThank you. We have your bank transfer details and are checking the payment now. Your session time is held for you while we do. You will get a confirmation as soon as it is verified, usually within a few hours.`, b.studentId, { facts, whatsapp: { alert: 'paymentReceived', params: [first, b.mentor.user.name, money(p.amountMinor), txnRef ?? 'see your receipt screenshot', b.reference] } });
     const inbox = process.env.SUPPORT_EMAIL ?? process.env.MAIL_FROM_ADDRESS ?? process.env.SMTP_USER;
     this.activity.record(user.id, 'bank_transfer_submitted', { reference: b.reference });
-    if (inbox) await this.notify.send(inbox, `Bank payment to verify: ${b.reference}`, `${b.student.name} says they paid ${money(p.amountMinor)} by bank transfer. Check it against the bank statement, then approve or reject it in the admin Overview.`, undefined, { cta: { label: 'Open admin', url: `${webUrl()}/admin` }, facts: [...facts, ['Sender name', dto.senderName.trim()]], emailOnly: true });
+    if (inbox) await this.notify.send(inbox, `Bank payment to verify: ${b.reference}`, `${b.student.name} says they paid ${money(p.amountMinor)} by bank transfer. Check it against the bank statement, then approve or reject it in the admin Overview.`, undefined, { cta: { label: 'Open admin', url: `${webUrl()}/admin` }, facts: [...facts, ['Sender name', senderName ?? 'Not given']], emailOnly: true });
     return { ok: true };
   }
 
+  /** Transfers waiting to be checked, oldest first, with automatic checks to speed up the decision. */
   async pending() {
     const rows = await this.prisma.payment.findMany({
       where: { bankSubmittedAt: { not: null }, status: 'PENDING', booking: { status: 'PENDING_PAYMENT', awaitingVerification: true } },
       orderBy: { bankSubmittedAt: 'asc' },
-      include: { booking: { select: { reference: true, sessionKind: true, slot: { select: { startAt: true } }, student: { select: { name: true, email: true } }, mentor: { select: { user: { select: { name: true } } } } } } },
+      include: {
+        proof: { select: { sha256: true, mime: true, createdAt: true } },
+        booking: { select: { reference: true, sessionKind: true, createdAt: true, slot: { select: { startAt: true } }, student: { select: { name: true, email: true, phone: true } }, mentor: { select: { user: { select: { name: true } } } } } },
+      },
     });
-    return rows.map((p) => ({
-      id: p.id, amountMinor: p.amountMinor, currency: p.currency, txnRef: p.bankTxnRef, senderName: p.bankSenderName, submittedAt: p.bankSubmittedAt,
-      reference: p.booking.reference, sessionKind: p.booking.sessionKind, startAt: p.booking.slot.startAt, studentName: p.booking.student.name, studentEmail: p.booking.student.email, mentorName: p.booking.mentor.user.name,
-    }));
+    const hashes = rows.map((p) => p.proof?.sha256).filter((h): h is string => !!h);
+    const [sameProof, withTxn] = await Promise.all([
+      this.prisma.paymentProof.findMany({ where: { sha256: { in: hashes } }, select: { sha256: true, paymentId: true, createdAt: true, payment: { select: { booking: { select: { reference: true } } } } } }),
+      this.prisma.payment.findMany({ where: { bankTxnRef: { not: null } }, select: { id: true, bankTxnRef: true, bankSubmittedAt: true, booking: { select: { reference: true } } } }),
+    ]);
+    return rows.map((p) => {
+      const b = p.booking;
+      // Only earlier submissions count: the first booking to use a receipt is the original, later ones are the reuse.
+      const sent = p.bankSubmittedAt!.getTime();
+      const proofReusedIn = sameProof.filter((x) => x.sha256 === p.proof?.sha256 && x.paymentId !== p.id && x.createdAt.getTime() < sent).map((x) => x.payment.booking.reference);
+      const txnReusedIn = p.bankTxnRef ? withTxn.filter((x) => x.id !== p.id && x.bankSubmittedAt && x.bankSubmittedAt.getTime() < sent && normTxn(x.bankTxnRef!) === normTxn(p.bankTxnRef!)).map((x) => x.booking.reference) : [];
+      const sender = p.bankSenderName ? normName(p.bankSenderName) : [];
+      const student = normName(b.student.name);
+      return {
+        id: p.id, amountMinor: p.amountMinor, currency: p.currency, txnRef: p.bankTxnRef, senderName: p.bankSenderName, submittedAt: p.bankSubmittedAt,
+        reference: b.reference, sessionKind: b.sessionKind, startAt: b.slot.startAt, bookedAt: b.createdAt,
+        studentName: b.student.name, studentEmail: b.student.email, studentPhone: b.student.phone, mentorName: b.mentor.user.name,
+        hasProof: !!p.proof,
+        checks: {
+          proofReusedIn, txnReusedIn,
+          senderMatchesStudent: sender.length ? sender.some((w) => student.includes(w)) : null,
+          sessionStartsSoon: b.slot.startAt.getTime() - Date.now() < 6 * 3_600_000,
+        },
+      };
+    });
+  }
+
+  /** The receipt screenshot, for the admin checking the transfer. */
+  async proof(paymentId: string) {
+    if (!/^[a-f0-9]{24}$/i.test(paymentId)) throw new NotFoundException('Receipt not found');
+    const row = await this.prisma.paymentProof.findUnique({ where: { paymentId } });
+    if (!row) throw new NotFoundException('Receipt not found');
+    return { type: row.mime, data: Buffer.from(row.data) };
   }
 
   private async pendingPayment(id: string) {
@@ -98,7 +143,7 @@ export class BankTransferService {
     await this.prisma.payment.update({ where: { id }, data: { provider: 'bank', reviewedAt: new Date(), reviewedBy: adminId } });
     await this.prisma.booking.update({ where: { id: p.bookingId }, data: { awaitingVerification: false } });
     await this.payments.applyResult(p.providerRef, 'succeeded'); // confirms the booking and sends the usual confirmation emails
-    await this.prisma.auditLog.create({ data: { adminId, action: 'BANK_PAYMENT_APPROVED', entityType: 'Payment', entityId: id, detail: `${p.booking.reference} txn=${p.bankTxnRef}` } });
+    await this.prisma.auditLog.create({ data: { adminId, action: 'BANK_PAYMENT_APPROVED', entityType: 'Payment', entityId: id, detail: `${p.booking.reference} txn=${p.bankTxnRef ?? 'none (screenshot only)'}` } });
     return this.pending();
   }
 

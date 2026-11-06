@@ -24,6 +24,13 @@ export class PaymentsController {
   @ApiBearerAuth() @Roles('ADMIN') @Get('admin/bank-settings') bankSettings() { return this.bank.adminSettings(); }
   @ApiBearerAuth() @Roles('ADMIN') @Put('admin/bank-settings') saveBankSettings(@CurrentUser() u: AuthUser, @Body() dto: BankSettingsDto) { return this.bank.saveSettings(u.id, dto); }
   @ApiBearerAuth() @Roles('ADMIN') @Get('admin/bank-transfers') bankTransfers() { return this.bank.pending(); }
+  @ApiBearerAuth() @Roles('ADMIN') @Get('admin/bank-transfers/:id/proof')
+  async bankProof(@Param('id') id: string, @Res() res: Response) {
+    const img = await this.bank.proof(id);
+    res.setHeader('content-type', img.type);
+    res.setHeader('cache-control', 'private, no-store');
+    res.send(img.data);
+  }
   @ApiBearerAuth() @Roles('ADMIN') @HttpCode(200) @Post('admin/bank-transfers/:id/approve') approve(@CurrentUser() u: AuthUser, @Param('id') id: string) { return this.bank.approve(u.id, id); }
   @ApiBearerAuth() @Roles('ADMIN') @HttpCode(200) @Post('admin/bank-transfers/:id/reject') reject(@CurrentUser() u: AuthUser, @Param('id') id: string, @Body() dto: RejectTransferDto) { return this.bank.reject(u.id, id, dto.reason); }
 

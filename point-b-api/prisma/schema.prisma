@@ -339,7 +339,26 @@ model Payment {
   reviewNote      String?
   createdAt       DateTime      @default(now())
 
-  booking Booking @relation(fields: [bookingId], references: [id])
+  booking Booking       @relation(fields: [bookingId], references: [id])
+  proof   PaymentProof?
+
+  @@index([bankTxnRef])
+}
+
+/**
+ * The receipt screenshot a student uploads with a bank / QR transfer. Only admins can view it.
+ */
+model PaymentProof {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  paymentId String   @unique @db.ObjectId
+  mime      String
+  data      Bytes
+  sha256    String
+  createdAt DateTime @default(now())
+
+  payment Payment @relation(fields: [paymentId], references: [id])
+
+  @@index([sha256])
 }
 
 model Review {
