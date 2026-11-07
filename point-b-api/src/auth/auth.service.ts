@@ -5,7 +5,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../common/notifications.service';
 import { webUrl } from '../common/email-template';
 import { PasswordLinksService } from '../common/password-links.service';
-import { ChangePasswordDto, LoginDto, RegisterDto, ResetPasswordDto, UpdateContactDto } from './auth.dto';
+import { ChangePasswordDto, DisableTwoFactorDto, LoginCodeDto, LoginDto, RegisterDto, ResetPasswordDto, UpdateContactDto } from './auth.dto';
+import { hashRecovery, newRecoveryCodes, newTotpSecret, otpauthUrl, verifyTotp } from '../common/totp';
 import { normalisePhone } from '../common/phone';
 import { ActivityService } from '../activity/activity.service';
 
@@ -44,9 +45,10 @@ export class AuthService {
     return this.session(fresh);
   }
 
-  private publicUser(u: { id: string; email: string; name: string; role: string; timezone: string; dateOfBirth: Date | null; guardianConsent: boolean; phone: string | null; whatsappAlerts: boolean }) {
+  private publicUser(u: { id: string; email: string; name: string; role: string; timezone: string; dateOfBirth: Date | null; guardianConsent: boolean; phone: string | null; whatsappAlerts: boolean; staffRole?: string | null; totpEnabledAt?: Date | null }) {
     const isMinor = u.dateOfBirth ? ageOn(u.dateOfBirth) < 18 : false;
-    return { id: u.id, email: u.email, name: u.name, role: u.role, timezone: u.timezone, isMinor, guardianConsent: u.guardianConsent, phone: u.phone, whatsappAlerts: u.whatsappAlerts };
+    const staff = u.role === 'ADMIN' ? { staffRole: u.staffRole ?? 'OWNER', twoFactorEnabled: !!u.totpEnabledAt } : {};
+    return { id: u.id, email: u.email, name: u.name, role: u.role, timezone: u.timezone, isMinor, guardianConsent: u.guardianConsent, phone: u.phone, whatsappAlerts: u.whatsappAlerts, ...staff };
   }
 
   private async session(user: Parameters<AuthService['publicUser']>[0]) {
@@ -100,7 +102,72 @@ export class AuthService {
     const ok = user && user.isActive && (await bcrypt.compare(dto.password, user.passwordHash));
     if (!user || !ok) throw new UnauthorizedException('Incorrect email or password');
     if (user.role !== 'ADMIN') this.activity.record(user.id, 'signed_in');
+    // Admins with two-step sign-in get a 5-minute token that only works for entering their code.
+    if (user.role === 'ADMIN' && user.totpEnabledAt && user.totpSecret) {
+      return { mfaRequired: true as const, mfaToken: await this.jwt.signAsync({ sub: user.id, purpose: 'mfa' }, { expiresIn: '5m' }) };
+    }
     return this.session(user);
+  }
+
+  async loginWithCode(dto: LoginCodeDto) {
+    let sub: string;
+    try {
+      const p = await this.jwt.verifyAsync<{ sub: string; purpose?: string }>(dto.mfaToken);
+      if (p.purpose !== 'mfa') throw new Error();
+      sub = p.sub;
+    } catch {
+      throw new UnauthorizedException('That sign-in has expired. Please enter your password again.');
+    }
+    const user = await this.prisma.user.findUnique({ where: { id: sub } });
+    if (!user?.isActive || !user.totpSecret) throw new UnauthorizedException('That sign-in has expired. Please enter your password again.');
+    if (verifyTotp(user.totpSecret, dto.code)) return this.session(user);
+    // A backup code works once.
+    const h = hashRecovery(dto.code);
+    if (user.totpRecoveryHashes.includes(h)) {
+      await this.prisma.user.update({ where: { id: user.id }, data: { totpRecoveryHashes: user.totpRecoveryHashes.filter((x) => x !== h) } });
+      await this.prisma.auditLog.create({ data: { adminId: user.id, action: 'BACKUP_CODE_USED', entityType: 'User', entityId: user.id, detail: `${user.totpRecoveryHashes.length - 1} backup codes left` } });
+      return this.session(user);
+    }
+    throw new UnauthorizedException('That code is not right. Check your authenticator app and try again.');
+  }
+
+  /** Starts two-step sign-in: a new secret that only takes effect once a code from it is confirmed. */
+  async startTwoFactor(userId: string) {
+    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    const secret = newTotpSecret();
+    await this.prisma.user.update({ where: { id: userId }, data: { totpPendingSecret: secret } });
+    return { secret, otpauthUrl: otpauthUrl(secret, user.email) };
+  }
+
+  async enableTwoFactor(userId: string, code: string) {
+    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    if (!user.totpPendingSecret || !verifyTotp(user.totpPendingSecret, code)) throw new BadRequestException('That code is not right. Make sure the time on your phone is correct, then try the newest code.');
+    const { codes, hashes } = newRecoveryCodes();
+    await this.prisma.user.update({ where: { id: userId }, data: { totpSecret: user.totpPendingSecret, totpPendingSecret: null, totpEnabledAt: new Date(), totpRecoveryHashes: hashes } });
+    await this.prisma.auditLog.create({ data: { adminId: userId, action: 'TWO_STEP_ENABLED', entityType: 'User', entityId: userId, detail: '' } });
+    return { recoveryCodes: codes };
+  }
+
+  async disableTwoFactor(userId: string, dto: DisableTwoFactorDto) {
+    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    if (!(await bcrypt.compare(dto.password, user.passwordHash))) throw new BadRequestException('Your password is not right.');
+    if (!user.totpSecret || !(verifyTotp(user.totpSecret, dto.code) || user.totpRecoveryHashes.includes(hashRecovery(dto.code)))) throw new BadRequestException('That code is not right.');
+    await this.prisma.user.update({ where: { id: userId }, data: { totpSecret: null, totpPendingSecret: null, totpEnabledAt: null, totpRecoveryHashes: [] } });
+    await this.prisma.auditLog.create({ data: { adminId: userId, action: 'TWO_STEP_DISABLED', entityType: 'User', entityId: userId, detail: '' } });
+    return { ok: true };
+  }
+
+  async newBackupCodes(userId: string, code: string) {
+    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    if (!user.totpSecret || !verifyTotp(user.totpSecret, code)) throw new BadRequestException('That code is not right.');
+    const { codes, hashes } = newRecoveryCodes();
+    await this.prisma.user.update({ where: { id: userId }, data: { totpRecoveryHashes: hashes } });
+    return { recoveryCodes: codes, left: codes.length };
+  }
+
+  async twoFactorStatus(userId: string) {
+    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { totpEnabledAt: true, totpRecoveryHashes: true } });
+    return { enabled: !!user.totpEnabledAt, enabledAt: user.totpEnabledAt, backupCodesLeft: user.totpRecoveryHashes.length };
   }
 
   async me(id: string) {

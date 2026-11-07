@@ -19,6 +19,7 @@ type CheckoutInfo =
   | {
       state: "ready"; provider: "mock" | "stripe"; reference: string; amountMinor: number; currency: Currency; holdExpiresAt: string;
       providerRef?: string; clientSecret?: string; publishableKey?: string; bank?: BankInfo | null;
+      wallet?: { balanceMinor: number; appliedMinor: number };
     };
 
 // loadStripe must run once per key, not on every render.
@@ -96,15 +97,16 @@ export function Checkout({ reference, onPaid, bodyClass, footerClass, footerLead
 
   if (info.state === "verifying") return <Verifying info={info} bodyClass={bodyClass} footerClass={footerClass} />;
 
-  // Bank app / QR is offered beside the card form for PKR sessions.
-  const picker = info.bank ? <MethodPicker value={method} onChange={setMethod} /> : null;
+  // Bank app / QR is offered beside the card form for PKR sessions. A POINT B balance is offered first.
+  const balance = <BalanceOffer info={info} onPaid={onPaid} onUpdated={setInfo} />;
+  const picker = <>{balance}{info.bank ? <MethodPicker value={method} onChange={setMethod} /> : null}</>;
   if (info.bank && method === "bank") {
     return <BankForm info={info} bank={info.bank} picker={picker} onSubmitted={(txnRef) => setInfo({ state: "verifying", reference: info.reference, amountMinor: info.amountMinor, currency: info.currency, txnRef, submittedAt: new Date().toISOString() })} bodyClass={bodyClass} footerClass={footerClass} footerLead={footerLead} />;
   }
 
   if (info.provider === "stripe" && info.clientSecret && info.publishableKey) {
     return (
-      <Elements stripe={stripeFor(info.publishableKey)} options={{ clientSecret: info.clientSecret, appearance, fonts: [{ cssSrc: "https://fonts.googleapis.com/css2?family=Inter:wght@400;500&display=swap" }] }}>
+      <Elements key={info.clientSecret} stripe={stripeFor(info.publishableKey)} options={{ clientSecret: info.clientSecret, appearance, fonts: [{ cssSrc: "https://fonts.googleapis.com/css2?family=Inter:wght@400;500&display=swap" }] }}>
         <StripeForm info={info} picker={picker} onPaid={onPaid} bodyClass={bodyClass} footerClass={footerClass} footerLead={footerLead} />
       </Elements>
     );
@@ -116,6 +118,44 @@ export function Checkout({ reference, onPaid, bodyClass, footerClass, footerLead
 }
 
 type FormProps = { info: Extract<CheckoutInfo, { state: "ready" }>; onPaid: () => void; bodyClass: string; footerClass: string; footerLead?: ReactNode; picker?: ReactNode };
+
+/** Offers the student's POINT B balance (from cancelled sessions or credit). Covers all of the session, or part of it. */
+function BalanceOffer({ info, onPaid, onUpdated }: { info: FormProps["info"]; onPaid: () => void; onUpdated: (i: CheckoutInfo) => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const w = info.wallet;
+  if (!w || (w.balanceMinor <= 0 && !w.appliedMinor)) return null;
+  const money = (m: number) => formatMoney(m, info.currency);
+  if (w.appliedMinor) return (
+    <div className="flex items-center gap-3 rounded-2xl bg-mint/50 px-4 py-3 text-sm ring-1 ring-forest/15">
+      <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden className="shrink-0 text-forest"><path d="M4 10.5l4 4 8-9" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+      <span className="text-ink">{money(w.appliedMinor)} paid from your POINT B balance. Pay the remaining {money(info.amountMinor)} below.</span>
+    </div>
+  );
+  const covers = w.balanceMinor >= info.amountMinor;
+  const use = Math.min(w.balanceMinor, info.amountMinor);
+  async function apply() {
+    setBusy(true); setError(null);
+    try {
+      const next = await api<CheckoutInfo>(`/payments/${info.reference}/use-balance`, { method: "POST" });
+      track("balance_used", { reference: info.reference });
+      if (next.state === "paid") onPaid(); else onUpdated(next);
+    } catch (e) { setError(errMsg(e)); setBusy(false); }
+  }
+  return (
+    <div className="rounded-2xl bg-lemon/50 p-4 ring-1 ring-brass/20">
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-ink"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden><rect x="2.5" y="5" width="15" height="11" rx="2.5" stroke="currentColor" strokeWidth="1.5" /><path d="M13 10.5h2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /><path d="M5 5V4.5A1.5 1.5 0 016.5 3H14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg></span>
+        <div className="min-w-0 flex-1 basis-[11rem]">
+          <p className="text-sm font-medium text-ink">You have {money(w.balanceMinor)} in your POINT B balance</p>
+          <p className="text-xs text-ink-soft">{covers ? "It covers this whole session." : `Use it now and pay the remaining ${money(info.amountMinor - use)} by card or bank.`}</p>
+        </div>
+        <Button size="sm" className="w-full sm:w-auto" disabled={busy} onClick={apply}>{busy ? <Spinner /> : covers ? `Pay with balance` : `Use ${money(use)}`}</Button>
+      </div>
+      {error && <div className="mt-3"><Alert>{error}</Alert></div>}
+    </div>
+  );
+}
 
 function MethodPicker({ value, onChange }: { value: "card" | "bank"; onChange: (v: "card" | "bank") => void }) {
   const opts = [

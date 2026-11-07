@@ -20,6 +20,7 @@ import { DEFAULT_PRICES, commissionRules, currencyFor, feeOf, groupPercent, pric
 import { AdminEditApplicationDto } from '../applications/applications.dto';
 import { InterviewDto, InterviewSlotSettingsDto, PricingRuleDto, ScorecardDto, SettingDto, UpdateMentorAdminDto } from './admin.dto';
 import { INTERVIEW_MINUTES, InterviewSlotsService } from './interview-slots.service';
+import { WalletService } from '../common/wallet.service';
 
 const S = ApplicationStatus;
 export const TRANSITIONS: Record<ApplicationStatus, ApplicationStatus[]> = {
@@ -39,11 +40,42 @@ export const TRANSITIONS: Record<ApplicationStatus, ApplicationStatus[]> = {
 };
 export const PASS_THRESHOLD = 75;
 
+/**
+ * Gross booked per period for the revenue chart: daily for up to a month, weekly up to about six months, monthly beyond.
+ * Periods are in UTC and start on the first booking when no range is given.
+ */
+function trendFor(rows: { createdAt: Date; priceMinor: number }[], from?: Date, to?: Date) {
+  const start = from ?? (rows.length ? new Date(Math.min(...rows.map((r) => r.createdAt.getTime()))) : new Date());
+  const end = to ?? new Date();
+  const days = Math.max(1, (end.getTime() - start.getTime()) / 86_400_000);
+  const unit: 'day' | 'week' | 'month' = days <= 32 ? 'day' : days <= 190 ? 'week' : 'month';
+  const keyOf = (d: Date) => {
+    if (unit === 'month') return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-01`;
+    const day = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+    if (unit === 'week') day.setUTCDate(day.getUTCDate() - ((day.getUTCDay() + 6) % 7));
+    return day.toISOString().slice(0, 10);
+  };
+  const buckets = new Map<string, { grossMinor: number; sessions: number }>();
+  // Every period in the range, so quiet days show as gaps rather than disappearing.
+  for (let d = new Date(start); d < end && buckets.size < 400; ) {
+    buckets.set(keyOf(d), { grossMinor: 0, sessions: 0 });
+    if (unit === 'month') d = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1));
+    else d = new Date(d.getTime() + (unit === 'week' ? 7 : 1) * 86_400_000);
+  }
+  for (const r of rows) {
+    const k = keyOf(r.createdAt);
+    const b = buckets.get(k) ?? { grossMinor: 0, sessions: 0 };
+    b.grossMinor += r.priceMinor; b.sessions += 1;
+    buckets.set(k, b);
+  }
+  return { unit, points: [...buckets.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([period, v]) => ({ period, ...v })) };
+}
+
 const slugify = (s: string) => s.toLowerCase().normalize('NFKD').replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-');
 
 @Injectable()
 export class AdminService {
-  constructor(private prisma: PrismaService, private notify: NotificationsService, private links: PasswordLinksService, private daily: DailyService, private slots: InterviewSlotsService) {}
+  constructor(private prisma: PrismaService, private notify: NotificationsService, private links: PasswordLinksService, private daily: DailyService, private slots: InterviewSlotsService, private wallet: WalletService) {}
 
   audit(adminId: string, action: string, entityType: string, entityId: string, detail = '') {
     return this.prisma.auditLog.create({ data: { adminId, action, entityType, entityId, detail } });
@@ -272,7 +304,21 @@ export class AdminService {
   // ---------- mentors / pricing / settings ----------
   async listMentors() {
     const rows = await this.prisma.mentorProfile.findMany({ include: { user: { select: { name: true, email: true } } }, orderBy: { createdAt: 'desc' } });
-    return Promise.all(rows.map(async (m) => ({ ...m, ...(await priceFor(this.prisma, m)), sessionsCompleted: await this.prisma.booking.count({ where: { mentorId: m.id, status: 'COMPLETED' } }) })));
+    const now = new Date(), in14 = new Date(now.getTime() + 14 * 86_400_000);
+    const [slots, reviews] = await Promise.all([
+      this.prisma.availabilitySlot.groupBy({ by: ['mentorId'], where: { isBooked: false, startAt: { gte: now, lt: in14 } }, _count: true }),
+      this.prisma.review.findMany({ where: { OR: [{ status: 'APPROVED' }, { status: null }, { status: { isSet: false } }] }, select: { rating: true, booking: { select: { mentorId: true } } } }),
+    ]);
+    return Promise.all(rows.map(async (m) => {
+      const mine = reviews.filter((r) => r.booking.mentorId === m.id);
+      return {
+        ...m, ...(await priceFor(this.prisma, m)),
+        sessionsCompleted: await this.prisma.booking.count({ where: { mentorId: m.id, status: 'COMPLETED' } }),
+        openSlots14: slots.find((s) => s.mentorId === m.id)?._count ?? 0,
+        rating: mine.length ? mine.reduce((n, r) => n + r.rating, 0) / mine.length : null, reviewCount: mine.length,
+        hasPayoutDetails: !!m.payoutDetails,
+      };
+    }));
   }
 
   async updateMentor(adminId: string, id: string, dto: UpdateMentorAdminDto) {
@@ -427,7 +473,7 @@ export class AdminService {
       this.prisma.booking.findMany({
         where: { status: { in: ['CONFIRMED', 'COMPLETED'] }, ...made },
         select: {
-          currency: true, priceMinor: true, listPriceMinor: true, platformFeeMinor: true, commissionPercent: true, discountMinor: true, repeatStudent: true, sessionKind: true, payoutId: true,
+          currency: true, priceMinor: true, listPriceMinor: true, platformFeeMinor: true, commissionPercent: true, discountMinor: true, repeatStudent: true, sessionKind: true, payoutId: true, createdAt: true,
           payments: { where: { status: 'SUCCEEDED' }, select: { provider: true }, take: 1 },
           mentor: { select: { id: true, level: true, user: { select: { name: true } } } },
         },
@@ -476,6 +522,7 @@ export class AdminService {
         }),
         kinds: (['ONE_TO_ONE', 'GROUP'] as const).map((kind) => ({ kind, ...tally(rows.filter((b) => b.sessionKind === kind)) })),
         methods: groupRows(rows, (b) => b.payments[0]?.provider ?? 'unknown').map((g) => ({ method: g[0].payments[0]?.provider ?? 'unknown', ...tally(g) })).sort((x, y) => y.grossMinor - x.grossMinor),
+        trend: trendFor(rows, from, to),
         mentors: groupRows(rows, (b) => b.mentor.id).map((g) => ({ id: g[0].mentor.id, name: g[0].mentor.user.name, level: g[0].mentor.level, ...tally(g) })).sort((x, y) => y.grossMinor - x.grossMinor),
       };
     });
@@ -488,7 +535,7 @@ export class AdminService {
       bookings: Object.fromEntries(bookings.map((b) => [b.status, b._count])),
       bookingConversion: totalBookings ? (count(bookings, 'CONFIRMED') + count(bookings, 'COMPLETED')) / totalBookings : null,
       repeatStudents: repeat.length,
-      commissionConfigured: configured, commission: rules, finance, video,
+      commissionConfigured: configured, commission: rules, finance, video, balancesHeld: await this.wallet.totalsHeld(),
     };
   }
 

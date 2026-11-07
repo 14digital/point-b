@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Alert, Button, Container, Field, Mark, Spinner } from "@/components/ui";
-import { HOME_BY_ROLE, useAuth } from "@/lib/auth";
+import { HOME_BY_ROLE, TwoStepRequired, useAuth } from "@/lib/auth";
 import { errMsg } from "@/lib/api";
 import { MobileField } from "@/components/mobile-field";
 import { isValidPhone, type CountryCode } from "@/components/phone-input";
@@ -13,8 +13,12 @@ import { NoticeText } from "@/lib/policy";
 const age = (dob: string) => (Date.now() - new Date(dob).getTime()) / (365.25 * 86400_000);
 
 export function SignInForm() {
-  const { login, register } = useAuth();
+  const { login, register, loginWithCode } = useAuth();
+  const [twoStep, setTwoStep] = useState<string | null>(null);
+  const [code, setCode] = useState("");
   const router = useRouter();
+  // A link with a tab or request in it (e.g. from an email) loads in full, so the dashboard reads it from the address.
+  const go = (to: string) => (to.includes("?") ? window.location.assign(to) : router.push(to));
   const params = useSearchParams();
   const [mode, setMode] = useState<"in" | "up">(params.get("mode") === "register" ? "up" : "in");
   const [busy, setBusy] = useState(false);
@@ -41,9 +45,25 @@ export function SignInForm() {
             timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
           });
       const next = params.get("next");
-      router.push(next && next.startsWith("/") ? next : HOME_BY_ROLE[user.role]);
+      go(next && next.startsWith("/") && !next.startsWith("//") ? next : HOME_BY_ROLE[user.role]);
     } catch (err) {
+      if (err instanceof TwoStepRequired) { setTwoStep(err.mfaToken); setBusy(false); return; }
       setError(errMsg(err)); setBusy(false);
+    }
+  }
+
+  async function submitCode(e: React.FormEvent) {
+    e.preventDefault();
+    if (!twoStep) return;
+    setBusy(true); setError(null);
+    try {
+      const user = await loginWithCode(twoStep, code);
+      const next = params.get("next");
+      go(next && next.startsWith("/") && !next.startsWith("//") ? next : HOME_BY_ROLE[user.role]);
+    } catch (err) {
+      const msg = errMsg(err);
+      if (/expired/i.test(msg)) { setTwoStep(null); setCode(""); }
+      setError(msg); setBusy(false);
     }
   }
 
@@ -105,6 +125,20 @@ export function SignInForm() {
                 ))}
               </div>
 
+              {twoStep ? (
+                <form onSubmit={submitCode} className="mt-7 space-y-5">
+                  <div className="flex gap-3 rounded-2xl bg-paper px-4 py-3.5 text-sm">
+                    <svg width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden className="mt-0.5 shrink-0 text-ink"><rect x="5.5" y="2.5" width="9" height="15" rx="2" stroke="currentColor" strokeWidth="1.5" /><path d="M9 14.5h2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg>
+                    <p className="text-ink-soft"><span className="font-medium text-ink">Two-step sign-in.</span> Enter the 6-digit code from your authenticator app, or one of your backup codes.</p>
+                  </div>
+                  <Field label="Code">
+                    <input className="input text-center font-mono text-xl tracking-[0.3em]" autoFocus inputMode="text" autoComplete="one-time-code" maxLength={12} value={code} onChange={(e) => setCode(e.target.value.trim())} placeholder="000000" />
+                  </Field>
+                  {error && <Alert>{error}</Alert>}
+                  <Button type="submit" className="w-full" size="lg" disabled={busy || code.length < 6}>{busy ? <Spinner /> : "Verify and sign in"}</Button>
+                  <button type="button" onClick={() => { setTwoStep(null); setCode(""); setError(null); }} className="w-full text-center text-sm text-ink-soft underline-offset-4 hover:text-ink hover:underline">Use a different account</button>
+                </form>
+              ) : (
               <form onSubmit={submit} className="mt-7 space-y-5">
                 {mode === "up" && (
                   <Field label="Full name"><input className="input" required autoComplete="name" placeholder="Your name" value={f.name} onChange={(e) => set("name", e.target.value)} /></Field>
@@ -147,6 +181,7 @@ export function SignInForm() {
                   {busy ? <Spinner /> : signingIn ? "Sign in" : "Create account"}
                 </Button>
               </form>
+              )}
 
               {signingIn ? (
                 <p className="mt-6 rounded-2xl bg-paper px-4 py-3 text-xs leading-relaxed text-ink-soft">

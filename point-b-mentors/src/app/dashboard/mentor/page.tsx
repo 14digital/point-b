@@ -11,8 +11,10 @@ import { api, errMsg } from "@/lib/api";
 import { STATUS_LABEL } from "@/lib/constants";
 import { fmtDay, fmtDayShort, fmtTime, formatMoney, groupByDay, initials, localTz } from "@/lib/format";
 import { useUrlTab } from "@/lib/use-url-tab";
+import { MySupport } from "@/components/my-support";
 import { useApi, useNow } from "@/lib/use-api";
 import type { Booking, Interview, MentorSummary, MyReview } from "@/lib/types";
+import { PayoutDetailsForm, PayoutDetailsView, type PayoutDetails } from "@/components/admin-mentor-detail";
 
 interface MySlot { id: string; startAt: string; endAt: string; isBooked: boolean; kind: "ONE_TO_ONE" | "GROUP"; capacity: number; seatsTaken: number; bookings: { reference: string; status: string }[] }
 interface Earnings { totals: { currency: "PKR" | "GBP"; grossMinor: number; feeMinor: number; payoutMinor: number; sessions: number; repeatSessions: number }[]; tierPercent: number | null; repeatPercent: number; commissionConfigured: boolean }
@@ -21,7 +23,7 @@ interface MyPromo { id: string; studentId: string; code: string; percentOff: num
 type MyBooking = Booking & { studentName: string; hostStartedAt?: string | null };
 type Profile = MentorSummary & { agreementAcceptedAt?: string | null };
 
-const TABS = ["Sessions", "Feedback", "Promo codes", "Availability", "Profile"] as const;
+const TABS = ["Sessions", "Feedback", "Promo codes", "Availability", "Payouts", "Profile", "Support"] as const;
 type Tab = (typeof TABS)[number];
 
 export default function MentorDashboardPage() {
@@ -74,15 +76,17 @@ function Dashboard() {
         {p && p.status !== "ACTIVE" && <Checklist p={p} hasSlots={(slots.data?.length ?? 0) > 0} onDone={profile.reload} />}
 
         <div id="mentor-tabs" className="mb-8 flex scroll-mt-24 flex-wrap items-center justify-between gap-4">
-          <Tabs tabs={TABS} value={tab} onChange={setTab} counts={{ Sessions: upcoming.length + toClose.length, Feedback: (reviews.data ?? []).filter((r) => r.status === "PENDING").length, Availability: openSlots }} />
+          <Tabs tabs={TABS} value={tab} onChange={setTab} counts={{ Sessions: upcoming.length + toClose.length, Availability: openSlots }} />
           {p && <p className="text-sm text-ink-soft">{p.rating ? <>★ {p.rating.toFixed(1)} from {p.reviewCount} review{p.reviewCount === 1 ? "" : "s"}</> : "No reviews yet"} · {p.sessionsCompleted} completed</p>}
         </div>
 
         {tab === "Sessions" && <Sessions loading={bookings.loading} upcoming={upcoming} toClose={toClose} history={history} now={now} reload={reload} />}
-        {tab === "Feedback" && <Feedback loading={reviews.loading} items={reviews.data ?? []} reload={async () => { await Promise.all([reviews.reload(), profile.reload()]); }} />}
+        {tab === "Feedback" && <Feedback loading={reviews.loading} items={reviews.data ?? []} />}
         {tab === "Promo codes" && <PromoCodes live={p?.status === "ACTIVE"} repeatPercent={earnings.data?.repeatPercent ?? 15} />}
         {tab === "Availability" && <Availability slots={slots.data} loading={slots.loading} reload={slots.reload} />}
+        {tab === "Payouts" && <PayoutSettings />}
         {tab === "Profile" && p && <ProfileEditor p={p} onSaved={profile.reload} />}
+        {tab === "Support" && <div className="max-w-3xl"><MySupport /></div>}
       </Container>
     </>
   );
@@ -227,39 +231,25 @@ function PromoCodes({ live, repeatPercent }: { live: boolean; repeatPercent: num
   );
 }
 
-function Feedback({ loading, items, reload }: { loading: boolean; items: MyReview[]; reload: () => Promise<void> }) {
-  const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  async function act(id: string, action: "approve" | "hide") {
-    setBusy(id + action); setError(null);
-    try { await api(`/mentors/me/reviews/${id}/${action}`, { body: {} }); await reload(); } catch (e) { setError(errMsg(e)); } finally { setBusy(null); }
-  }
+/** Feedback from students, read-only: the POINT B team decides what appears on the public profile. */
+function Feedback({ loading, items }: { loading: boolean; items: MyReview[] }) {
   if (loading) return <Skeleton className="h-40 rounded-3xl" />;
-  const pending = items.filter((r) => r.status === "PENDING");
-  const rest = items.filter((r) => r.status !== "PENDING");
   const card = (r: MyReview) => (
-    <div key={r.id} className={`rounded-3xl bg-white p-5 ring-1 ring-line sm:p-6 ${r.status === "PENDING" ? "border-l-4 border-brass" : ""}`}>
+    <div key={r.id} className="rounded-3xl bg-white p-5 ring-1 ring-line sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <p className="text-sm font-medium text-ink">{r.studentName.split(" ")[0]} {r.studentName.split(" ")[1]?.[0] ?? ""}. <span className="font-normal text-ink-soft">· {fmtDayShort(r.sessionAt)} · {r.agenda}</span></p>
           <p className="mt-1 text-lg"><Stars n={r.rating} /></p>
         </div>
-        <Badge tone={r.status === "APPROVED" ? "forest" : r.status === "PENDING" ? "brass" : "neutral"}>{r.status === "APPROVED" ? "Public" : r.status === "PENDING" ? "Awaiting your approval" : "Hidden"}</Badge>
+        <Badge tone={r.status === "APPROVED" ? "forest" : r.status === "PENDING" ? "brass" : "neutral"}>{r.status === "APPROVED" ? "On your public profile" : r.status === "PENDING" ? "Being reviewed by POINT B" : "Private"}</Badge>
       </div>
       <p className="mt-3 whitespace-pre-line text-sm leading-relaxed text-ink">&ldquo;{r.comment}&rdquo;</p>
-      <div className="mt-4 flex flex-wrap gap-2">
-        {r.status !== "APPROVED" && <Button size="sm" disabled={!!busy} onClick={() => act(r.id, "approve")}>{busy === r.id + "approve" ? <Spinner /> : "Approve and publish"}</Button>}
-        {r.status !== "HIDDEN" && <Button size="sm" variant="secondary" disabled={!!busy} onClick={() => act(r.id, "hide")}>{busy === r.id + "hide" ? <Spinner /> : r.status === "APPROVED" ? "Remove from profile" : "Keep private"}</Button>}
-      </div>
     </div>
   );
   return (
-    <div className="space-y-10">
-      {error && <Alert>{error}</Alert>}
-      <p className="max-w-2xl text-sm text-ink-soft">Students&rsquo; feedback is private until you approve it. Approved feedback appears on your public profile and counts towards your rating. Please publish feedback fairly and keep it to genuine student experiences.</p>
-      {items.length === 0 && <EmptyState title="No feedback yet" description="After a session finishes, the student is invited to leave feedback and it appears here for your approval." />}
-      {pending.length > 0 && <section><h2 className="font-display text-3xl text-ink">Awaiting your approval</h2><div className="mt-5 space-y-3">{pending.map(card)}</div></section>}
-      {rest.length > 0 && <section><h2 className="font-display text-3xl text-ink">Reviewed</h2><div className="mt-5 space-y-3">{rest.map(card)}</div></section>}
+    <div className="space-y-6">
+      <p className="max-w-2xl text-sm text-ink-soft">Every piece of feedback from your students is shown here. The POINT B team reviews it and decides what appears on your public profile and counts towards your rating, so ratings stay fair for everyone. If you think a review breaks the rules, contact support.</p>
+      {items.length === 0 ? <EmptyState title="No feedback yet" description="After a session finishes, the student is invited to leave feedback, and it appears here." /> : <div className="space-y-3">{items.map(card)}</div>}
     </div>
   );
 }
@@ -514,6 +504,82 @@ function ProfileEditor({ p, onSaved }: { p: Profile; onSaved: () => void }) {
         <MentorCard mentor={preview} />
         <p className="mt-3 text-xs text-ink-soft">Updates as you type. Save to publish your changes.</p>
       </div>
+    </div>
+  );
+}
+
+interface MyPayouts {
+  totals: { currency: "PKR" | "GBP"; earnedMinor: number; paidMinor: number; dueMinor: number; forCancelledMinor: number; sessions: number }[];
+  payouts: { id: string; createdAt: string; currency: "PKR" | "GBP"; amountMinor: number; sessions: number; reference: string | null; note: string | null }[];
+  sessions: { reference: string; status: string; currency: "PKR" | "GBP"; startAt: string; studentName: string; priceMinor: number; percent: number | null; earnMinor: number | null; paidOn: string | null }[];
+  hasPayoutDetails: boolean;
+}
+
+/** The mentor's money: what they've earned, what we've paid and what's on its way, plus where to pay them. */
+function PayoutSettings() {
+  const data = useApi<MyPayouts>("/mentors/me/payouts");
+  const saved = useApi<PayoutDetails | null>("/mentors/me/payout-details");
+  const [draft, setDraft] = useState<PayoutDetails | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+  const [showAll, setShowAll] = useState(false);
+  if (saved.loading || data.loading) return <Skeleton className="h-64 rounded-3xl" />;
+  const editing = draft ?? (saved.data ? null : { method: "bank" });
+  const d = data.data;
+  async function save() {
+    setBusy(true); setMsg(null);
+    try { saved.setData(await api<PayoutDetails>("/mentors/me/payout-details", { method: "PUT", body: editing })); setDraft(null); setMsg({ tone: "success", text: "Saved. We'll pay your earnings into this account." }); }
+    catch (e) { setMsg({ tone: "error", text: errMsg(e) }); } finally { setBusy(false); }
+  }
+  const sessions = showAll ? d?.sessions ?? [] : (d?.sessions ?? []).slice(0, 8);
+  return (
+    <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,24rem)]">
+      <div className="min-w-0 space-y-6">
+        {!d?.totals.length ? <Panel title="Your earnings"><p className="text-sm text-ink-soft">Your earnings appear here after your first paid session.</p></Panel> : d.totals.map((t) => (
+          <Panel key={t.currency} title={t.currency === "PKR" ? "Earnings · PKR" : "Earnings · GBP"} action={<span className="text-sm text-ink-soft">{t.sessions} paid session{t.sessions === 1 ? "" : "s"}</span>}>
+            <div className="grid gap-2 sm:grid-cols-3">
+              {([["Earned", t.earnedMinor, "bg-paper"], ["Paid to you", t.paidMinor, "bg-mint/60"], ["On its way", t.dueMinor, t.dueMinor ? "bg-lemon/60" : "bg-paper"]] as const).map(([k, v, bg]) => (
+                <div key={k} className={`flex items-baseline justify-between gap-3 rounded-2xl px-4 py-3 sm:block ${bg}`}><p className="text-xs text-ink-soft">{k}</p><p className="whitespace-nowrap font-display text-2xl leading-tight text-ink tabular-nums sm:mt-1">{formatMoney(v, t.currency)}</p></div>
+              ))}
+            </div>
+            {t.earnedMinor > 0 && <div className="mt-4 flex h-2 overflow-hidden rounded-full bg-paper-dim" aria-hidden><span className="h-full bg-forest" style={{ width: `${Math.min(100, ((t.earnedMinor - t.dueMinor) / t.earnedMinor) * 100)}%` }} /></div>}
+            {t.forCancelledMinor > 0 && <p className="mt-3 text-xs text-ink-soft">{formatMoney(t.forCancelledMinor, t.currency)} of what we&rsquo;ve paid you was for a session that was later cancelled. The POINT B team will be in touch about it.</p>}
+          </Panel>
+        ))}
+
+        {!!d?.payouts.length && (
+          <Panel title="Payments we've sent">
+            <ul className="divide-y divide-line">{d.payouts.map((p) => (
+              <li key={p.id} className="flex items-center justify-between gap-3 py-3 text-sm">
+                <span className="min-w-0"><span className="block text-ink">{fmtDay(p.createdAt)}</span><span className="block truncate text-xs text-ink-soft">{p.sessions} session{p.sessions === 1 ? "" : "s"}{p.reference ? ` · ref ${p.reference}` : ""}{p.note ? ` · ${p.note}` : ""}</span></span>
+                <span className="whitespace-nowrap font-medium tabular-nums text-ink">{formatMoney(p.amountMinor, p.currency)}</span>
+              </li>
+            ))}</ul>
+          </Panel>
+        )}
+
+        {!!d?.sessions.length && (
+          <Panel title="Sessions">
+            <ul className="divide-y divide-line">{sessions.map((s) => (
+              <li key={s.reference} className="flex items-center gap-3 py-3 text-sm">
+                <span className="min-w-0 flex-1"><span className="block truncate text-ink">{s.studentName}</span><span className="block text-xs text-ink-soft">{fmtDayShort(s.startAt)}, {fmtTime(s.startAt)} · <span className="whitespace-nowrap">{formatMoney(s.priceMinor, s.currency)}{s.percent != null ? ` − ${s.percent}%` : ""}</span></span></span>
+                <span className="text-right"><span className="block whitespace-nowrap font-medium tabular-nums text-ink">{s.earnMinor == null ? "—" : formatMoney(s.earnMinor, s.currency)}</span><span className={`block text-xs ${s.paidOn ? "text-forest" : "text-ink-soft"}`}>{s.paidOn ? `Paid ${fmtDayShort(s.paidOn)}` : "On its way"}</span></span>
+              </li>
+            ))}</ul>
+            {d.sessions.length > 8 && <button type="button" onClick={() => setShowAll(!showAll)} className="mt-3 text-sm font-medium text-ink underline-offset-4 hover:underline">{showAll ? "Show fewer" : `Show all ${d.sessions.length}`}</button>}
+          </Panel>
+        )}
+      </div>
+
+      <aside className="space-y-4 lg:sticky lg:top-24 lg:self-start">
+        <div>
+          <h2 className="font-display text-2xl text-ink">Where should we pay you?</h2>
+          <p className="mt-1 text-sm text-ink-soft">We send your share of each session here and email you a statement every time. Only the POINT B finance team can see these details.</p>
+        </div>
+        {editing ? <PayoutDetailsForm value={editing} onChange={setDraft} busy={busy} onSave={save} onCancel={saved.data ? () => setDraft(null) : undefined} />
+          : <div className="space-y-3"><PayoutDetailsView d={saved.data ?? null} /><div className="flex justify-end"><Button size="sm" variant="secondary" onClick={() => setDraft(saved.data ?? { method: "bank" })}>Change details</Button></div></div>}
+        {msg && <Alert tone={msg.tone}>{msg.text}</Alert>}
+      </aside>
     </div>
   );
 }

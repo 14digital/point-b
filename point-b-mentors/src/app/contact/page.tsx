@@ -8,15 +8,9 @@ import { api, errMsg } from "@/lib/api";
 import { track } from "@/lib/track";
 import { useAuth } from "@/lib/auth";
 import { NoticeText } from "@/lib/policy";
+import { SUPPORT_TOPICS } from "@/lib/support";
 
-// Must match CONTACT_TOPICS in the API.
-const TOPICS = [
-  { value: "A booking I’ve made", label: "A booking" },
-  { value: "Payments and refunds", label: "Payments & refunds" },
-  { value: "Becoming a mentor", label: "Becoming a mentor" },
-  { value: "A safeguarding concern", label: "Safeguarding concern" },
-  { value: "Something else", label: "Something else" },
-];
+const TOPICS = SUPPORT_TOPICS;
 
 const SHORTCUTS = [
   { tone: "bg-sky", title: "Manage a booking", text: "Reschedule a session or find your meeting link from your dashboard.", href: "/dashboard/student", cta: "Open dashboard" },

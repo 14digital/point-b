@@ -91,6 +91,17 @@ model User {
   phone               String? // international format, e.g. +923001234567
   whatsappAlerts      Boolean   @default(false) // the user agreed to receive their alerts on WhatsApp too
   isActive            Boolean   @default(true)
+  // Why an admin suspended the account, shown to admins only. Cleared on reactivation.
+  suspendedReason     String?
+  // Set when an admin erased the account's personal data on request; the bookings stay for the accounts.
+  anonymizedAt        DateTime?
+  // Admins only: OWNER can do everything; OPERATIONS and FINANCE see their own areas. Unset means OWNER.
+  staffRole           String?
+  // Two-step sign-in (authenticator app). The secret is kept only once the admin has confirmed a code.
+  totpSecret          String?
+  totpPendingSecret   String?
+  totpEnabledAt       DateTime?
+  totpRecoveryHashes  String[]  @default([])
   // Single-use set/reset password link. Only a SHA-256 hash is stored.
   resetTokenHash      String?
   resetTokenExpiresAt DateTime?
@@ -127,6 +138,8 @@ model MentorProfile {
   linkedinUrl         String?
   photoUrl            String?
   priceOverrideMinor  Int?
+  // Where the mentor wants to be paid: { method, accountTitle, bankName, iban, accountNumber, updatedAt }.
+  payoutDetails       Json?
   verified            Boolean        @default(false)
   isDemo              Boolean        @default(false)
   status              MentorStatus   @default(ONBOARDING)
@@ -256,6 +269,8 @@ model Booking {
   repeatStudent        Boolean? // the student had already had a paid session with this mentor
   commissionPercent    Int? // platform fee rate applied; null while no commission is configured
   platformFeeMinor     Int?
+  // Part of the price paid from the student's POINT B balance; returned to the balance if the booking is never paid.
+  walletAppliedMinor   Int?
   // Set once an admin records that the mentor has been paid for this session.
   payoutId             String?       @db.ObjectId
   // The student sent a bank / QR transfer and is waiting for an admin to verify it; the slot stays held meanwhile.
@@ -366,9 +381,11 @@ model Review {
   bookingId   String        @unique @db.ObjectId
   rating      Int
   comment     String
-  // Unset on reviews created before moderation existed; those count as approved. New reviews start PENDING until the mentor approves.
+  // Unset on reviews created before moderation existed; those count as approved. New reviews start PENDING until an admin approves or keeps them private.
   status      ReviewStatus?
   moderatedAt DateTime?
+  // "ADMIN" for admin decisions; "MENTOR" only on older reviews from when mentors could moderate.
+  moderatedBy String?
   createdAt   DateTime      @default(now())
 
   booking Booking @relation(fields: [bookingId], references: [id])
@@ -480,4 +497,63 @@ model Notification {
   readAt  DateTime?
 
   user User? @relation(fields: [userId], references: [id])
+}
+
+/**
+ * A message sent through the contact form, handled by the team until it is resolved.
+ */
+model SupportTicket {
+  id         String    @id @default(auto()) @map("_id") @db.ObjectId
+  number     String    @unique // e.g. SUP-4F2A1C, quoted in emails
+  name       String
+  email      String
+  userId     String?   @db.ObjectId
+  topic      String
+  message    String
+  urgent     Boolean   @default(false) // safeguarding concerns
+  status     String    @default("OPEN") // OPEN, IN_PROGRESS, RESOLVED
+  assignedTo String?   @db.ObjectId
+  resolvedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  events SupportEvent[]
+
+  @@index([status, createdAt])
+}
+
+/**
+ * Everything that happened on a ticket: internal notes, replies sent to the requester, status and owner changes.
+ */
+model SupportEvent {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  ticketId  String   @db.ObjectId
+  kind      String // NOTE, REPLY, STATUS, ASSIGN
+  body      String
+  byId      String?  @db.ObjectId
+  byName    String
+  createdAt DateTime @default(now())
+
+  ticket SupportTicket @relation(fields: [ticketId], references: [id])
+
+  @@index([ticketId])
+}
+
+/**
+ * A student's POINT B balance, as a ledger: credits when a paid session is cancelled (instead of a refund to the card
+ * or bank) and when the team adds credit, spends when it pays for a session. The balance is the sum, per currency.
+ */
+model WalletEntry {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId      String   @db.ObjectId
+  currency    Currency
+  amountMinor Int // positive adds to the balance, negative spends it
+  kind        String // CANCELLATION, LATE_PAYMENT, SPEND, RETURN, ADJUSTMENT
+  bookingId   String?  @db.ObjectId
+  reference   String? // booking reference, for the statement
+  note        String?
+  createdBy   String?  @db.ObjectId // admin who made an adjustment
+  createdAt   DateTime @default(now())
+
+  @@index([userId, createdAt])
 }

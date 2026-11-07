@@ -7,6 +7,7 @@ import { AuthUser } from '../common/auth';
 import { HOLD_MINUTES } from '../bookings/bookings.service';
 import { ActivityService } from '../activity/activity.service';
 import { PaymentsService } from './payments.service';
+import { WalletService } from '../common/wallet.service';
 import { BankSettingsDto, BankTransferDto } from './bank.dto';
 
 export interface BankDetails { enabled: boolean; accountTitle: string; bankName: string; accountNumber?: string; iban?: string; raastId?: string }
@@ -24,7 +25,7 @@ const normName = (s: string) => s.toLowerCase().replace(/[^a-z\s]/g, ' ').split(
  */
 @Injectable()
 export class BankTransferService {
-  constructor(private prisma: PrismaService, private notify: NotificationsService, private payments: PaymentsService, private activity: ActivityService) {}
+  constructor(private prisma: PrismaService, private notify: NotificationsService, private payments: PaymentsService, private activity: ActivityService, private wallet: WalletService) {}
 
   async details(): Promise<BankDetails | null> {
     const row = await this.prisma.setting.findUnique({ where: { key: DETAILS } });
@@ -155,6 +156,7 @@ export class BankTransferService {
       this.prisma.booking.update({ where: { id: b.id }, data: { status: 'CANCELLED', awaitingVerification: false, cancelledAt: new Date(), cancelReason: 'Bank payment could not be verified' } }),
       this.prisma.availabilitySlot.update({ where: { id: b.slotId }, data: { isBooked: false, seatsTaken: { decrement: 1 } } }),
     ]);
+    await this.wallet.returnUnused(b);
     this.activity.record(b.studentId, 'bank_transfer_rejected', { reference: b.reference, label: reason.slice(0, 100) });
     await this.prisma.auditLog.create({ data: { adminId, action: 'BANK_PAYMENT_REJECTED', entityType: 'Payment', entityId: id, detail: `${b.reference}: ${reason.trim().slice(0, 300)}` } });
     await this.notify.send(b.student.email, 'We could not verify your payment', `Hi ${b.student.name.split(' ')[0]},\n\nWe could not match your bank transfer for your session with ${b.mentor.user.name}, so the booking has been released.\n\nReason: ${reason.trim()}\n\nIf you did send the money, reply to this email with a screenshot of the transfer and we will sort it out straight away. Otherwise you are welcome to book again.`, b.studentId, { whatsapp: { alert: 'paymentNotVerified', params: [b.student.name.split(' ')[0], b.mentor.user.name, money(p.amountMinor), p.bankTxnRef ?? '—', reason.trim(), `${webUrl()}/dashboard/student`] }, facts: [['Transaction ID you gave', p.bankTxnRef ?? '—'], ['Amount', money(p.amountMinor)], ['Reference', b.reference]] });

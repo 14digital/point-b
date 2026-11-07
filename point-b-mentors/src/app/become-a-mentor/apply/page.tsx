@@ -244,7 +244,7 @@ function ApplyForm() {
         <div className="mt-12 grid gap-8 lg:grid-cols-[280px_minmax(0,1fr)] lg:gap-12">
           {/* Progress rail */}
           <aside className="min-w-0 lg:sticky lg:top-24 lg:self-start">
-            <ol className="no-scrollbar flex gap-2 overflow-x-auto lg:flex-col lg:gap-1">
+            <ol className="no-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1 py-1 lg:flex-col lg:gap-1">
               {STEPS.map((s, i) => {
                 const done = i < step, on = i === step;
                 return (

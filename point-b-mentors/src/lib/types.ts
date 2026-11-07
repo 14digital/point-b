@@ -7,6 +7,8 @@ export interface SessionUser {
   id: string; email: string; name: string; role: Role; timezone: string; isMinor: boolean; guardianConsent: boolean;
   phone?: string | null; whatsappAlerts?: boolean;
   mentorProfile?: { id: string; slug: string; status: string } | null;
+  /** Admins only. */
+  staffRole?: "OWNER" | "OPERATIONS" | "FINANCE"; twoFactorEnabled?: boolean;
 }
 
 export type SessionKind = "ONE_TO_ONE" | "GROUP";
@@ -32,7 +34,8 @@ export interface Booking {
   mentor: { id: string; slug: string; name: string; title: string; photoUrl?: string | null };
   student?: { id: string; name: string };
   meetingLink: string | null; review: { rating: number; comment: string; status: ReviewStatus } | null; canReview?: boolean;
-  payment: { providerRef: string; provider: string; status: string } | null;
+  payment: { providerRef: string; provider: string; status: string; processedAt?: string | null; bankSubmittedAt?: string | null; bankTxnRef?: string | null } | null;
+  listPriceMinor?: number; discountMinor?: number; walletAppliedMinor?: number;
   holdExpiresAt: string | null; awaitingVerification?: boolean; cancelReason: string | null; createdAt: string;
   rescheduleCount?: number; rescheduledAt?: string | null; rescheduleBy?: string | null;
 }

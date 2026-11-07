@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Headers, HttpCode, NotFoundException, Param, Post, Put, Req, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { AuthUser, CurrentUser, Public, Roles } from '../common/auth';
+import { AuthUser, CurrentUser, Public, Roles, Staff } from '../common/auth';
 import { PaymentsService } from './payments.service';
 import { BankTransferService } from './bank.service';
 import { BankSettingsDto, BankTransferDto, RejectTransferDto } from './bank.dto';
@@ -21,18 +21,18 @@ export class PaymentsController {
     res.send(img.data);
   }
 
-  @ApiBearerAuth() @Roles('ADMIN') @Get('admin/bank-settings') bankSettings() { return this.bank.adminSettings(); }
+  @Staff('FINANCE') @ApiBearerAuth() @Roles('ADMIN') @Get('admin/bank-settings') bankSettings() { return this.bank.adminSettings(); }
   @ApiBearerAuth() @Roles('ADMIN') @Put('admin/bank-settings') saveBankSettings(@CurrentUser() u: AuthUser, @Body() dto: BankSettingsDto) { return this.bank.saveSettings(u.id, dto); }
-  @ApiBearerAuth() @Roles('ADMIN') @Get('admin/bank-transfers') bankTransfers() { return this.bank.pending(); }
-  @ApiBearerAuth() @Roles('ADMIN') @Get('admin/bank-transfers/:id/proof')
+  @Staff('FINANCE') @ApiBearerAuth() @Roles('ADMIN') @Get('admin/bank-transfers') bankTransfers() { return this.bank.pending(); }
+  @Staff('FINANCE') @ApiBearerAuth() @Roles('ADMIN') @Get('admin/bank-transfers/:id/proof')
   async bankProof(@Param('id') id: string, @Res() res: Response) {
     const img = await this.bank.proof(id);
     res.setHeader('content-type', img.type);
     res.setHeader('cache-control', 'private, no-store');
     res.send(img.data);
   }
-  @ApiBearerAuth() @Roles('ADMIN') @HttpCode(200) @Post('admin/bank-transfers/:id/approve') approve(@CurrentUser() u: AuthUser, @Param('id') id: string) { return this.bank.approve(u.id, id); }
-  @ApiBearerAuth() @Roles('ADMIN') @HttpCode(200) @Post('admin/bank-transfers/:id/reject') reject(@CurrentUser() u: AuthUser, @Param('id') id: string, @Body() dto: RejectTransferDto) { return this.bank.reject(u.id, id, dto.reason); }
+  @Staff('FINANCE') @ApiBearerAuth() @Roles('ADMIN') @HttpCode(200) @Post('admin/bank-transfers/:id/approve') approve(@CurrentUser() u: AuthUser, @Param('id') id: string) { return this.bank.approve(u.id, id); }
+  @Staff('FINANCE') @ApiBearerAuth() @Roles('ADMIN') @HttpCode(200) @Post('admin/bank-transfers/:id/reject') reject(@CurrentUser() u: AuthUser, @Param('id') id: string, @Body() dto: RejectTransferDto) { return this.bank.reject(u.id, id, dto.reason); }
 
   @ApiBearerAuth() @Roles('STUDENT') @HttpCode(200) @Post(':reference/bank-transfer')
   bankTransfer(@CurrentUser() u: AuthUser, @Param('reference') reference: string, @Body() dto: BankTransferDto) { return this.bank.submit(u, reference, dto); }
@@ -52,6 +52,9 @@ export class PaymentsController {
 
   @ApiBearerAuth() @Roles('STUDENT') @HttpCode(200) @Post(':reference/checkout')
   checkout(@CurrentUser() u: AuthUser, @Param('reference') reference: string) { return this.payments.checkout(u, reference); }
+
+  @ApiBearerAuth() @Roles('STUDENT') @HttpCode(200) @Post(':reference/use-balance')
+  useBalance(@CurrentUser() u: AuthUser, @Param('reference') reference: string) { return this.payments.useBalance(u, reference); }
 
   @ApiBearerAuth() @Roles('STUDENT') @HttpCode(200) @Post(':reference/sync')
   sync(@CurrentUser() u: AuthUser, @Param('reference') reference: string) { return this.payments.sync(u, reference); }

@@ -2,10 +2,10 @@
 
 import { useCallback, useState, type ReactNode } from "react";
 import { RequireRole } from "@/components/require-role";
-import { Alert, Badge, Button, Container, EmptyState, Field, Mark, Skeleton, Spinner, pastelFor } from "@/components/ui";
+import { Alert, Badge, Button, Container, EmptyState, Field, FilterChips, Mark, Skeleton, Spinner, pastelFor } from "@/components/ui";
 import { DashboardHero, DateTile, Panel, StatTile, Tabs, greeting } from "@/components/dashboard";
 import { useAuth } from "@/lib/auth";
-import { api, errMsg } from "@/lib/api";
+import { api, apiObjectUrl, errMsg } from "@/lib/api";
 import { LEVEL_LABEL, STATUS_LABEL } from "@/lib/constants";
 import { fmtDay, fmtTime, formatMoney, initials } from "@/lib/format";
 import { useApi } from "@/lib/use-api";
@@ -13,7 +13,12 @@ import { ToastProvider, useToast } from "@/components/toast";
 import { DateRangePicker, rangeLabel, rangeQuery, useUrlDateRange } from "@/components/date-range-picker";
 import { FinanceBreakdown, type FinanceSummary } from "@/components/finance-breakdown";
 import { BankTransfers } from "@/components/bank-verification";
+import { Students } from "@/components/admin-students";
+import { Reviews } from "@/components/admin-reviews";
+import { Support } from "@/components/admin-support";
+import { SecuritySettings, TeamSettings } from "@/components/admin-team";
 import { BookingDetailModal, cancelExplanation } from "@/components/booking-detail";
+import { MentorDetailModal } from "@/components/admin-mentor-detail";
 import { InterviewSlotEditor, InterviewSlotPicker } from "@/components/interview-slots";
 import { UserTracking } from "@/components/user-tracking";
 import { WhatsAppDelivery } from "@/components/whatsapp-delivery";
@@ -23,7 +28,14 @@ import { Flag, countryIn } from "@/components/flag";
 import { formatPhone } from "@/components/phone-input";
 import type { AdminInterview, AppStatus, Application, Booking, Currency, Level } from "@/lib/types";
 
-const TABS = ["Overview", "Applications", "Mentors", "Bookings", "Pricing & settings", "User tracking", "Activity"] as const;
+const TABS = ["Overview", "Applications", "Mentors", "Bookings", "Students", "Reviews", "Support", "User tracking", "Activity", "Settings"] as const;
+type Tab = (typeof TABS)[number];
+/** What each team role sees. Owners see everything. */
+const TABS_FOR: Record<"OWNER" | "OPERATIONS" | "FINANCE", readonly Tab[]> = {
+  OWNER: TABS,
+  OPERATIONS: ["Overview", "Applications", "Mentors", "Bookings", "Students", "Reviews", "Support", "User tracking", "Settings"],
+  FINANCE: ["Overview", "Mentors", "Bookings", "Students", "Settings"],
+};
 
 const TONE: Record<string, "neutral" | "brass" | "forest" | "rust"> = {
   SUBMITTED: "neutral", UNDER_REVIEW: "brass", SHORTLISTED: "brass", INTERVIEW_SCHEDULED: "brass", INTERVIEW_COMPLETED: "brass",
@@ -37,7 +49,17 @@ export default function AdminPage() {
 
 function Console() {
   const { user } = useAuth();
-  const [tab, setTab] = useUrlTab(TABS, "Overview");
+  const role = user?.staffRole ?? "OWNER";
+  const tabs = TABS_FOR[role];
+  const [chosen, setTab] = useUrlTab(TABS, "Overview");
+  const tab = tabs.includes(chosen) ? chosen : "Overview";
+  const ops = role !== "FINANCE";
+  const students = useApi<{ needsConsent: boolean }[]>(ops ? "/admin/students" : null);
+  const tickets = useApi<{ status: string; urgent: boolean }[]>(ops ? "/admin/support" : null);
+  const reviews = useApi<{ status: string }[]>(ops ? "/admin/reviews" : null);
+  const reviewsWaiting = reviews.data?.filter((r) => r.status === "PENDING").length ?? 0;
+  const consentWaiting = students.data?.filter((x) => x.needsConsent).length ?? 0;
+  const openTickets = tickets.data?.filter((t) => t.status !== "RESOLVED").length ?? 0;
   const [focusId, setFocusId] = useState<string | null>(null);
   const stats = useApi<Stats>("/admin/stats");
   const s = stats.data;
@@ -48,16 +70,20 @@ function Console() {
         eyebrow={<><span>Administration</span><span aria-hidden>·</span><span>POINT B control centre</span></>}
         title={<>{greeting()}, <Mark color="lilac">{user?.name ?? "admin"}</Mark></>}
         subtitle={toReview ? `${toReview} application${toReview === 1 ? "" : "s"} waiting for review, and ${s?.bookings.CONFIRMED ?? 0} upcoming confirmed session${s?.bookings.CONFIRMED === 1 ? "" : "s"}.` : "Everything is up to date. Here's how the platform is doing."}
-        actions={<><Button variant="secondary" href="/mentors">View live site</Button>{!!toReview && <Button onClick={() => setTab("Applications")}>Review applications</Button>}</>}
+        actions={<><Button variant="secondary" href="/mentors">View live site</Button>{!!toReview && ops && <Button onClick={() => setTab("Applications")}>Review applications</Button>}</>}
       >
-        <div className="mt-10"><Tabs tabs={TABS} value={tab} onChange={setTab} counts={toReview ? { Applications: toReview } : {}} /></div>
+        <div className="mt-10"><Tabs tabs={tabs} value={tab} onChange={setTab} counts={{ ...(toReview && ops ? { Applications: toReview } : {}), ...(consentWaiting ? { Students: consentWaiting } : {}), ...(openTickets ? { Support: openTickets } : {}), ...(reviewsWaiting ? { Reviews: reviewsWaiting } : {}) }} /></div>
       </DashboardHero>
       <Container className="py-10 sm:py-12">
-        {tab === "Overview" && <Overview onReview={() => setTab("Applications")} onOpenApp={(id) => { setFocusId(id); setTab("Applications"); }} />}
+        {tab === "Overview" && <Overview role={role} onReview={() => setTab("Applications")} onOpenApp={(id) => { setFocusId(id); setTab("Applications"); }} onGo={setTab}
+          urgentTickets={tickets.data?.filter((t) => t.urgent && t.status !== "RESOLVED").length ?? 0} consentWaiting={consentWaiting} twoStepOff={user?.twoFactorEnabled === false} />}
         {tab === "Applications" && <Applications initialId={focusId} />}
         {tab === "Mentors" && <Mentors />}
         {tab === "Bookings" && <Bookings />}
-        {tab === "Pricing & settings" && <PricingSettings />}
+        {tab === "Students" && <Students onChanged={students.reload} />}
+        {tab === "Reviews" && <Reviews onChanged={reviews.reload} />}
+        {tab === "Support" && <Support meId={user?.id ?? ""} onChanged={tickets.reload} />}
+        {tab === "Settings" && <SettingsTab role={role} />}
         {tab === "User tracking" && <UserTracking />}
         {tab === "Activity" && <Activity />}
       </Container>
@@ -70,24 +96,36 @@ interface Stats {
   bookingConversion: number | null; repeatStudents: number; commissionConfigured: boolean; commission: { tier: Record<Level, number | null>; repeat: number };
   video: { usedMinutes: number; periodMinutes: number; limitMinutes: number; source: "daily" | "estimate" };
   finance: FinanceSummary[];
+  balancesHeld: Record<Currency, number>;
 }
 
 const BOOKING_BARS = [["CONFIRMED", "Confirmed", "bg-sky"], ["COMPLETED", "Completed", "bg-mint"], ["PENDING_PAYMENT", "Awaiting payment", "bg-lemon"], ["CANCELLED", "Cancelled", "bg-peach"], ["NO_SHOW", "No-show", "bg-rust/40"]] as const;
 const PIPELINE = ["SUBMITTED", "UNDER_REVIEW", "CHANGES_REQUESTED", "SHORTLISTED", "INTERVIEW_SCHEDULED", "INTERVIEW_COMPLETED", "APPROVED", "ONBOARDING"] as const;
 
-function Overview({ onReview, onOpenApp }: { onReview: () => void; onOpenApp: (id: string) => void }) {
+function Overview({ role, onReview, onOpenApp, onGo, urgentTickets, consentWaiting, twoStepOff }: {
+  role: "OWNER" | "OPERATIONS" | "FINANCE"; onReview: () => void; onOpenApp: (id: string) => void; onGo: (t: Tab) => void; urgentTickets: number; consentWaiting: number; twoStepOff: boolean;
+}) {
   const [range, setRange] = useUrlDateRange();
   const query = rangeQuery(range);
   const filtered = query !== "";
   const { data: s, loading, error, reload } = useApi<Stats>(`/admin/stats${filtered ? `?${query}` : ""}`);
-  const interviews = useApi<AdminInterview[]>("/admin/interviews");
+  const interviews = useApi<AdminInterview[]>(role !== "FINANCE" ? "/admin/interviews" : null);
+  const money = role !== "OPERATIONS";
+  const alerts = [
+    urgentTickets > 0 && { tone: "bg-rust-pale ring-rust/20", text: `${urgentTickets} safeguarding report${urgentTickets === 1 ? "" : "s"} waiting`, action: "Open support", go: "Support" as Tab },
+    consentWaiting > 0 && { tone: "bg-lemon/70 ring-brass/20", text: `${consentWaiting} under-18 student${consentWaiting === 1 ? "" : "s"} waiting for guardian consent`, action: "Review", go: "Students" as Tab },
+    twoStepOff && { tone: "bg-white ring-line", text: "Protect your admin account with two-step sign-in", action: "Set up", go: "Settings" as Tab },
+  ].filter(Boolean) as { tone: string; text: string; action: string; go: Tab }[];
   const head = (
     <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
       <div className="min-w-0">
         <p className="font-display text-2xl leading-tight text-ink">{rangeLabel(range)}</p>
         <p className="mt-1 text-xs text-ink-soft">Counted from when bookings were made and applications submitted.</p>
       </div>
-      <DateRangePicker value={range} onChange={setRange} />
+      <div className="flex flex-wrap items-center gap-2">
+        <DateRangePicker value={range} onChange={setRange} />
+        {money && <ExportMenu query={query} />}
+      </div>
     </div>
   );
   if (loading) return <div className="space-y-8">{head}<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-32 rounded-3xl" />)}</div></div>;
@@ -99,6 +137,13 @@ function Overview({ onReview, onOpenApp }: { onReview: () => void; onOpenApp: (i
   const maxStage = Math.max(1, ...PIPELINE.map((k) => s.applications[k] ?? 0));
   return (
     <div className="space-y-8">
+      {alerts.length > 0 && (
+        <div className="space-y-2">{alerts.map((a) => (
+          <button key={a.text} type="button" onClick={() => onGo(a.go)} className={`flex w-full items-center justify-between gap-4 rounded-2xl px-5 py-3.5 text-left ring-1 transition-shadow hover:shadow-sm ${a.tone}`}>
+            <span className="text-sm font-medium text-ink">{a.text}</span><span className="shrink-0 text-sm text-ink underline underline-offset-4">{a.action}</span>
+          </button>
+        ))}</div>
+      )}
       {head}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatTile label="Active mentors" value={s.activeMentors} note={filtered ? `${s.newMentors} joined in this period` : undefined} tone="mint" />
@@ -107,10 +152,11 @@ function Overview({ onReview, onOpenApp }: { onReview: () => void; onOpenApp: (i
         <StatTile label="Booking conversion" value={s.bookingConversion == null ? "—" : `${Math.round(s.bookingConversion * 100)}%`} note={`${s.repeatStudents} repeat student${s.repeatStudents === 1 ? "" : "s"}`} tone="lilac" delay={180} />
       </div>
 
-      <BankTransfers />
+      {money && <BankTransfers />}
 
       <VideoUsage v={s.video} period={filtered ? rangeLabel(range) : null} />
 
+      {role !== "FINANCE" && (
       <Panel title="Mentor interviews" action={<span className="text-sm text-ink-soft">{interviews.data?.length ?? 0} scheduled</span>}>
         {interviews.loading ? <Skeleton className="h-20 rounded-2xl" /> : !interviews.data?.length ? (
           <p className="text-sm text-ink-soft">No interviews booked. Shortlist an applicant, then use Schedule interview on their application.</p>
@@ -131,6 +177,7 @@ function Overview({ onReview, onOpenApp }: { onReview: () => void; onOpenApp: (i
           </ul>
         )}
       </Panel>
+      )}
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
         <Panel title="Bookings" action={<span className="text-sm text-ink-soft">{totalBookings} {filtered ? "in this period" : "in total"}</span>}>
@@ -163,7 +210,7 @@ function Overview({ onReview, onOpenApp }: { onReview: () => void; onOpenApp: (i
       {!s.commissionConfigured && <Alert tone="info">No platform commission is configured for every tier, so platform revenue and mentor payouts are not calculated. Set the tier rates under Pricing &amp; settings.</Alert>}
 
       <div className="grid gap-6 md:grid-cols-2">
-        {s.finance.map((f) => <FinanceBreakdown key={f.currency} f={f} period={rangeLabel(range)} query={query} repeatPercent={s.commission.repeat} onChanged={reload} />)}
+        {s.finance.map((f) => <FinanceBreakdown key={f.currency} f={f} period={rangeLabel(range)} query={query} repeatPercent={s.commission.repeat} onChanged={reload} heldMinor={s.balancesHeld?.[f.currency] ?? 0} />)}
       </div>
     </div>
   );
@@ -519,20 +566,51 @@ function Quote({ label, text }: { label: string; text: string }) {
   );
 }
 
-interface AdminMentor { id: string; slug: string; country: string; level: Level; category: string; status: string; verified: boolean; isDemo: boolean; priceMinor: number; currency: Currency; priceOverrideMinor: number | null; sessionsCompleted: number; user: { name: string; email: string } }
+interface AdminMentor { id: string; slug: string; country: string; level: Level; category: string; status: string; verified: boolean; isDemo: boolean; priceMinor: number; currency: Currency; priceOverrideMinor: number | null; sessionsCompleted: number; user: { name: string; email: string }; openSlots14: number; rating: number | null; reviewCount: number; hasPayoutDetails: boolean }
 
 interface TierRule { level: Level; currency: Currency; priceMinor: number; minMinor: number; maxMinor: number; isDefault: boolean }
+
+const MENTOR_FILTERS = [["all", "All"], ["ACTIVE", "Active"], ["ONBOARDING", "Onboarding"], ["PAUSED", "Paused or suspended"], ["noslots", "No open times"], ["nopayout", "No payout details"]] as const;
 
 function Mentors() {
   const { data, loading, error, reload } = useApi<AdminMentor[]>("/admin/mentors");
   const tiers = useApi<TierRule[]>("/admin/pricing");
+  const [q, setQ] = useState("");
+  const [filter, setFilter] = useState<(typeof MENTOR_FILTERS)[number][0]>("all");
+  const [open, setOpen] = useState<string | null>(null);
   if (loading) return <Skeleton className="h-64 rounded-3xl" />;
   if (error) return <Alert>{error}</Alert>;
   if (!data?.length) return <EmptyState title="No mentors yet" description="Mentors appear here once an application reaches onboarding." />;
-  return <div className="grid gap-4 xl:grid-cols-2">{data.map((m) => <MentorRow key={m.id} m={m} tiers={tiers.data ?? []} onSaved={reload} />)}</div>;
+  const term = q.trim().toLowerCase();
+  const rows = data.filter((m) => {
+    if (term && !`${m.user.name} ${m.user.email} ${m.country}`.toLowerCase().includes(term)) return false;
+    if (filter === "ACTIVE" || filter === "ONBOARDING") return m.status === filter;
+    if (filter === "PAUSED") return m.status === "PAUSED" || m.status === "SUSPENDED";
+    if (filter === "noslots") return m.status === "ACTIVE" && m.openSlots14 === 0;
+    if (filter === "nopayout") return m.status === "ACTIVE" && !m.hasPayoutDetails;
+    return true;
+  });
+  const noSlots = data.filter((m) => m.status === "ACTIVE" && m.openSlots14 === 0).length;
+  return (
+    <div className="space-y-5">
+      {noSlots > 0 && (
+        <button type="button" onClick={() => setFilter("noslots")} className="flex w-full items-center gap-4 rounded-3xl bg-lemon/70 px-5 py-4 text-left ring-1 ring-brass/20 hover:bg-lemon">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white text-ink"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden><rect x="3" y="4.5" width="14" height="12.5" rx="2.5" stroke="currentColor" strokeWidth="1.5" /><path d="M3 8.5h14M7 2.5v3.5M13 2.5v3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg></span>
+          <span className="min-w-0 flex-1"><span className="block font-medium text-ink">{noSlots} active mentor{noSlots === 1 ? " has" : "s have"} no open times in the next 14 days</span><span className="block text-sm text-ink-soft">Students can&rsquo;t book them. A nudge to add availability usually helps.</span></span>
+          <span className="text-sm font-medium text-ink">Show</span>
+        </button>
+      )}
+      <div className="flex flex-wrap items-center gap-3">
+        <input className="input min-w-[14rem] flex-1 bg-white" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search mentors by name, email or country" aria-label="Search mentors" />
+        <FilterChips options={MENTOR_FILTERS} value={filter} onChange={setFilter} label="Filter mentors" />
+      </div>
+      {!rows.length ? <EmptyState title="No mentors match" description="Try another search or filter." /> : <div className="grid gap-4 xl:grid-cols-2">{rows.map((m) => <MentorRow key={m.id} m={m} tiers={tiers.data ?? []} onSaved={reload} onOpen={() => setOpen(m.id)} />)}</div>}
+      {open && <MentorDetailModal id={open} onClose={() => setOpen(null)} onChanged={reload} />}
+    </div>
+  );
 }
 
-function MentorRow({ m, tiers, onSaved }: { m: AdminMentor; tiers: TierRule[]; onSaved: () => void }) {
+function MentorRow({ m, tiers, onSaved, onOpen }: { m: AdminMentor; tiers: TierRule[]; onSaved: () => void; onOpen: () => void }) {
   const [level, setLevel] = useState(m.level);
   const [status, setStatus] = useState(m.status);
   const [override, setOverride] = useState(m.priceOverrideMinor == null ? "" : String(m.priceOverrideMinor / 100));
@@ -577,10 +655,16 @@ function MentorRow({ m, tiers, onSaved }: { m: AdminMentor; tiers: TierRule[]; o
           {m.status === "ACTIVE" && <a href={`/mentors/${m.slug}`} target="_blank" rel="noreferrer" className="ml-auto inline-flex items-center gap-1 text-xs font-medium text-ink-soft underline-offset-4 hover:text-ink hover:underline">Public profile<svg width="11" height="11" viewBox="0 0 20 20" fill="none" aria-hidden><path d="M7 13L13 7M8 7h5v5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg></a>}
         </div>
 
+        <div className="mt-3 flex flex-wrap gap-1.5 text-xs">
+          <span className="rounded-full bg-paper px-2.5 py-1 text-ink">{m.rating ? <>★ {m.rating.toFixed(1)} <span className="text-ink-soft">({m.reviewCount})</span></> : <span className="text-ink-soft">No reviews yet</span>}</span>
+          {m.status === "ACTIVE" && <span className={`rounded-full px-2.5 py-1 ${m.openSlots14 ? "bg-mint/70 text-forest" : "bg-rust-pale text-rust"}`}>{m.openSlots14 ? `${m.openSlots14} open times, next 14 days` : "No open times, next 14 days"}</span>}
+          {m.status === "ACTIVE" && !m.hasPayoutDetails && <span className="rounded-full bg-lemon px-2.5 py-1 text-ink">No payout details</span>}
+        </div>
+
         <dl className="mt-5 grid grid-cols-2 divide-x divide-line rounded-2xl bg-paper/70 py-3.5">
           <div className="px-5">
             <dt className="text-[11px] uppercase tracking-[0.1em] text-ink-soft">Session price</dt>
-            <dd className="mt-1 flex items-baseline gap-2"><span className="font-display text-2xl tabular-nums text-ink">{formatMoney(m.priceMinor, m.currency)}</span><span className="text-[11px] text-ink-soft">{m.priceOverrideMinor != null ? "custom" : "standard"}</span></dd>
+            <dd className="mt-1 flex flex-wrap items-baseline gap-x-2"><span className="whitespace-nowrap font-display text-2xl tabular-nums text-ink">{formatMoney(m.priceMinor, m.currency)}</span><span className="text-[11px] text-ink-soft">{m.priceOverrideMinor != null ? "custom" : "standard"}</span></dd>
           </div>
           <div className="px-5">
             <dt className="text-[11px] uppercase tracking-[0.1em] text-ink-soft">Sessions completed</dt>
@@ -629,13 +713,16 @@ function MentorRow({ m, tiers, onSaved }: { m: AdminMentor; tiers: TierRule[]; o
         {msg && <Alert>{msg}</Alert>}
       </div>
 
-      <div className="flex items-center justify-between gap-3 border-t border-line px-6 py-4">
-        {dirty
-          ? <span className="inline-flex items-center gap-2 text-xs text-brass-dark"><span className="h-1.5 w-1.5 rounded-full bg-brass" />Unsaved changes</span>
-          : <span className="inline-flex items-center gap-1.5 text-xs text-ink-soft"><svg width="13" height="13" viewBox="0 0 20 20" fill="none" aria-hidden className="text-forest"><path d="M4 10.5l4 4 8-9" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /></svg>All changes saved</span>}
-        <div className="flex gap-2">
-          {dirty && <Button size="sm" variant="ghost" disabled={busy} onClick={reset}>Discard</Button>}
-          <Button size="sm" disabled={!dirty || busy || outOfRange} onClick={save}>{busy ? <Spinner /> : "Save changes"}</Button>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line px-6 py-4">
+        <button type="button" onClick={onOpen} className="inline-flex items-center gap-1 text-sm font-medium text-ink underline-offset-4 hover:underline">Details, availability &amp; payouts<svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden><path d="M7.5 4.5 13 10l-5.5 5.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg></button>
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          {dirty
+            ? <span className="inline-flex items-center gap-2 text-xs text-brass-dark"><span className="h-1.5 w-1.5 rounded-full bg-brass" />Unsaved changes</span>
+            : <span className="inline-flex items-center gap-1.5 text-xs text-ink-soft"><svg width="13" height="13" viewBox="0 0 20 20" fill="none" aria-hidden className="text-forest"><path d="M4 10.5l4 4 8-9" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /></svg>All changes saved</span>}
+          <div className="flex gap-2">
+            {dirty && <Button size="sm" variant="ghost" disabled={busy} onClick={reset}>Discard</Button>}
+            <Button size="sm" disabled={!dirty || busy || outOfRange} onClick={save}>{busy ? <Spinner /> : "Save changes"}</Button>
+          </div>
         </div>
       </div>
     </div>
@@ -650,8 +737,8 @@ function paymentLabel(b: AdminBooking) {
   if (!p) return "—";
   // Until money moves, the method is only the default and says nothing about what the student chose.
   if (!p.bankSubmittedAt && (p.status === "PENDING" || p.status === "FAILED")) return p.status === "PENDING" ? "Waiting" : "Not paid";
-  const method = p.bankSubmittedAt ? "Bank" : p.provider === "stripe" ? "Card" : p.provider === "mock" ? "Demo" : "Bank";
-  const state = p.status === "SUCCEEDED" ? "Paid" : p.status === "REFUNDED" ? "Refunded" : p.status === "FAILED" ? "Rejected" : "Checking";
+  const method = p.bankSubmittedAt ? "Bank" : p.provider === "stripe" ? "Card" : p.provider === "mock" ? "Demo" : p.provider === "wallet" ? "Balance" : "Bank";
+  const state = p.status === "SUCCEEDED" ? "Paid" : p.status === "REFUNDED" ? "Credited to balance" : p.status === "FAILED" ? "Rejected" : "Checking";
   return `${method} · ${state}`;
 }
 
@@ -661,11 +748,7 @@ function Bookings() {
   const { data, loading, error, reload } = useApi<AdminBooking[]>(`/admin/bookings${status ? `?status=${status}` : ""}`);
   return (
     <Panel title="Bookings" action={data ? <span className="text-sm text-ink-soft">{data.length} shown</span> : undefined}>
-      <div className="no-scrollbar -mx-1 mb-5 flex gap-2 overflow-x-auto px-1">
-        {["", "PENDING_PAYMENT", "CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW"].map((k) => (
-          <button key={k || "all"} onClick={() => setStatus(k)} className={`shrink-0 rounded-full border px-4 py-2 text-sm transition-colors ${status === k ? "border-ink bg-ink text-paper" : "border-line text-ink hover:border-ink/40"}`}>{k ? STATUS_LABEL[k] : "All"}</button>
-        ))}
-      </div>
+      <FilterChips className="mb-4" options={["", "PENDING_PAYMENT", "CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW"].map((k) => [k, k ? STATUS_LABEL[k] : "All"] as const)} value={status} onChange={setStatus} label="Filter bookings" />
       {error && <Alert>{error}</Alert>}
       {loading ? <Skeleton className="h-48" /> : !data?.length ? <EmptyState title="No bookings" description="Bookings appear here as students book sessions." /> : (
         <div className="-mx-6 overflow-x-auto sm:-mx-7">
@@ -707,6 +790,58 @@ const SETTING_NAMES: Record<string, string> = {
   commission_professional: "Professional commission", commission_senior_specialist: "Senior Specialist commission", commission_executive: "Executive commission",
   repeat_commission_percent: "Returning student commission", reschedule_notice_hours: "Rescheduling notice", group_price_percent: "Group seat price",
 };
+
+function SettingsTab({ role }: { role: "OWNER" | "OPERATIONS" | "FINANCE" }) {
+  return (
+    <div className="divide-y divide-line">
+      <SettingsSection title="Security" text="Two-step sign-in asks for a code from your phone each time you sign in, so a stolen password isn't enough.">
+        <SecuritySettings />
+      </SettingsSection>
+      {role === "OWNER" && (
+        <SettingsSection title="Team" text="Who can use the admin, and what they can do. Owners can do everything; Operations and Finance only see their areas.">
+          <TeamSettings />
+        </SettingsSection>
+      )}
+      {role === "OWNER" ? <div className="pt-10"><PricingSettings /></div> : <p className="pt-10 text-sm text-ink-soft">Pricing, commission and payment settings are managed by an owner.</p>}
+    </div>
+  );
+}
+
+/** CSV downloads for the accountant, for the dates chosen on the Overview. */
+function ExportMenu({ query }: { query: string }) {
+  const toast = useToast();
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+  async function download(kind: string, label: string) {
+    setBusy(kind);
+    try {
+      const url = await apiObjectUrl(`/admin/exports/${kind}${query ? `?${query}` : ""}`);
+      const a = document.createElement("a");
+      a.href = url; a.download = `pointb-${kind}-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      toast(`${label} downloaded.`); setOpen(false);
+    } catch (e) { toast(errMsg(e), "error"); } finally { setBusy(null); }
+  }
+  return (
+    <div className="relative">
+      <button type="button" onClick={() => setOpen(!open)} aria-expanded={open} className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm text-ink ring-1 ring-line hover:ring-ink/40">
+        <svg width="15" height="15" viewBox="0 0 20 20" fill="none" aria-hidden><path d="M10 3.5v9M6 9l4 4 4-4M4 16.5h12" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>Export
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full z-30 mt-2 w-72 animate-[pop_0.15s_ease-out] rounded-2xl bg-white p-2 shadow-xl ring-1 ring-line">
+          {([["bookings", "Bookings", "Every booking with price, commission, mentor share and payment"], ["payouts", "Mentor payouts", "Each payout with sessions and transfer reference"], ["refunds", "Refunds", "Cancelled bookings that were refunded"]] as const).map(([k, label, text]) => (
+            <button key={k} type="button" disabled={!!busy} onClick={() => download(k, label)} className="flex w-full items-start gap-3 rounded-xl px-3 py-2.5 text-left hover:bg-paper disabled:opacity-60">
+              <span className="mt-0.5 rounded-md bg-mint px-1.5 py-0.5 text-[10px] font-medium text-forest">CSV</span>
+              <span className="min-w-0"><span className="block text-sm font-medium text-ink">{busy === k ? "Preparing…" : label}</span><span className="block text-xs text-ink-soft">{text}</span></span>
+            </button>
+          ))}
+          <p className="px-3 pb-1 pt-2 text-[11px] text-ink-soft">For the dates selected. Opens in Excel or Google Sheets.</p>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function PricingSettings() {
   const rules = useApi<TierRule[]>("/admin/pricing");

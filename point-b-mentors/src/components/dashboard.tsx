@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { Container } from "./ui";
 
 export const greeting = () => {
@@ -53,8 +53,14 @@ export function DateTile({ iso, dark = false }: { iso: string; dark?: boolean })
 
 /** Pill-style tab switcher with optional counts. */
 export function Tabs<T extends string>({ tabs, value, onChange, counts = {} }: { tabs: readonly T[]; value: T; onChange: (t: T) => void; counts?: Partial<Record<T, number>> }) {
+  const bar = useRef<HTMLDivElement>(null);
+  // On a phone the bar scrolls sideways: keep the open tab in view.
+  useEffect(() => {
+    const el = bar.current, tab = el?.querySelector<HTMLElement>('[aria-selected="true"]');
+    if (el && tab && el.scrollWidth > el.clientWidth) el.scrollTo({ left: tab.offsetLeft - (el.clientWidth - tab.offsetWidth) / 2, behavior: "smooth" });
+  }, [value]);
   return (
-    <div className="no-scrollbar inline-flex max-w-full gap-1 overflow-x-auto rounded-full bg-paper-dim p-1" role="tablist">
+    <div ref={bar} className="no-scrollbar relative inline-flex max-w-full gap-1 overflow-x-auto rounded-full bg-paper-dim p-1" role="tablist">
       {tabs.map((t) => (
         <button key={t} role="tab" aria-selected={value === t} onClick={() => onChange(t)}
           className={`flex shrink-0 items-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition-colors ${value === t ? "bg-white text-ink shadow-sm" : "text-ink-soft hover:text-ink"}`}>

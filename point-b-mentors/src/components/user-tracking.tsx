@@ -162,7 +162,7 @@ function Triggers({ items, now, onView, onChanged }: { items: Trigger[]; now: nu
 
   return (
     <Panel title="Triggers" action={<span className="text-sm text-ink-soft">{items.length} open</span>}>
-      <div className="no-scrollbar -mx-1 mb-4 flex gap-2 overflow-x-auto px-1 pb-1">
+      <div className="no-scrollbar -mx-1 mb-4 flex gap-2 overflow-x-auto px-1 py-1">
         <Chip on={!kind} onClick={() => setKind("")}>All <Count n={items.length} on={!kind} /></Chip>
         {(Object.keys(KINDS) as Kind[]).filter((k) => counts[k]).map((k) => <Chip key={k} on={kind === k} onClick={() => setKind(k)}>{KINDS[k].label} <Count n={counts[k]!} on={kind === k} /></Chip>)}
       </div>
@@ -199,7 +199,7 @@ function Triggers({ items, now, onView, onChanged }: { items: Trigger[]; now: nu
 }
 
 const Chip = ({ on, onClick, children }: { on: boolean; onClick: () => void; children: ReactNode }) => (
-  <button type="button" onClick={onClick} className={`flex shrink-0 items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-sm transition-colors ${on ? "border-ink bg-ink text-paper" : "border-line text-ink hover:border-ink/40"}`}>{children}</button>
+  <button type="button" onClick={onClick} className={`inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border px-4 text-sm transition-colors ${on ? "border-ink bg-ink text-white" : "border-line bg-white text-ink hover:border-ink/30 hover:bg-paper/60"}`}>{children}</button>
 );
 const Count = ({ n, on }: { n: number; on: boolean }) => <span className={`rounded-full px-1.5 py-0.5 text-[11px] leading-none ${on ? "bg-white/20" : "bg-paper-dim text-ink-soft"}`}>{n}</span>;
 

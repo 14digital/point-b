@@ -22,6 +22,15 @@ export class LoginDto {
   @IsString() password: string;
 }
 
+/** Second step of an admin sign-in: the 6-digit authenticator code, or one of the backup codes. */
+export class LoginCodeDto {
+  @IsString() @MaxLength(2000) mfaToken: string;
+  @IsString() @MinLength(6) @MaxLength(12) code: string;
+}
+
+export class TwoFactorCodeDto { @IsString() @MinLength(6) @MaxLength(12) code: string; }
+export class DisableTwoFactorDto { @IsString() password: string; @IsString() @MinLength(6) @MaxLength(12) code: string; }
+
 export class ForgotPasswordDto {
   @IsEmail() email: string;
 }

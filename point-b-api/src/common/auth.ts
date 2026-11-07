@@ -17,7 +17,18 @@ export interface AuthUser {
   email: string;
   name: string;
   role: Role;
+  /** Admins only: OWNER, OPERATIONS or FINANCE. */
+  staffRole?: StaffRole;
 }
+
+export type StaffRole = 'OWNER' | 'OPERATIONS' | 'FINANCE';
+export const STAFF_ROLES: StaffRole[] = ['OWNER', 'OPERATIONS', 'FINANCE'];
+export const STAFF_KEY = 'staff';
+/**
+ * Which team roles, besides the owner, may use an admin route. An admin route without it is for owners only,
+ * so a new admin page is never opened to the wider team by accident.
+ */
+export const Staff = (...roles: Exclude<StaffRole, 'OWNER'>[]) => SetMetadata(STAFF_KEY, roles);
 
 export const ROLES_KEY = 'roles';
 export const Roles = (...roles: Role[]) => SetMetadata(ROLES_KEY, roles);
@@ -45,12 +56,14 @@ export class AuthGuard implements CanActivate {
 
     if (token) {
       try {
-        const payload = await this.jwt.verifyAsync<{ sub: string; iat?: number }>(token);
+        const payload = await this.jwt.verifyAsync<{ sub: string; iat?: number; purpose?: string }>(token);
+        // Short-lived tokens for a step like two-step sign-in can't be used as a session.
+        if (payload.purpose) throw new UnauthorizedException('Invalid or expired session');
         const user = await this.prisma.user.findUnique({ where: { id: payload.sub } });
         // A password reset signs out every session issued before it.
         const stale = !!user?.passwordChangedAt && (payload.iat ?? 0) * 1000 < user.passwordChangedAt.getTime() - 1000;
         if (user && user.isActive && !stale) {
-          req.user = { id: user.id, email: user.email, name: user.name, role: user.role } as AuthUser;
+          req.user = { id: user.id, email: user.email, name: user.name, role: user.role, staffRole: user.role === 'ADMIN' ? ((user.staffRole as StaffRole) ?? 'OWNER') : undefined } as AuthUser;
         }
       } catch {
         if (!isPublic) throw new UnauthorizedException('Invalid or expired session');
@@ -62,6 +75,11 @@ export class AuthGuard implements CanActivate {
     const roles = this.reflector.getAllAndOverride<Role[]>(ROLES_KEY, [ctx.getHandler(), ctx.getClass()]);
     if (roles?.length && !roles.includes(req.user.role)) {
       throw new ForbiddenException('You do not have access to this resource');
+    }
+    // Team roles narrow what an admin can do on admin routes.
+    if (req.user.role === 'ADMIN' && roles?.includes('ADMIN') && req.user.staffRole !== 'OWNER') {
+      const allowed = this.reflector.getAllAndOverride<StaffRole[]>(STAFF_KEY, [ctx.getHandler(), ctx.getClass()]) ?? [];
+      if (!allowed.includes(req.user.staffRole)) throw new ForbiddenException('Your team role does not include this. Ask an owner if you need access.');
     }
     return true;
   }

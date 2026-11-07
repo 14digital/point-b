@@ -9,7 +9,7 @@ export const Stars = ({ n }: { n: number }) => <span className="text-brass" aria
 
 const WORDS = ["", "Not helpful", "Could be better", "Good", "Very good", "Excellent"];
 
-/** Rating and comment form. Submitted feedback stays private until the mentor approves it. */
+/** Rating and comment form. Submitted feedback stays private until the POINT B team approves it. */
 export function FeedbackForm({ b, onDone, onCancel }: { b: Pick<Booking, "reference" | "mentor">; onDone: () => void; onCancel?: () => void }) {
   const [rating, setRating] = useState(0);
   const [comment, setComment] = useState("");
@@ -40,9 +40,9 @@ export function FeedbackForm({ b, onDone, onCancel }: { b: Pick<Booking, "refere
 }
 
 const STATE = {
-  PENDING: "Sent to your mentor. It will appear on their public profile once they approve it.",
+  PENDING: "Thank you. Our team reviews feedback before it appears on your mentor’s public profile.",
   APPROVED: "Published on your mentor’s public profile.",
-  HIDDEN: "Shared with your mentor, who has chosen not to publish it.",
+  HIDDEN: "Shared privately with your mentor. It isn’t shown on their public profile.",
 } as const;
 
 /** What the student sees after submitting: their words plus where the feedback stands. */

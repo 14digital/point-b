@@ -17,18 +17,19 @@ export interface FinanceSummary {
   kinds: (Tally & { kind: "ONE_TO_ONE" | "GROUP" })[];
   methods: (Tally & { method: string })[];
   mentors: MentorDue[];
+  trend: { unit: "day" | "week" | "month"; points: { period: string; grossMinor: number; sessions: number }[] };
 }
 
 type Section = "gross" | "revenue" | "payouts";
 
-const METHOD_LABEL: Record<string, string> = { stripe: "Card", bank: "Bank app / QR", mock: "Demo checkout", unknown: "Not recorded" };
+const METHOD_LABEL: Record<string, string> = { stripe: "Card", bank: "Bank app / QR", mock: "Demo checkout", wallet: "POINT B balance", unknown: "Not recorded" };
 const CURRENCY_LABEL: Record<Currency, string> = { PKR: "Local · PKR", GBP: "International · GBP" };
 const NOT_SET = "Not configured";
 const percentOf = (part: number, whole: number) => (whole > 0 ? (part / whole) * 100 : 0);
 const shortPercent = (n: number) => `${n.toFixed(1).replace(/\.0$/, "")}%`;
 
 /** One currency's money for the period. Each main figure opens its own breakdown. */
-export function FinanceBreakdown({ f, period, query, repeatPercent, onChanged }: { f: FinanceSummary; period: string; query: string; repeatPercent: number; onChanged: () => void }) {
+export function FinanceBreakdown({ f, period, query, repeatPercent, onChanged, heldMinor }: { f: FinanceSummary; period: string; query: string; repeatPercent: number; onChanged: () => void; heldMinor: number }) {
   const [open, setOpen] = useState<Section | null>(null);
   const money = (v: number | null) => (v == null ? NOT_SET : formatMoney(v, f.currency));
   const share = f.platformRevenueMinor == null ? 0 : percentOf(f.platformRevenueMinor, f.grossMinor);
@@ -45,6 +46,8 @@ export function FinanceBreakdown({ f, period, query, repeatPercent, onChanged }:
         <span className="mb-1 inline-flex shrink-0 items-center gap-1 text-xs font-medium text-ink-soft transition-colors group-hover:text-ink">View<Chevron /></span>
       </button>
 
+      {f.trend.points.length > 1 && <Trend f={f} />}
+
       {f.platformRevenueMinor != null && f.grossMinor > 0 && (
         <div className="mt-5 flex h-2 gap-0.5 overflow-hidden rounded-full" aria-hidden>
           <span className="h-full rounded-l-full bg-brass" style={{ width: `${share}%` }} />
@@ -60,7 +63,8 @@ export function FinanceBreakdown({ f, period, query, repeatPercent, onChanged }:
       <dl className="mt-auto grid grid-cols-2 gap-x-6 gap-y-4 border-t border-line pt-5 text-sm">
         <Stat label="Promo discounts" value={money(f.discountsMinor)} />
         <Stat label="Returning-student sessions" value={String(f.repeatSessions)} />
-        <Stat label="Refunded after payment" value={money(f.refundedMinor)} note={plural(f.refundedCount, "booking")} />
+        <Stat label="Credited to student balances" value={money(f.refundedMinor)} note={`${plural(f.refundedCount, "cancelled booking")}`} />
+        <Stat label="Balances held, all students" value={money(heldMinor)} note="Owed as future sessions" />
         <Stat label="Cancelled before payment" value={money(f.unpaidCancelledMinor)} note={`${plural(f.unpaidCancelledCount, "booking")}, nothing received`} />
       </dl>
 
@@ -159,5 +163,35 @@ function RevenueDetail({ f, repeatPercent }: { f: FinanceSummary; repeatPercent:
       </ul>
       <p className="mt-4 text-xs leading-relaxed text-ink-soft">Returning students are charged {repeatPercent}% on 1:1 sessions, unless their mentor&apos;s tier is already lower. A booking keeps the rate it was made at; bookings from before rates were saved use today&apos;s tier rate.</p>
     </section>
+  );
+}
+
+/** Gross booked per day, week or month across the chosen dates. Hover or focus a bar for its figures. */
+function Trend({ f }: { f: FinanceSummary }) {
+  const [active, setActive] = useState<number | null>(null);
+  const pts = f.trend.points;
+  const max = Math.max(1, ...pts.map((p) => p.grossMinor));
+  const label = (iso: string) => {
+    const d = new Date(iso + "T12:00:00Z");
+    return f.trend.unit === "month" ? d.toLocaleDateString("en-GB", { month: "short", year: "numeric" }) : f.trend.unit === "week" ? `Week of ${d.toLocaleDateString("en-GB", { day: "numeric", month: "short" })}` : d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+  };
+  const shown = active != null ? pts[active] : null;
+  const best = pts.reduce((b, p) => (p.grossMinor > b.grossMinor ? p : b), pts[0]);
+  return (
+    <div className="mt-5">
+      <div className="flex items-baseline justify-between gap-3 text-xs">
+        <span className="text-ink-soft">Gross by {f.trend.unit}</span>
+        <span className="tabular-nums text-ink">{shown ? <>{label(shown.period)} · <span className="font-medium">{formatMoney(shown.grossMinor, f.currency)}</span> · {plural(shown.sessions, "session")}</> : best.grossMinor ? <span className="text-ink-soft">Best: {label(best.period)}, {formatMoney(best.grossMinor, f.currency)}</span> : <span className="text-ink-soft">No paid sessions yet</span>}</span>
+      </div>
+      <div className="mt-2 flex h-20 items-end gap-[2px] border-b border-line" role="img" aria-label={`Gross booking value by ${f.trend.unit}, highest ${formatMoney(best.grossMinor, f.currency)}`} onMouseLeave={() => setActive(null)}>
+        {pts.map((p, i) => (
+          <button key={p.period} type="button" tabIndex={-1} onMouseEnter={() => setActive(i)} onFocus={() => setActive(i)} aria-label={`${label(p.period)}: ${formatMoney(p.grossMinor, f.currency)}`}
+            className="group flex h-full min-w-0 flex-1 items-end">
+            <span className={`block w-full rounded-t-[3px] transition-colors ${p.grossMinor ? (active === i ? "bg-ink" : "bg-ink/35 group-hover:bg-ink") : "bg-line"}`} style={{ height: p.grossMinor ? `${Math.max(6, (p.grossMinor / max) * 100)}%` : "2px" }} />
+          </button>
+        ))}
+      </div>
+      <div className="mt-1 flex justify-between text-[10px] text-ink-soft"><span>{label(pts[0].period).replace(/^Week of /, "")}</span><span>{label(pts[pts.length - 1].period).replace(/^Week of /, "")}</span></div>
+    </div>
   );
 }

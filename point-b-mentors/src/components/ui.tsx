@@ -223,3 +223,27 @@ export function MentorPhoto({ name, photoUrl, className = "", initialsClass = "t
     </div>
   );
 }
+
+/**
+ * A row of filter chips. Uses a real border (not a ring) and vertical padding, so the outlines are never clipped
+ * when the row scrolls sideways on a phone.
+ */
+export function FilterChips<K extends string>({ options, value, onChange, counts = {}, highlight, className = "", label = "Filter" }: {
+  options: readonly (readonly [K, string])[]; value: K; onChange: (k: K) => void;
+  counts?: Partial<Record<K, number>>; highlight?: K; className?: string; label?: string;
+}) {
+  return (
+    <div role="group" aria-label={label} className={`no-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1 py-1 ${className}`}>
+      {options.map(([k, text]) => {
+        const on = value === k, n = counts[k];
+        return (
+          <button key={k} type="button" aria-pressed={on} onClick={() => onChange(k)}
+            className={`inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border px-4 text-sm transition-colors ${on ? "border-ink bg-ink text-white" : "border-line bg-white text-ink hover:border-ink/30 hover:bg-paper/60"}`}>
+            {text}
+            {n ? <span className={`min-w-[1.25rem] rounded-full px-1.5 py-0.5 text-center text-[11px] font-medium leading-none tabular-nums ${on ? "bg-white/20 text-white" : k === highlight ? "bg-lemon text-ink" : "bg-paper-dim text-ink-soft"}`}>{n}</span> : null}
+          </button>
+        );
+      })}
+    </div>
+  );
+}

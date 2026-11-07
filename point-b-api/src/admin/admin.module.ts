@@ -5,6 +5,9 @@ import { PublicController } from './public.controller';
 import { AdminService } from './admin.service';
 import { InterviewSlotsService } from './interview-slots.service';
 import { PayoutsService } from './payouts.service';
+import { AdminOpsController } from './admin-ops.controller';
+import { AdminOpsService } from './admin-ops.service';
+import { ExportsService } from './exports.service';
 
-@Module({ controllers: [AdminController, PublicController], providers: [AdminService, DailyService, InterviewSlotsService, PayoutsService] })
+@Module({ controllers: [AdminController, AdminOpsController, PublicController], providers: [AdminService, DailyService, InterviewSlotsService, PayoutsService, AdminOpsService, ExportsService], exports: [AdminOpsService] })
 export class AdminModule {}

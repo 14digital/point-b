@@ -5,11 +5,14 @@ import { BookingsService, HOLD_MINUTES } from '../bookings/bookings.service';
 import { AuthUser } from '../common/auth';
 import { ActivityService } from '../activity/activity.service';
 import { StripeService } from './stripe.service';
+import { WalletService } from '../common/wallet.service';
+import { NotificationsService } from '../common/notifications.service';
+import { randomBytes } from 'crypto';
 
 @Injectable()
 export class PaymentsService {
   private readonly log = new Logger(PaymentsService.name);
-  constructor(private prisma: PrismaService, private bookings: BookingsService, private stripe: StripeService, private activity: ActivityService) {}
+  constructor(private prisma: PrismaService, private bookings: BookingsService, private stripe: StripeService, private activity: ActivityService, private wallet: WalletService, private notify: NotificationsService) {}
 
   private async bankForCheckout() {
     const row = await this.prisma.setting.findUnique({ where: { key: 'bank_details' } });
@@ -41,11 +44,14 @@ export class PaymentsService {
     try {
       await this.bookings.confirmPaid(payment.bookingId);
     } catch (e) {
-      // Paid after the hold lapsed (the slot may have gone to someone else): give the money back automatically.
-      if (!(e instanceof ConflictException) || payment.provider !== 'stripe') throw e;
-      await this.stripe.refund(providerRef, 'Paid after the booking hold expired');
+      // Paid after the hold lapsed (the slot may have gone to someone else): the money goes to the student's balance.
+      if (!(e instanceof ConflictException)) throw e;
+      const b = await this.prisma.booking.findUniqueOrThrow({ where: { id: payment.bookingId }, include: { student: { select: { name: true, email: true } } } });
       await this.prisma.payment.update({ where: { id: payment.id }, data: { status: 'REFUNDED' } });
-      this.log.warn(`Refunded late payment ${providerRef}`);
+      await this.wallet.add(b.studentId, payment.currency, payment.amountMinor + (b.walletAppliedMinor ?? 0), 'LATE_PAYMENT', { bookingId: b.id, reference: b.reference, note: 'Paid after the time hold ended' });
+      const amount = payment.currency === 'PKR' ? `Rs ${((payment.amountMinor + (b.walletAppliedMinor ?? 0)) / 100).toLocaleString('en-PK')}` : `£${((payment.amountMinor + (b.walletAppliedMinor ?? 0)) / 100).toFixed(2)}`;
+      await this.notify.send(b.student.email, 'Your payment is in your POINT B balance', `Hi ${b.student.name.split(' ')[0]},\n\nYour payment arrived after the time we were holding for you had ended, so the booking couldn't be confirmed. We've added ${amount} to your POINT B balance, and you can use it at checkout for any future session.`, b.studentId, { emailOnly: true, cta: { label: 'Book a session', url: `${process.env.WEB_URL ?? ''}/mentors` } });
+      this.log.warn(`Late payment ${providerRef} credited to balance`);
     }
     return { ok: true };
   }
@@ -76,6 +82,7 @@ export class PaymentsService {
       holdExpiresAt: new Date(booking.createdAt.getTime() + HOLD_MINUTES * 60_000).toISOString(),
       // Pay by bank app / QR is offered for PKR sessions when an admin has set it up.
       bank: payment.currency === 'PKR' ? await this.bankForCheckout() : null,
+      wallet: { balanceMinor: (await this.wallet.balances(user.id))[payment.currency], appliedMinor: booking.walletAppliedMinor ?? 0 },
     };
     if (payment.provider !== 'stripe') return { ...base, state: 'ready' as const, provider: 'mock' as const, providerRef: payment.providerRef };
     if (!this.stripe.enabled()) throw new BadRequestException('Card payments are not configured. Please contact support.');
@@ -97,6 +104,34 @@ export class PaymentsService {
       return { state: 'paid' as const, reference };
     }
     return { ...base, state: 'ready' as const, provider: 'stripe' as const, clientSecret: intent.client_secret, publishableKey: this.stripe.publishableKey() };
+  }
+
+  /**
+   * Pays all or part of a held booking from the student's POINT B balance. Anything left is paid by card or bank
+   * as usual. Applied once per booking; if the booking is never completed the balance is returned.
+   */
+  async useBalance(user: AuthUser, reference: string) {
+    await this.bookings.releaseExpiredHolds();
+    const { booking, payment } = await this.pendingPayment(user, reference);
+    if (booking.status !== 'PENDING_PAYMENT' || payment.status !== 'PENDING') throw new BadRequestException('This booking is no longer waiting for payment.');
+    if (booking.awaitingVerification) throw new BadRequestException('We are already checking a bank payment for this booking.');
+    const available = (await this.wallet.balances(user.id))[payment.currency];
+    if (available <= 0) throw new BadRequestException('You have no balance in this currency.');
+    const use = Math.min(available, payment.amountMinor);
+    // Claim the booking first, so two clicks can never spend the balance twice.
+    const claimed = await this.prisma.booking.updateMany({ where: { id: booking.id, OR: [{ walletAppliedMinor: null }, { walletAppliedMinor: { isSet: false } }] }, data: { walletAppliedMinor: use } });
+    if (!claimed.count) throw new ConflictException('Your balance has already been used for this booking.');
+    await this.wallet.add(user.id, payment.currency, -use, 'SPEND', { bookingId: booking.id, reference });
+    if (payment.providerRef.startsWith('pi_')) await this.stripe.cancelIntent(payment.providerRef);
+    const covered = use === payment.amountMinor;
+    const providerRef = covered || payment.providerRef.startsWith('pi_') ? 'pay_' + randomBytes(10).toString('hex') : payment.providerRef;
+    await this.prisma.payment.update({ where: { id: payment.id }, data: { amountMinor: payment.amountMinor - use, providerRef, ...(covered ? { provider: 'wallet' } : {}) } });
+    this.activity.record(user.id, 'balance_used', { reference });
+    if (covered) {
+      await this.applyResult(providerRef, 'succeeded');
+      return { state: 'paid' as const, reference };
+    }
+    return this.checkout(user, reference);
   }
 
   /**

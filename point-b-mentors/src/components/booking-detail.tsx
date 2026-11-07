@@ -16,7 +16,7 @@ interface DetailPayment {
 }
 interface BookingDetailData {
   id: string; reference: string; status: string; sessionKind: "ONE_TO_ONE" | "GROUP"; agenda: string; currentSituation: string; usefulOutcome: string; materialsToReview: string;
-  currency: Currency; repeatStudent: boolean | null; awaitingVerification: boolean | null; hostStartedAt: string | null; rescheduleCount: number; rescheduledAt: string | null;
+  currency: Currency; walletAppliedMinor: number | null; repeatStudent: boolean | null; awaitingVerification: boolean | null; hostStartedAt: string | null; rescheduleCount: number; rescheduledAt: string | null;
   cancelledAt: string | null; cancelReason: string | null; completedAt: string | null; createdAt: string;
   slot: { startAt: string; endAt: string; capacity: number };
   student: { id: string; name: string; email: string; phone: string | null };
@@ -30,7 +30,7 @@ interface BookingDetailData {
 }
 
 const TONE: Record<string, "neutral" | "brass" | "forest" | "rust"> = { PENDING_PAYMENT: "brass", CONFIRMED: "forest", COMPLETED: "forest", CANCELLED: "rust", NO_SHOW: "rust" };
-const METHOD: Record<string, string> = { stripe: "Card", bank: "Bank app / QR", mock: "Demo checkout" };
+const METHOD: Record<string, string> = { stripe: "Card", bank: "Bank app / QR", mock: "Demo checkout", wallet: "POINT B balance" };
 const when = (iso: string) => `${fmtDay(iso)}, ${fmtTime(iso)}`;
 const short = (iso: string) => `${new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}, ${fmtTime(iso)}`;
 
@@ -58,22 +58,21 @@ export function BookingDetailModal({ reference, onClose, onChanged }: { referenc
     try {
       if (action === "cancel") await api(`/bookings/${b.reference}/cancel`, { body: { reason: reason.trim() || "Cancelled by POINT B" } });
       else await api(`/bookings/${b.reference}/${action}`, { method: "POST" });
-      toast(action === "cancel" ? (b.status === "CONFIRMED" ? "Booking cancelled. The student has been emailed." : "Booking cancelled and the slot released.") : action === "complete" ? "Marked as completed. The student has been asked for feedback." : "Marked as a no-show.");
+      toast(action === "cancel" ? (b.status === "CONFIRMED" ? "Booking cancelled and the price added to the student\u2019s balance. They\u2019ve been emailed." : "Booking cancelled and the slot released.") : action === "complete" ? "Marked as completed. The student has been asked for feedback." : "Marked as a no-show.");
       setAction(null); setReason("");
       await d.reload(); onChanged();
     } catch (e) { toast(errMsg(e), "error"); } finally { setBusy(false); }
   }
 
   const started = !!b && (new Date(b.slot.startAt).getTime() <= now || !!b.hostStartedAt);
-  const paidBy = b?.payments.find((p) => p.status === "SUCCEEDED" || p.status === "REFUNDED");
   const footer = !b ? undefined : action ? (
     <div className="space-y-3">
       {action === "cancel" && (
         <>
           <p className="text-sm text-ink">{b.status === "CONFIRMED"
-            ? paidBy?.provider === "stripe" ? <>Cancel this session and refund <span className="font-medium">{money(b.money.paidMinor)}</span> to the student&rsquo;s card automatically.</>
-              : <>Cancel this session. The payment is marked refunded, but <span className="font-medium">you need to send {money(b.money.paidMinor)} back to the student yourself</span>, as it was paid by bank transfer.</>
-            : "Cancel this booking and release the slot. Nothing has been paid."}</p>
+            ? <>Cancel this session and add <span className="font-medium">{money(b.money.paidMinor)}</span> to {b.student.name.split(" ")[0]}&rsquo;s POINT B balance. Nothing is refunded to their card or bank; the balance pays for their next session.</>
+            : "Cancel this booking and release the slot. Nothing has been paid, and any balance it used goes back to the student."}</p>
+          {b.payout && <p className="rounded-xl bg-lemon/60 px-3 py-2 text-xs text-ink">The mentor was already paid {money(b.money.payoutMinor)} for this session on {short(b.payout.createdAt)}. Cancelling won&rsquo;t take that back, so plan to recover it from their next payout.</p>}
           <textarea className="input min-h-16" maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Reason (shown to the student), e.g. Mentor unavailable due to illness" />
         </>
       )}
@@ -82,7 +81,7 @@ export function BookingDetailModal({ reference, onClose, onChanged }: { referenc
       <div className="flex justify-end gap-2">
         <button type="button" disabled={busy} onClick={() => setAction(null)} className="rounded-full px-4 py-2 text-sm text-ink ring-1 ring-line hover:ring-ink/40">Back</button>
         <button type="button" disabled={busy} onClick={run} className={`inline-flex min-w-36 items-center justify-center rounded-full px-4 py-2 text-sm font-medium text-white disabled:opacity-60 ${action === "complete" ? "bg-ink" : "bg-rust"}`}>
-          {busy ? <Spinner /> : action === "cancel" ? (b.status === "CONFIRMED" ? "Cancel and refund" : "Cancel booking") : action === "complete" ? "Mark completed" : "Mark no-show"}
+          {busy ? <Spinner /> : action === "cancel" ? (b.status === "CONFIRMED" ? "Cancel and credit balance" : "Cancel booking") : action === "complete" ? "Mark completed" : "Mark no-show"}
         </button>
       </div>
     </div>
@@ -92,7 +91,7 @@ export function BookingDetailModal({ reference, onClose, onChanged }: { referenc
         <button type="button" onClick={() => setAction("no-show")} className="rounded-full px-4 py-2 text-sm text-ink ring-1 ring-line hover:ring-ink/40">Mark no-show</button>
         <button type="button" onClick={() => setAction("complete")} className="rounded-full px-4 py-2 text-sm text-ink ring-1 ring-line hover:ring-ink/40">Mark completed</button>
       </>}
-      <button type="button" onClick={() => setAction("cancel")} className="rounded-full px-4 py-2 text-sm font-medium text-rust ring-1 ring-rust/30 hover:bg-rust-pale">{b.status === "CONFIRMED" ? "Cancel and refund" : "Cancel booking"}</button>
+      <button type="button" onClick={() => setAction("cancel")} className="rounded-full px-4 py-2 text-sm font-medium text-rust ring-1 ring-rust/30 hover:bg-rust-pale">{b.status === "CONFIRMED" ? "Cancel and credit balance" : "Cancel booking"}</button>
     </div>
   ) : undefined;
 
@@ -149,8 +148,10 @@ export function BookingDetailModal({ reference, onClose, onChanged }: { referenc
             <p className="mt-2 text-xs text-ink-soft">
               {b.payout ? <>Paid to the mentor on {short(b.payout.createdAt)}{b.payout.reference ? `, ref ${b.payout.reference}` : ""}{b.payout.sessions > 1 ? ` (part of a ${money(b.payout.amountMinor)} payout for ${b.payout.sessions} sessions)` : ""}.</>
                 : b.status === "CONFIRMED" || b.status === "COMPLETED" ? "Not paid to the mentor yet." : "No mentor payout for this booking."}
+              {b.walletAppliedMinor ? ` ${money(b.walletAppliedMinor)} of the price was paid from the student's POINT B balance.` : ""}
               {b.money.feeIsEstimate && b.money.feeMinor != null ? " Commission uses today's tier rate, as this booking was made before rates were saved on bookings." : ""}
             </p>
+            {(b.status === "CONFIRMED" || b.status === "COMPLETED" || b.status === "NO_SHOW" || b.payments.some((p) => p.status === "REFUNDED")) && <a href={`/receipt/${b.reference}`} target="_blank" rel="noreferrer" className="mt-2 inline-block text-xs font-medium text-ink underline-offset-4 hover:underline">Student&rsquo;s receipt ↗</a>}
           </section>
 
           <section>
@@ -215,7 +216,7 @@ function PaymentCard({ p, currency }: { p: DetailPayment; currency: Currency }) 
     <div className="rounded-2xl ring-1 ring-line">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-3">
         <p className="text-sm font-medium text-ink">{bank ? "Bank app / QR" : METHOD[p.provider] ?? p.provider} · {formatMoney(p.amountMinor, currency)}</p>
-        <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${tone}`}>{p.status === "FAILED" && bank ? "Rejected" : p.status.charAt(0) + p.status.slice(1).toLowerCase()}</span>
+        <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${tone}`}>{p.status === "FAILED" && bank ? "Rejected" : p.status === "REFUNDED" ? "Credited to balance" : p.status.charAt(0) + p.status.slice(1).toLowerCase()}</span>
       </div>
       <div className={`grid gap-4 p-4 ${img ? "sm:grid-cols-[5.5rem_minmax(0,1fr)]" : ""}`}>
         {img && (

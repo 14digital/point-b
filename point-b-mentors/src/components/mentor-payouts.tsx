@@ -8,6 +8,8 @@ import { api, errMsg } from "@/lib/api";
 import { LEVEL_LABEL } from "@/lib/constants";
 import { formatMoney, initials } from "@/lib/format";
 import { useApi, useNow } from "@/lib/use-api";
+import { useAuth } from "@/lib/auth";
+import { PayoutDetailsView, type PayoutDetails } from "@/components/admin-mentor-detail";
 import type { Currency, Level } from "@/lib/types";
 
 export interface MentorDue { id: string; name: string; level: Level; sessions: number; grossMinor: number; payoutMinor: number | null; paidOutMinor: number | null; dueMinor: number | null; unpaidSessions: number }
@@ -16,7 +18,7 @@ interface MentorSession {
   id: string; reference: string; status: "CONFIRMED" | "COMPLETED"; kind: "ONE_TO_ONE" | "GROUP"; returning: boolean;
   startAt: string; endAt: string; studentName: string; priceMinor: number; percent: number | null; feeMinor: number | null; payoutMinor: number | null; payout: PayoutInfo | null;
 }
-interface MentorLedger { mentor: { id: string; name: string; email: string; level: Level }; currency: Currency; configured: boolean; earnedMinor: number; paidMinor: number; dueMinor: number; unpaidCount: number; sessions: MentorSession[] }
+interface MentorLedger { mentor: { id: string; name: string; email: string; level: Level; payoutDetails: PayoutDetails | null }; currency: Currency; configured: boolean; earnedMinor: number; paidMinor: number; dueMinor: number; unpaidCount: number; sessions: MentorSession[] }
 
 const NOT_SET = "Not configured";
 const CURRENCY_LABEL: Record<Currency, string> = { PKR: "Local · PKR", GBP: "International · GBP" };
@@ -93,6 +95,8 @@ function MentorLedgerView({ mentor, currency, eyebrow, query, onBack, onChanged,
   const toast = useToast();
   const now = useNow();
   const mentorId = mentor.id;
+  const { user } = useAuth();
+  const canPay = (user?.staffRole ?? "OWNER") !== "OPERATIONS";
   const ledger = useApi<MentorLedger>(`/admin/payouts/mentors/${mentorId}?currency=${currency}${query ? `&${query}` : ""}`);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [confirming, setConfirming] = useState<string[] | null>(null);
@@ -134,7 +138,7 @@ function MentorLedgerView({ mentor, currency, eyebrow, query, onBack, onChanged,
 
   const upcomingIn = (ids: string[]) => ids.filter((id) => new Date(byId.get(id)?.startAt ?? 0).getTime() > now).length;
 
-  const footer = !l || !l.sessions.length || !unpaid.length ? undefined : confirming ? (
+  const footer = !canPay || !l || !l.sessions.length || !unpaid.length ? undefined : confirming ? (
     <div className="space-y-3">
       <div className="flex items-baseline justify-between gap-4">
         <p className="text-sm text-ink">Record a payout of <span className="font-medium tabular-nums">{money(total(confirming))}</span> to {l.mentor.name} for {plural(confirming.length, "session")}</p>
@@ -179,6 +183,10 @@ function MentorLedgerView({ mentor, currency, eyebrow, query, onBack, onChanged,
           </div>
           {!l.configured && <Alert tone="info">Set the commission for this mentor&apos;s tier under Pricing &amp; settings before recording payouts.</Alert>}
           <section>
+            <SectionTitle>Where to pay {mentor.name.split(" ")[0]}</SectionTitle>
+            <PayoutDetailsView d={l.mentor.payoutDetails} />
+          </section>
+          <section>
             <SectionTitle aside={<a href={`mailto:${l.mentor.email}`} className="text-xs text-ink-soft underline-offset-4 hover:text-ink hover:underline">{l.mentor.email}</a>}>Sessions</SectionTitle>
             <ul className="divide-y divide-line/70">
               {l.sessions.map((s) => {
@@ -189,7 +197,7 @@ function MentorLedgerView({ mentor, currency, eyebrow, query, onBack, onChanged,
                     <div className="flex items-start gap-3">
                       <span className="pt-0.5">
                         {s.payout ? <span className="flex h-4 w-4 items-center justify-center rounded-full bg-forest text-white"><Tick /></span>
-                          : <input type="checkbox" className="h-4 w-4 accent-ink" checked={picked.has(s.id)} onChange={() => toggle(s.id)} aria-label={`Select session on ${day(s.startAt)}`} />}
+                          : canPay && <input type="checkbox" className="h-4 w-4 accent-ink" checked={picked.has(s.id)} onChange={() => toggle(s.id)} aria-label={`Select session on ${day(s.startAt)}`} />}
                       </span>
                       <div className="min-w-0 flex-1">
                         <p className="text-sm text-ink"><span className="font-medium">{day(s.startAt)}</span> · {time(s.startAt)}</p>
@@ -200,7 +208,7 @@ function MentorLedgerView({ mentor, currency, eyebrow, query, onBack, onChanged,
                         <p className="whitespace-nowrap text-sm font-medium text-ink tabular-nums">{money(s.payoutMinor)}</p>
                         {s.payout
                           ? <p className="mt-1 whitespace-nowrap text-xs text-forest">Paid {day(s.payout.createdAt)}</p>
-                          : <button type="button" disabled={!l.configured || busy} onClick={() => setConfirming([s.id])} className="mt-1 rounded-full px-2.5 py-1 text-xs font-medium text-ink ring-1 ring-line hover:ring-ink/40 disabled:opacity-50">Mark paid</button>}
+                          : canPay && <button type="button" disabled={!l.configured || busy} onClick={() => setConfirming([s.id])} className="mt-1 rounded-full px-2.5 py-1 text-xs font-medium text-ink ring-1 ring-line hover:ring-ink/40 disabled:opacity-50">Mark paid</button>}
                       </div>
                     </div>
                     {s.payout && (
@@ -212,7 +220,7 @@ function MentorLedgerView({ mentor, currency, eyebrow, query, onBack, onChanged,
                             <button type="button" onClick={() => setUndoing(null)} className="rounded-full px-2.5 py-1 font-medium text-ink ring-1 ring-line">Keep</button>
                             <button type="button" disabled={busy} onClick={() => undo(s.payout!)} className="rounded-full bg-rust px-2.5 py-1 font-medium text-white disabled:opacity-60">Undo payout</button>
                           </span>
-                        ) : <button type="button" onClick={() => setUndoing(s.payout!.id)} className="font-medium text-ink-soft underline-offset-4 hover:text-ink hover:underline">Undo</button>}
+                        ) : canPay && <button type="button" onClick={() => setUndoing(s.payout!.id)} className="font-medium text-ink-soft underline-offset-4 hover:text-ink hover:underline">Undo</button>}
                       </div>
                     )}
                   </li>

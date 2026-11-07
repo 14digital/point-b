@@ -3,7 +3,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { SkipThrottle } from '@nestjs/throttler';
 import { createHmac, timingSafeEqual } from 'crypto';
 import type { Response } from 'express';
-import { Public, Roles } from './auth';
+import { Public, Roles, Staff } from './auth';
 import { WhatsAppService } from './whatsapp.service';
 
 const same = (a: string, b: string) => {
@@ -37,6 +37,6 @@ export class WhatsAppController {
     return { ok: true };
   }
 
-  @ApiBearerAuth() @Roles('ADMIN') @Get('admin/whatsapp/messages')
+  @Staff('OPERATIONS') @ApiBearerAuth() @Roles('ADMIN') @Get('admin/whatsapp/messages')
   messages() { return this.whatsapp.recent(); }
 }

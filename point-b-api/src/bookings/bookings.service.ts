@@ -1,8 +1,9 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit, ServiceUnavailableException, BadGatewayException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit, ServiceUnavailableException } from '@nestjs/common';
 import { Booking, Prisma } from '@prisma/client';
 import { randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../common/notifications.service';
+import { WalletService } from '../common/wallet.service';
 import { AuthUser } from '../common/auth';
 import { commissionFor, commissionRules, feeOf, priceFor } from '../common/pricing';
 import { DailyService } from '../calls/daily.service';
@@ -25,7 +26,7 @@ const include = {
   mentor: { select: { id: true, slug: true, title: true, photoUrl: true, user: { select: { name: true, email: true } } } },
   student: { select: { id: true, name: true, email: true } },
   review: true,
-  payments: { select: { providerRef: true, provider: true, status: true } },
+  payments: { select: { providerRef: true, provider: true, status: true, processedAt: true, bankSubmittedAt: true, bankTxnRef: true }, orderBy: { createdAt: 'desc' } },
 } satisfies Prisma.BookingInclude;
 /** The in-app call page. Everyone, mentor and student, joins through it; access is decided server-side. */
 export const sessionUrl = (reference: string) => `${webUrl()}/session/${reference}`;
@@ -35,7 +36,7 @@ type FullBooking = Prisma.BookingGetPayload<{ include: typeof include }>;
 export class BookingsService implements OnModuleInit, OnModuleDestroy {
   private log = new Logger('Bookings');
   private timer?: NodeJS.Timeout;
-  constructor(private prisma: PrismaService, private notify: NotificationsService, private daily: DailyService, private stripe: StripeService, private activity: ActivityService) {}
+  constructor(private prisma: PrismaService, private notify: NotificationsService, private daily: DailyService, private stripe: StripeService, private activity: ActivityService, private wallet: WalletService) {}
 
   onModuleInit() {
     this.timer = setInterval(() => this.sendReminders().catch((e) => this.log.error(`reminders failed: ${e.message}`)), 60_000);
@@ -68,7 +69,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     return {
       id: b.id, reference: b.reference, status: b.status, sessionKind: b.sessionKind, agenda: b.agenda,
       currentSituation: b.currentSituation, usefulOutcome: b.usefulOutcome, materialsToReview: b.materialsToReview,
-      priceMinor: b.priceMinor, currency: b.currency, listPriceMinor: b.listPriceMinor ?? b.priceMinor, discountMinor: b.discountMinor ?? 0,
+      priceMinor: b.priceMinor, currency: b.currency, listPriceMinor: b.listPriceMinor ?? b.priceMinor, discountMinor: b.discountMinor ?? 0, walletAppliedMinor: b.walletAppliedMinor ?? 0,
       startAt: b.slot.startAt, endAt: b.slot.endAt,
       mentor: { id: b.mentor.id, slug: b.mentor.slug, name: b.mentor.user.name, title: b.mentor.title, photoUrl: b.mentor.photoUrl },
       student: viewer?.role === 'STUDENT' ? undefined : { id: b.student.id, name: b.student.name },
@@ -94,7 +95,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
   async releaseExpiredHolds() {
     const cutoff = new Date(Date.now() - HOLD_MINUTES * 60_000);
     // Bookings waiting for an admin to check a bank transfer keep their slot until it is approved or rejected.
-    const stale = await this.prisma.booking.findMany({ where: { status: 'PENDING_PAYMENT', createdAt: { lt: cutoff }, OR: [{ awaitingVerification: null }, { awaitingVerification: false }, { awaitingVerification: { isSet: false } }] }, select: { id: true, slotId: true, studentId: true, reference: true, payments: { select: { provider: true, providerRef: true, status: true } } } });
+    const stale = await this.prisma.booking.findMany({ where: { status: 'PENDING_PAYMENT', createdAt: { lt: cutoff }, OR: [{ awaitingVerification: null }, { awaitingVerification: false }, { awaitingVerification: { isSet: false } }] }, select: { id: true, slotId: true, studentId: true, reference: true, currency: true, walletAppliedMinor: true, payments: { select: { provider: true, providerRef: true, status: true } } } });
     for (const b of stale) {
       for (const p of b.payments) if (p.provider === 'stripe' && p.status === 'PENDING' && p.providerRef.startsWith('pi_')) await this.stripe.cancelIntent(p.providerRef);
       await this.prisma.$transaction([
@@ -102,6 +103,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
         this.prisma.payment.updateMany({ where: { bookingId: b.id, status: 'PENDING' }, data: { status: 'FAILED' } }),
         this.prisma.availabilitySlot.update({ where: { id: b.slotId }, data: { isBooked: false, seatsTaken: { decrement: 1 } } }),
       ]);
+      await this.wallet.returnUnused(b);
       this.activity.record(b.studentId, 'hold_expired', { reference: b.reference });
     }
   }
@@ -327,13 +329,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     if (user.role !== 'ADMIN' && !(isStudent && b.status === 'PENDING_PAYMENT')) {
       throw new ForbiddenException(`Confirmed sessions can't be cancelled, but you can reschedule up to ${noticeLabel(await this.noticeHours())} before the start time.`);
     }
-    // Refund card payments with Stripe first, so a booking is never marked refunded when the money didn't move.
-    for (const p of await this.prisma.payment.findMany({ where: { bookingId: b.id, status: 'SUCCEEDED', provider: 'stripe' } })) {
-      try { await this.stripe.refund(p.providerRef, `Booking ${b.reference} cancelled`); } catch (e) {
-        this.log.error(`Refund failed for ${b.reference}: ${(e as Error).message}`);
-        throw new BadGatewayException('We couldn\'t process the refund just now, so the booking is still active. Please try again in a few minutes or contact support.');
-      }
-    }
+    // A paid session is not refunded to the card or bank: the full price goes to the student's POINT B balance instead.
     for (const p of await this.prisma.payment.findMany({ where: { bookingId: b.id, status: 'PENDING', provider: 'stripe' } })) {
       if (p.providerRef.startsWith('pi_')) await this.stripe.cancelIntent(p.providerRef);
     }
@@ -344,9 +340,13 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
       this.prisma.availabilitySlot.update({ where: { id: b.slotId }, data: { isBooked: false, seatsTaken: { decrement: 1 } } }),
     ]);
     const refunded = b.status === 'CONFIRMED';
+    const credit = refunded ? `Rs ${(b.priceMinor / 100).toLocaleString('en-PK')}` : '';
+    const creditText = b.currency === 'PKR' ? credit : `£${(b.priceMinor / 100).toFixed(2)}`;
+    if (refunded) await this.wallet.add(b.studentId, b.currency, b.priceMinor, 'CANCELLATION', { bookingId: b.id, reference: b.reference, note: dto.reason ?? 'Session cancelled' });
+    else await this.wallet.returnUnused(b);
     const by = isStudent ? 'the student' : 'your mentor or our team';
     const cf = (who: [string, string]): [string, string][] => [who, ['Was scheduled for', emailDate(b.slot.startAt)], ['Reference', b.reference]];
-    await this.notify.send(b.student.email, 'Your booking has been cancelled', `Hi ${b.student.name.split(' ')[0]},\n\nYour session with ${b.mentor.user.name} has been cancelled${isStudent ? '' : ` by ${by}`}.${refunded ? ' A full refund has been issued to your original payment method.' : ' You were not charged.'}\n\nYou are welcome to book another time whenever suits you.`, b.student.id, { cta: { label: 'Find another time', url: `${webUrl()}/mentors/${b.mentor.slug}` }, facts: cf(['Mentor', b.mentor.user.name]), whatsapp: { alert: 'bookingCancelled', params: [b.student.name.split(' ')[0], b.mentor.user.name, b.slot.startAt, refunded ? 'A full refund has been issued to your original payment method.' : 'You were not charged.', b.reference, `${webUrl()}/mentors/${b.mentor.slug}`] } });
+    await this.notify.send(b.student.email, 'Your booking has been cancelled', `Hi ${b.student.name.split(' ')[0]},\n\nYour session with ${b.mentor.user.name} has been cancelled${isStudent ? '' : ` by ${by}`}.${refunded ? ` The full ${creditText} has been added to your POINT B balance, and you can use it at checkout for any future session.` : ' You were not charged.'}\n\nYou are welcome to book another time whenever suits you.`, b.student.id, { cta: { label: 'Find another time', url: `${webUrl()}/mentors/${b.mentor.slug}` }, facts: cf(['Mentor', b.mentor.user.name]), whatsapp: { alert: 'bookingCancelled', params: [b.student.name.split(' ')[0], b.mentor.user.name, b.slot.startAt, refunded ? `${creditText} has been added to your POINT B balance for your next session.` : 'You were not charged.', b.reference, `${webUrl()}/mentors/${b.mentor.slug}`] } });
     await this.notify.send(b.mentor.user.email, 'A session has been cancelled', `Hi ${b.mentor.user.name.split(' ')[0]},\n\nThe session with ${b.student.name} has been cancelled${isStudent ? ' by the student' : ''}. The time slot is open again for other students.`, (await this.prisma.mentorProfile.findUnique({ where: { id: b.mentorId }, select: { userId: true } }))?.userId, { cta: { label: 'Open your dashboard', url: `${webUrl()}/dashboard/mentor` }, facts: cf(['Student', b.student.name]) });
     this.activity.record(b.studentId, 'booking_cancelled', { reference: b.reference, label: isStudent ? 'By the student' : 'By the team' });
     return this.get(user, reference);
@@ -379,10 +379,10 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     if (b.studentId !== user.id) throw new ForbiddenException('Only the student can review this session');
     if (b.review) throw new ConflictException('You have already reviewed this session');
     if (!this.reviewable(b)) throw new BadRequestException('You can leave feedback once the session has finished');
-    // Held for the mentor's approval; nothing is public until they approve it.
+    // Private until the POINT B team approves it; mentors can read it but not change it.
     await this.prisma.review.create({ data: { bookingId: b.id, rating: dto.rating, comment: dto.comment, status: 'PENDING' } });
     const mentorUserId = (await this.prisma.mentorProfile.findUnique({ where: { id: b.mentorId }, select: { userId: true } }))?.userId;
-    await this.notify.send(b.mentor.user.email, `New feedback from ${b.student.name.split(' ')[0]}`, `Hi ${b.mentor.user.name.split(' ')[0]},\n\n${b.student.name} has left feedback on your session. It is private until you approve it. Open your dashboard to read it and choose whether it appears on your public profile.`, mentorUserId, { cta: { label: 'Review feedback', url: `${webUrl()}/dashboard/mentor` }, facts: [['Rating', `${dto.rating} out of 5`], ['Session', emailDate(b.slot.startAt)]] });
+    await this.notify.send(b.mentor.user.email, `New feedback from ${b.student.name.split(' ')[0]}`, `Hi ${b.mentor.user.name.split(' ')[0]},\n\n${b.student.name} has left feedback on your session. You can read it on your dashboard. The POINT B team reviews all feedback before it appears on your public profile.`, mentorUserId, { cta: { label: 'Read the feedback', url: `${webUrl()}/dashboard/mentor?tab=feedback` }, facts: [['Rating', `${dto.rating} out of 5`], ['Session', emailDate(b.slot.startAt)]] });
     this.activity.record(user.id, 'review_left', { reference: b.reference });
     return this.get(user, reference);
   }

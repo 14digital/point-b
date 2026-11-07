@@ -20,6 +20,7 @@ import { useUrlTab } from "@/lib/use-url-tab";
 import { useApi, useNow } from "@/lib/use-api";
 import type { Booking } from "@/lib/types";
 import { NoticeText } from "@/lib/policy";
+import { MySupport } from "@/components/my-support";
 
 const TABS = ["Upcoming", "Awaiting payment", "Past"] as const;
 
@@ -46,6 +47,7 @@ function Dashboard() {
   const completed = past.filter((b) => b.status === "COMPLETED");
   const needsFeedback = past.filter((b) => b.canReview);
   const [tab, setTab] = useUrlTab(TABS, "Upcoming");
+  const [asking, setAsking] = useState(false);
   const tabs = TABS.filter((t) => t !== "Awaiting payment" || pending.length > 0);
   const next = upcoming[0];
 
@@ -55,7 +57,7 @@ function Dashboard() {
         eyebrow={<><span>Student dashboard</span><span aria-hidden>·</span><span>{user?.timezone}</span></>}
         title={<>{greeting()}, <Mark>{user?.name.split(" ")[0]}</Mark></>}
         subtitle={next ? `Your next session is ${relative(next.startAt, now)}, with ${next.mentor.name}.` : "Find a mentor who has been where you're going, and book a 30-minute conversation."}
-        actions={<><Button href="/mentors">Book a session</Button><Button href="/contact" variant="secondary">Get help</Button></>}
+        actions={<><Button href="/mentors">Book a session</Button><Button variant="secondary" onClick={() => setAsking(true)}>Get help</Button></>}
       >
         <div className="mt-10 grid grid-cols-2 gap-3 lg:grid-cols-4">
           <StatTile label="Upcoming" value={loading ? "–" : upcoming.length} tone="sky" />
@@ -105,6 +107,7 @@ function Dashboard() {
           </div>
 
           <aside className="space-y-4 lg:sticky lg:top-24 lg:self-start">
+            <BalanceCard />
             {needsFeedback.length > 0 && (
               <div className="rounded-3xl bg-mint p-6">
                 <p className="font-display text-2xl text-ink">How did it go?</p>
@@ -112,6 +115,7 @@ function Dashboard() {
                 <Button size="sm" className="mt-4" onClick={() => setTab("Past")}>Leave feedback</Button>
               </div>
             )}
+            <div id="support"><MySupport compact newRequest={asking} onNewRequestClose={() => setAsking(false)} /></div>
             <Panel title="Your account">
               <dl className="space-y-3 text-sm">
                 <div><dt className="text-ink-soft">Name</dt><dd className="text-ink">{user?.name}</dd></div>
@@ -126,7 +130,6 @@ function Dashboard() {
                 <li>Need a different time? <NoticeText text="Reschedule up to {notice} before." /></li>
                 <li>We email a reminder 30 minutes ahead.</li>
               </ul>
-              <Link href="/contact" className="mt-4 inline-block text-sm font-medium text-ink underline underline-offset-4">Contact support</Link>
             </div>
           </aside>
         </div>
@@ -196,6 +199,7 @@ function UpcomingCard({ b, onChange }: { b: Booking; onChange: () => void }) {
         <div className="flex flex-wrap items-center gap-2">
           {b.meetingLink && <a href={b.meetingLink} target="_blank" rel="noreferrer" className={`rounded-full px-5 py-2.5 text-sm font-medium ${soon ? "bg-forest text-white" : "bg-ink text-white"}`}>{soon ? "Join now" : "Session page"}</a>}
           {canMove && <Button size="sm" variant="secondary" onClick={() => setMoving(true)}>Reschedule</Button>}
+          <a href={`/receipt/${b.reference}`} className="px-2 text-xs font-medium text-ink-soft underline-offset-4 hover:text-ink hover:underline">Receipt</a>
         </div>
       </div>
       <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-line pt-4">
@@ -247,6 +251,7 @@ function PastCard({ b, onChange }: { b: Booking; onChange: () => void }) {
           <Badge tone={tone}>{status}</Badge>
           {b.canReview && !reviewing && <Button size="sm" onClick={() => setReviewing(true)}>Leave feedback</Button>}
           <Button href={`/mentors/${b.mentor.slug}`} size="sm" variant="secondary">Book again</Button>
+          {(b.status === "COMPLETED" || b.status === "CONFIRMED" || b.status === "NO_SHOW" || b.payment?.status === "REFUNDED") && <a href={`/receipt/${b.reference}`} className="px-2 text-xs font-medium text-ink-soft underline-offset-4 hover:text-ink hover:underline">Receipt</a>}
         </div>
       </div>
       {b.cancelReason && <p className="mt-3 text-xs text-ink-soft">{b.cancelReason}</p>}
@@ -281,6 +286,40 @@ function AddMobile() {
         <MobileField id="add-mobile" value={phone} onChange={(v) => { setPhone(v); setErr(null); }} iso={iso} onIso={setIso} whatsapp={whatsapp} onWhatsapp={setWhatsapp} error={err} />
         <Button className="mt-4 w-full" disabled={busy} onClick={save}>{busy ? <Spinner /> : "Save number"}</Button>
       </div>
+    </div>
+  );
+}
+
+interface WalletEntry { id: string; currency: "PKR" | "GBP"; amountMinor: number; kind: string; reference: string | null; note: string | null; createdAt: string }
+const WALLET_LABEL: Record<string, string> = { CANCELLATION: "Session cancelled", LATE_PAYMENT: "Payment arrived late", SPEND: "Used for a session", RETURN: "Booking not completed", ADJUSTMENT: "From the POINT B team" };
+
+/** The student's POINT B balance: credit from cancelled sessions, used automatically at checkout. */
+function BalanceCard() {
+  const w = useApi<{ balances: Record<"PKR" | "GBP", number>; entries: WalletEntry[] }>("/wallet");
+  const [open, setOpen] = useState(false);
+  if (!w.data || (!w.data.entries.length && !w.data.balances.PKR && !w.data.balances.GBP)) return null;
+  const held = (["PKR", "GBP"] as const).filter((c) => w.data!.balances[c] > 0);
+  return (
+    <div className="overflow-hidden rounded-3xl bg-ink text-white">
+      <div className="p-5">
+        <p className="text-xs font-medium uppercase tracking-[0.12em] text-white/60">POINT B balance</p>
+        {held.length ? held.map((c) => <p key={c} className="mt-1 font-display text-4xl leading-tight tabular-nums">{formatMoney(w.data!.balances[c], c)}</p>) : <p className="mt-1 font-display text-4xl leading-tight">{formatMoney(0, "PKR")}</p>}
+        <p className="mt-2 text-xs leading-relaxed text-white/60">{held.length ? "Choose “Pay with balance” at checkout for any session in the same currency." : "Credit from cancelled sessions appears here."}</p>
+        <div className="mt-4 flex gap-2">
+          {held.length > 0 && <Link href="/mentors" className="rounded-full bg-white px-4 py-2 text-xs font-medium text-ink">Book a session</Link>}
+          <button type="button" onClick={() => setOpen(!open)} aria-expanded={open} className="rounded-full px-3 py-2 text-xs font-medium text-white/80 ring-1 ring-white/20 hover:text-white">{open ? "Hide history" : "History"}</button>
+        </div>
+      </div>
+      {open && (
+        <ul className="divide-y divide-white/10 border-t border-white/10 bg-white/5 px-5 text-xs">
+          {w.data.entries.map((e) => (
+            <li key={e.id} className="flex items-start justify-between gap-3 py-2.5">
+              <span className="min-w-0"><span className="block text-white">{WALLET_LABEL[e.kind] ?? e.kind}</span><span className="block truncate text-white/50">{new Date(e.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}{e.reference ? ` · ${e.reference}` : ""}{e.kind === "ADJUSTMENT" && e.note ? ` · ${e.note}` : ""}</span></span>
+              <span className={`whitespace-nowrap tabular-nums ${e.amountMinor > 0 ? "text-mint" : "text-white/80"}`}>{e.amountMinor > 0 ? "+" : "−"}{formatMoney(Math.abs(e.amountMinor), e.currency)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

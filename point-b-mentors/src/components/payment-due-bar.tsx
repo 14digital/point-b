@@ -94,7 +94,7 @@ export function PaymentDueBar() {
             </p>
             <p className="truncate text-xs text-ink-soft">
               <span className={`font-mono font-medium tabular-nums ${urgent ? "text-rust" : "text-ink"}`}>{t!.label}</span> left<span className="hidden sm:inline"> to hold your time</span> · {b.mentor.name}, {fmtDayShort(b.startAt)} at {fmtTime(b.startAt)}
-              {live.length > 1 && <> · <Link href="/dashboard/student?tab=awaiting-payment" className="underline underline-offset-2">{live.length - 1} more</Link></>}
+              {live.length > 1 && <> · <a href="/dashboard/student?tab=awaiting-payment" className="underline underline-offset-2">{live.length - 1} more</a></>}
             </p>
           </div>
           <button type="button" onClick={() => setPaying(b)} className="shrink-0 rounded-full bg-ink px-4 py-2.5 text-sm font-medium text-white transition-transform hover:scale-[1.02] sm:px-5"><span className="sm:hidden">Pay now</span><span className="hidden sm:inline">Complete payment</span></button>

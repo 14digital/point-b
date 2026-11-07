@@ -1,8 +1,9 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AuthUser, CurrentUser, Public, Roles } from '../common/auth';
 import { CreatePromoDto, CreateSlotsDto, ListMentorsQuery, UpdateMentorProfileDto } from './mentors.dto';
 import { MentorsService } from './mentors.service';
+import { PayoutDetailsDto } from '../admin/admin-ops.controller';
 
 @ApiTags('mentors')
 @Controller('mentors')
@@ -21,13 +22,14 @@ export class MentorsController {
   @ApiBearerAuth() @Roles('MENTOR') @Delete('me/slots/:id') removeSlot(@CurrentUser() u: AuthUser, @Param('id') id: string) { return this.mentors.removeSlot(u.id, id); }
   @ApiBearerAuth() @Roles('MENTOR') @Get('me/bookings') myBookings(@CurrentUser() u: AuthUser) { return this.mentors.myBookings(u.id); }
   @ApiBearerAuth() @Roles('MENTOR') @Get('me/reviews') myReviews(@CurrentUser() u: AuthUser) { return this.mentors.myReviews(u.id); }
-  @ApiBearerAuth() @Roles('MENTOR') @Post('me/reviews/:id/approve') approveReview(@CurrentUser() u: AuthUser, @Param('id') id: string) { return this.mentors.moderateReview(u.id, id, 'APPROVED'); }
-  @ApiBearerAuth() @Roles('MENTOR') @Post('me/reviews/:id/hide') hideReview(@CurrentUser() u: AuthUser, @Param('id') id: string) { return this.mentors.moderateReview(u.id, id, 'HIDDEN'); }
   @ApiBearerAuth() @Roles('MENTOR') @Get('me/students') students(@CurrentUser() u: AuthUser) { return this.mentors.myStudents(u.id); }
   @ApiBearerAuth() @Roles('MENTOR') @Get('me/promo-codes') promos(@CurrentUser() u: AuthUser) { return this.mentors.myPromos(u.id); }
   @ApiBearerAuth() @Roles('MENTOR') @Post('me/promo-codes') createPromo(@CurrentUser() u: AuthUser, @Body() dto: CreatePromoDto) { return this.mentors.createPromo(u.id, dto); }
   @ApiBearerAuth() @Roles('MENTOR') @Delete('me/promo-codes/:id') revokePromo(@CurrentUser() u: AuthUser, @Param('id') id: string) { return this.mentors.revokePromo(u.id, id); }
   @ApiBearerAuth() @Roles('MENTOR') @Get('me/earnings') earnings(@CurrentUser() u: AuthUser) { return this.mentors.myEarnings(u.id); }
+  @ApiBearerAuth() @Roles('MENTOR') @Get('me/payouts') payouts(@CurrentUser() u: AuthUser) { return this.mentors.myPayouts(u.id); }
+  @ApiBearerAuth() @Roles('MENTOR') @Get('me/payout-details') payoutDetails(@CurrentUser() u: AuthUser) { return this.mentors.myPayoutDetails(u.id); }
+  @ApiBearerAuth() @Roles('MENTOR') @Put('me/payout-details') savePayoutDetails(@CurrentUser() u: AuthUser, @Body() dto: PayoutDetailsDto) { return this.mentors.saveMyPayoutDetails(u.id, { ...dto }); }
 
   @Public() @Get(':slug') get(@Param('slug') slug: string) { return this.mentors.getBySlug(slug); }
 }

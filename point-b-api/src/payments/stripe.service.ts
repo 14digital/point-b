@@ -32,7 +32,7 @@ export class StripeService {
         metadata: { bookingId: opts.bookingId, reference: opts.reference },
       },
       // One intent per booking, even if the student opens checkout twice.
-      { idempotencyKey: `booking-${opts.bookingId}` },
+      { idempotencyKey: `booking-${opts.bookingId}-${opts.amountMinor}` }, // the amount changes if part is paid from the balance
     );
   }
 

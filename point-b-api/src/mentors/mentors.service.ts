@@ -175,14 +175,17 @@ export class MentorsService {
   }
 
   /** The mentor decides whether a student's feedback appears on their public profile. */
-  async moderateReview(userId: string, reviewId: string, status: 'APPROVED' | 'HIDDEN') {
+  async myPayoutDetails(userId: string) {
+    return (await this.mine(userId)).payoutDetails ?? null;
+  }
+
+  async saveMyPayoutDetails(userId: string, details: Record<string, string | undefined>) {
     const p = await this.mine(userId);
-    const r = await this.prisma.review.findFirst({ where: { id: reviewId, booking: { mentorId: p.id } } });
-    if (!r) throw new NotFoundException('Feedback not found');
-    const was = r.status ?? 'APPROVED';
-    if (was === status) return this.myReviews(userId);
-    await this.prisma.review.update({ where: { id: r.id }, data: { status, moderatedAt: new Date() } });
-    return this.myReviews(userId);
+    const clean = Object.fromEntries(Object.entries(details).filter(([, v]) => typeof v === 'string' && v.trim()).map(([k, v]) => [k, v!.trim()]));
+    if (!clean.iban && !clean.accountNumber && !clean.wallet) throw new BadRequestException('Add an IBAN, account number or mobile wallet number.');
+    const value = { ...clean, updatedAt: new Date().toISOString(), updatedBy: 'mentor' };
+    await this.prisma.mentorProfile.update({ where: { id: p.id }, data: { payoutDetails: value } });
+    return value;
   }
 
   /**
@@ -203,6 +206,38 @@ export class MentorsService {
       o.grossMinor += b.priceMinor; o.feeMinor += fee ?? 0; o.payoutMinor += b.priceMinor - (fee ?? 0); o.sessions++; if (b.repeatStudent) o.repeatSessions++;
     }
     return { totals: Object.values(out), tierPercent: rules.tier[p.level], repeatPercent: rules.repeat, commissionConfigured: !unknown && rules.tier[p.level] != null, note: 'Payout schedule is set by POINT B administrators.' };
+  }
+
+  /**
+   * The mentor's own payout statement: earned, paid and still owed per currency, every payout we've sent, and each
+   * paid session with whether it has been paid out yet.
+   */
+  async myPayouts(userId: string) {
+    const p = await this.mine(userId);
+    const rules = await commissionRules(this.prisma);
+    const [rows, payouts] = await Promise.all([
+      this.prisma.booking.findMany({
+        where: { mentorId: p.id, status: { in: ['CONFIRMED', 'COMPLETED'] } }, orderBy: { slot: { startAt: 'desc' } },
+        select: { reference: true, status: true, currency: true, priceMinor: true, platformFeeMinor: true, commissionPercent: true, payoutId: true, slot: { select: { startAt: true } }, student: { select: { name: true } } },
+      }),
+      this.prisma.mentorPayout.findMany({ where: { mentorId: p.id }, orderBy: { createdAt: 'desc' }, select: { id: true, createdAt: true, currency: true, amountMinor: true, sessions: true, reference: true, note: true } }),
+    ]);
+    const sessions = rows.map((b) => {
+      const pct = b.commissionPercent ?? rules.tier[p.level];
+      const fee = b.platformFeeMinor ?? (pct == null ? null : feeOf(b.priceMinor, pct));
+      const paidOut = payouts.find((x) => x.id === b.payoutId);
+      return { reference: b.reference, status: b.status, currency: b.currency, startAt: b.slot.startAt, studentName: b.student.name, priceMinor: b.priceMinor, percent: pct, earnMinor: fee == null ? null : b.priceMinor - fee, paidOn: paidOut?.createdAt ?? null };
+    });
+    // Sessions paid out and later cancelled: the money was sent, so it counts as paid, and the mentor can see why.
+    const cancelledPaid = await this.prisma.booking.findMany({ where: { mentorId: p.id, payoutId: { not: null }, status: { notIn: ['CONFIRMED', 'COMPLETED'] } }, select: { currency: true, priceMinor: true, platformFeeMinor: true } });
+    const totals = (['PKR', 'GBP'] as const).map((currency) => {
+      const mine = sessions.filter((s) => s.currency === currency);
+      const sum = (l: typeof mine) => l.reduce((n, s) => n + (s.earnMinor ?? 0), 0);
+      const paidMinor = payouts.filter((x) => x.currency === currency).reduce((n, x) => n + x.amountMinor, 0);
+      const forCancelledMinor = cancelledPaid.filter((b) => b.currency === currency).reduce((n, b) => n + b.priceMinor - (b.platformFeeMinor ?? 0), 0);
+      return { currency, earnedMinor: sum(mine), paidMinor, dueMinor: sum(mine.filter((s) => !s.paidOn)), forCancelledMinor, sessions: mine.length };
+    }).filter((t) => t.sessions > 0 || t.paidMinor > 0);
+    return { totals, payouts, sessions, hasPayoutDetails: !!p.payoutDetails };
   }
 
   /** Students who have had a paid session with this mentor, and so can be offered a promo code for the next one. */
