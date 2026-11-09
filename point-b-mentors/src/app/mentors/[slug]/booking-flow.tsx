@@ -1,5 +1,6 @@
 "use client";
 
+import { VerifyEmail } from "@/components/verify-email";
 import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
@@ -176,7 +177,8 @@ function BookingModal({ mentor, slot, price, onClose: close, onSlotTaken }: { me
     setStep("done");
   }, [booking]);
 
-  const blocked = needsAuth || wrongRole || minorBlocked;
+  const unconfirmed = user?.role === "STUDENT" && user.emailVerified === false;
+  const blocked = needsAuth || wrongRole || minorBlocked || unconfirmed;
   const first = mentor.name.replace(/^(Dr|Mr|Ms|Mrs)\.?\s+/i, "").split(" ")[0];
   const HEAD: Record<Step, [string, string]> = {
     auth: ["Sign in", "Create an account or sign in to continue."],
@@ -186,7 +188,7 @@ function BookingModal({ mentor, slot, price, onClose: close, onSlotTaken }: { me
     payment: ["Complete payment", `Your time is held while you pay. Reschedule free up to ${notice} before.`],
     done: ["You\u2019re booked in", "A confirmation email is on its way."],
   };
-  const [title, subtitle] = needsAuth ? HEAD.auth : HEAD[step];
+  const [title, subtitle] = needsAuth ? HEAD.auth : unconfirmed ? ["Confirm your email", "So we can send your booking details and call link."] : HEAD[step];
 
   let footer: React.ReactNode = null;
   if (!blocked && step === "agenda") footer = <Button className="w-full sm:w-auto sm:min-w-40" disabled={!agenda} onClick={() => setStep("prepare")}>Continue</Button>;
@@ -242,6 +244,7 @@ function BookingModal({ mentor, slot, price, onClose: close, onSlotTaken }: { me
           ) : (<>
           <div className={BODY}>
             {needsAuth && <InlineAuth onDone={() => setStep("agenda")} />}
+            {unconfirmed && <VerifyEmail />}
             {wrongRole && <Alert tone="info">You&rsquo;re signed in as a {user!.role.toLowerCase()}. Booking sessions needs a student account — sign out and register as a student.</Alert>}
             {minorBlocked && <Alert tone="info">Students under 18 need a parent or guardian to give consent before booking. We emailed your guardian when you registered; once they confirm, you can book. Contact support if you need help.</Alert>}
 
@@ -302,7 +305,7 @@ function BookingModal({ mentor, slot, price, onClose: close, onSlotTaken }: { me
                     )}
                   </div>
                 )}
-                <p className="text-xs leading-relaxed text-ink-soft">We hold your {slot.kind === "GROUP" ? "seat" : "slot"} for 15 minutes while you pay. Booked sessions can&rsquo;t be cancelled, but you can reschedule for free up to {notice} before; see the <Link href="/legal?tab=refunds" className="underline" target="_blank">rescheduling policy</Link>.</p>
+                <p className="text-xs leading-relaxed text-ink-soft">We hold your {slot.kind === "GROUP" ? "seat" : "slot"} for 15 minutes while you pay. You can cancel for a full refund, or move to another time for free, up to {notice} before. After that there&rsquo;s no refund; see the <Link href="/legal?tab=refunds" className="underline" target="_blank">refund policy</Link>.</p>
                 {error && <Alert>{error}</Alert>}
               </>
             )}

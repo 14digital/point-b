@@ -5,7 +5,7 @@ export type Level = "PROFESSIONAL" | "SENIOR_SPECIALIST" | "EXECUTIVE";
 
 export interface SessionUser {
   id: string; email: string; name: string; role: Role; timezone: string; isMinor: boolean; guardianConsent: boolean;
-  phone?: string | null; whatsappAlerts?: boolean;
+  phone?: string | null; whatsappAlerts?: boolean; emailVerified?: boolean;
   mentorProfile?: { id: string; slug: string; status: string } | null;
   /** Admins only. */
   staffRole?: "OWNER" | "OPERATIONS" | "FINANCE"; twoFactorEnabled?: boolean;
@@ -33,7 +33,7 @@ export interface Booking {
   priceMinor: number; currency: Currency; startAt: string; endAt: string;
   mentor: { id: string; slug: string; name: string; title: string; photoUrl?: string | null };
   student?: { id: string; name: string };
-  meetingLink: string | null; review: { rating: number; comment: string; status: ReviewStatus } | null; canReview?: boolean;
+  meetingLink: string | null; review: { rating: number; comment: string; status: ReviewStatus } | null; canReview?: boolean; canReportMissing?: boolean; mentorReport?: string | null; mentorReportNote?: string | null;
   payment: { providerRef: string; provider: string; status: string; processedAt?: string | null; bankSubmittedAt?: string | null; bankTxnRef?: string | null } | null;
   listPriceMinor?: number; discountMinor?: number; walletAppliedMinor?: number;
   holdExpiresAt: string | null; awaitingVerification?: boolean; cancelReason: string | null; createdAt: string;

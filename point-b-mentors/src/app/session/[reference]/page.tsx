@@ -10,11 +10,12 @@ import type { Booking } from "@/lib/types";
 import { api, errMsg } from "@/lib/api";
 import { useAuth, HOME_BY_ROLE } from "@/lib/auth";
 import { fmtDay, fmtTime } from "@/lib/format";
+import { ReportMissing } from "@/components/report-missing";
 
 type CallState = "not_confirmed" | "ended" | "too_early" | "waiting_for_host" | "ready";
 interface CallInfo {
   state: CallState; reference: string; mentorName: string; startAt: string; endAt: string; sessionKind: "ONE_TO_ONE" | "GROUP";
-  url?: string; token?: string; isHost?: boolean;
+  url?: string; token?: string; isHost?: boolean; canReportMissing?: boolean; mentorReport?: string | null;
 }
 
 export default function SessionPage() {
@@ -77,6 +78,12 @@ function Room({ reference, home, isStudent }: { reference: string; home: string;
         <p className="mt-2 text-sm text-ink-soft">{info.mentorName} · {when}</p>
         <p className="mt-4 text-sm text-ink-soft">{c.body}</p>
         {error && <div className="mt-4"><Alert>{error}</Alert></div>}
+        {isStudent && info.canReportMissing && (
+          <div className="mt-5 flex justify-center border-t border-line pt-5">
+            <ReportMissing reference={reference} mentorName={info.mentorName} onDone={check} label={`${info.mentorName.split(" ")[0]} hasn't joined`} />
+          </div>
+        )}
+        {isStudent && info.mentorReport === "PENDING" && <p className="mt-5 rounded-2xl bg-lemon/60 px-4 py-3 text-sm text-ink">Thanks, we&rsquo;ve received your report and will email you the outcome.{info.state === "waiting_for_host" ? ` You can stay on this page in case ${info.mentorName.split(" ")[0]} arrives.` : ""}</p>}
         <Link href={home}><Button variant="secondary" className="mt-6">Back to dashboard</Button></Link>
       </div>
       {info.state === "ended" && isStudent && <div className="mx-auto mt-6 max-w-lg"><FeedbackPanel reference={reference} mentorName={info.mentorName} home={home} bare /></div>}

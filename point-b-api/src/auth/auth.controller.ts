@@ -2,7 +2,7 @@ import { Body, Controller, Get, HttpCode, Param, Patch, Post } from '@nestjs/com
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { AuthUser, CurrentUser, Public, Roles, Staff } from '../common/auth';
-import { ChangePasswordDto, DisableTwoFactorDto, ForgotPasswordDto, LoginCodeDto, LoginDto, RegisterDto, ResetPasswordDto, TwoFactorCodeDto, UpdateContactDto } from './auth.dto';
+import { ChangePasswordDto, DisableTwoFactorDto, ForgotPasswordDto, LoginCodeDto, LoginDto, RegisterDto, ResendEmailCodeDto, ResetPasswordDto, UpdateAccountDto, VerifyEmailDto, TwoFactorCodeDto, UpdateContactDto } from './auth.dto';
 import { AuthService } from './auth.service';
 
 @ApiTags('auth')
@@ -37,6 +37,9 @@ export class AuthController {
   @Post('reset-password') reset(@Body() dto: ResetPasswordDto) { return this.auth.resetPassword(dto); }
 
   @ApiBearerAuth() @Get('me') me(@CurrentUser() u: AuthUser) { return this.auth.me(u.id); }
+  @ApiBearerAuth() @Patch('me') updateAccount(@CurrentUser() u: AuthUser, @Body() dto: UpdateAccountDto) { return this.auth.updateAccount(u.id, u.role, dto); }
+  @ApiBearerAuth() @Throttle({ default: { limit: 10, ttl: 300_000 } }) @HttpCode(200) @Post('verify-email') verifyEmail(@CurrentUser() u: AuthUser, @Body() dto: VerifyEmailDto) { return this.auth.verifyEmail(u.id, dto.code); }
+  @ApiBearerAuth() @Throttle({ default: { limit: 5, ttl: 600_000 } }) @HttpCode(200) @Post('verify-email/resend') resendEmailCode(@CurrentUser() u: AuthUser, @Body() dto: ResendEmailCodeDto) { return this.auth.resendEmailCode(u.id, dto.email); }
   @ApiBearerAuth() @Patch('me/contact') contact(@CurrentUser() u: AuthUser, @Body() dto: UpdateContactDto) { return this.auth.updateContact(u.id, dto); }
 
   @ApiBearerAuth() @Post('change-password')

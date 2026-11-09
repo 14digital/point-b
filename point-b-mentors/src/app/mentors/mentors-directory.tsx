@@ -2,7 +2,7 @@
 
 import { useDeferredValue, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Alert, Container, EmptyState, Skeleton } from "@/components/ui";
+import { Alert, Button, Container, EmptyState, Skeleton } from "@/components/ui";
 import { MentorCard } from "@/components/mentor-card";
 import { MatchTeaser } from "@/components/match-teaser";
 import { track } from "@/lib/track";
@@ -11,6 +11,8 @@ import { LEVEL_LABEL } from "@/lib/constants";
 import type { Category, Level, MentorSummary } from "@/lib/types";
 
 interface Facets { expertise: string[]; industries: string[]; languages: string[] }
+
+const PAGE_SIZE = 24;
 
 export function MentorsDirectory() {
   const sp = useSearchParams();
@@ -29,6 +31,13 @@ export function MentorsDirectory() {
   if (language) params.set("language", language);
   if (q.trim()) params.set("q", q.trim());
   params.set("sort", sort);
+  // Any change of filter or sort goes back to the first page.
+  const filterKey = params.toString();
+  const [paging, setPaging] = useState({ key: filterKey, page: 1 });
+  const page = paging.key === filterKey ? paging.page : 1;
+  params.set("page", String(page));
+  params.set("limit", String(PAGE_SIZE));
+  const goToPage = (n: number) => { setPaging({ key: filterKey, page: n }); document.getElementById("mentor-results")?.scrollIntoView({ behavior: "smooth", block: "start" }); };
 
   const facets = useApi<Facets>("/mentors/facets");
   const res = useApi<{ total: number; items: MentorSummary[] }>(`/mentors?${params}`);
@@ -40,6 +49,7 @@ export function MentorsDirectory() {
     return () => clearTimeout(t);
   }, [query]);
 
+  const pages = Math.ceil((res.data?.total ?? 0) / PAGE_SIZE);
   const clear = () => { setCategory(""); setExpertise(""); setLevel(""); setLanguage(""); setQuery(""); };
   const active = !!(category || expertise || level || language || query);
 
@@ -96,7 +106,7 @@ export function MentorsDirectory() {
           {active && <button onClick={clear} className="text-sm text-ink-soft underline underline-offset-4 hover:text-ink">Clear all filters</button>}
         </aside>
 
-        <div>
+        <div id="mentor-results" className="scroll-mt-24">
           <div className="mb-4 flex items-center justify-between gap-3">
             <p className="text-sm text-ink-soft" aria-live="polite">
               {res.loading ? "Loading mentors…" : `${res.data?.total ?? 0} mentor${res.data?.total === 1 ? "" : "s"}`}
@@ -115,6 +125,13 @@ export function MentorsDirectory() {
             <EmptyState title="No mentors match these filters" description="Try another expertise area, or clear a filter to see more mentors." />
           ) : (
             <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">{res.data?.items.map((m) => <MentorCard key={m.id} mentor={m} />)}</div>
+          )}
+          {pages > 1 && (
+            <nav className="mt-8 flex items-center justify-between gap-3" aria-label="Mentor pages">
+              <Button variant="secondary" size="sm" disabled={page <= 1 || res.loading} onClick={() => goToPage(page - 1)}>Previous</Button>
+              <p className="text-sm text-ink-soft tabular-nums">Page {page} of {pages}</p>
+              <Button variant="secondary" size="sm" disabled={page >= pages || res.loading} onClick={() => goToPage(page + 1)}>Next</Button>
+            </nav>
           )}
         </div>
       </div>

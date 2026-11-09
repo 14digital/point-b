@@ -8,13 +8,16 @@ import { HOME_BY_ROLE, TwoStepRequired, useAuth } from "@/lib/auth";
 import { errMsg } from "@/lib/api";
 import { MobileField } from "@/components/mobile-field";
 import { isValidPhone, type CountryCode } from "@/components/phone-input";
+import type { Role } from "@/lib/types";
 import { NoticeText } from "@/lib/policy";
+import { VerifyEmail } from "@/components/verify-email";
 
 const age = (dob: string) => (Date.now() - new Date(dob).getTime()) / (365.25 * 86400_000);
 
 export function SignInForm() {
   const { login, register, loginWithCode } = useAuth();
   const [twoStep, setTwoStep] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
   const [code, setCode] = useState("");
   const router = useRouter();
   // A link with a tab or request in it (e.g. from an email) loads in full, so the dashboard reads it from the address.
@@ -31,6 +34,11 @@ export function SignInForm() {
   const set = (k: keyof typeof f, v: string) => setF((s) => ({ ...s, [k]: v }));
   const isMinor = !!f.dob && age(f.dob) < 18;
 
+  const finish = (role: Role) => {
+    const next = params.get("next");
+    go(next && next.startsWith("/") && !next.startsWith("//") ? next : HOME_BY_ROLE[role]);
+  };
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (mode === "up" && !isValidPhone(f.phone)) { setPhoneError(f.phone ? "That number doesn't look right. Check the country code and digits." : "Please add your mobile number."); document.getElementById("mobile")?.focus(); return; }
@@ -44,8 +52,8 @@ export function SignInForm() {
             ...(isMinor ? { guardianEmail: f.guardianEmail } : {}),
             timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
           });
-      const next = params.get("next");
-      go(next && next.startsWith("/") && !next.startsWith("//") ? next : HOME_BY_ROLE[user.role]);
+      if (user.emailVerified === false) { setConfirming(true); setBusy(false); return; }
+      finish(user.role);
     } catch (err) {
       if (err instanceof TwoStepRequired) { setTwoStep(err.mfaToken); setBusy(false); return; }
       setError(errMsg(err)); setBusy(false);
@@ -87,7 +95,7 @@ export function SignInForm() {
               {[
                 ["Screened, interviewed mentors", "Every profile is reviewed by our team before it goes live."],
                 ["Book straight into their calendar", "Private 1:1 calls or smaller-price group sessions."],
-                ["Free rescheduling", "Move your session up to {notice} before it starts."],
+                ["Flexible if plans change", "Cancel for a full refund, or move your session, up to {notice} before it starts."],
               ].map(([t, d]) => (
                 <li key={t} className="flex gap-3">
                   <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/10">
@@ -110,6 +118,13 @@ export function SignInForm() {
           {/* Form */}
           <div className="animate-rise flex flex-col justify-center" style={{ ["--rise-delay" as string]: "100ms" }}>
             <div className="rounded-[2rem] bg-white p-6 shadow-[0_30px_80px_-45px_rgba(17,17,17,0.35)] ring-1 ring-ink/5 sm:p-9">
+              {confirming ? (
+                <>
+                  <p className="text-sm font-medium text-brass-dark">One last step</p>
+                  <h2 className="mt-2 mb-5 font-display text-4xl leading-tight text-ink">Confirm your <Mark color="mint">email</Mark></h2>
+                  <VerifyEmail onDone={() => finish("STUDENT")} />
+                </>
+              ) : (<>
               <p className="text-sm font-medium text-brass-dark">{signingIn ? "Welcome back" : "Join POINT B"}</p>
               <h2 className="mt-2 font-display text-4xl leading-tight text-ink">{signingIn ? <>Sign in to <Mark color="sky">continue</Mark></> : <>Create your <Mark color="mint">account</Mark></>}</h2>
               <p className="mt-2 text-sm leading-relaxed text-ink-soft">
@@ -193,11 +208,12 @@ export function SignInForm() {
                   <Link className="underline underline-offset-2 hover:text-ink" href="/legal?tab=privacy">privacy policy</Link>.
                 </p>
               )}
+              </>)}
             </div>
-            <p className="mt-6 text-center text-sm text-ink-soft">
+            {!confirming && <p className="mt-6 text-center text-sm text-ink-soft">
               {signingIn ? <>New to POINT B? <button type="button" onClick={() => { setMode("up"); setError(null); }} className="font-medium text-ink underline underline-offset-4">Create a free account</button></>
                 : <>Already have an account? <button type="button" onClick={() => { setMode("in"); setError(null); }} className="font-medium text-ink underline underline-offset-4">Sign in</button></>}
-            </p>
+            </p>}
           </div>
         </div>
       </Container>

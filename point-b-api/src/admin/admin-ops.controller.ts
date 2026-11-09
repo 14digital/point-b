@@ -1,7 +1,8 @@
 import { BadRequestException, Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { IsBoolean, IsEmail, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
+import { IsBoolean, IsEmail, IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
+import { PHOTO_IMAGE, PHOTO_IMAGE_MAX_LENGTH, PHOTO_IMAGE_MESSAGE } from '../mentors/mentor-photo';
 import { AuthUser, CurrentUser, Roles, Staff, STAFF_ROLES, StaffRole } from '../common/auth';
 import { AdminOpsService, SUPPORT_STATUSES } from './admin-ops.service';
 import { ExportsService } from './exports.service';
@@ -21,7 +22,7 @@ class MentorProfileDto {
   @IsOptional() @IsString() @MaxLength(120) organization?: string;
   @IsOptional() @IsString() @MaxLength(2000) introduction?: string;
   @IsOptional() @IsString() @MaxLength(4000) careerSummary?: string;
-  @IsOptional() @IsString() @MaxLength(500) photoUrl?: string;
+  @IsOptional() @IsString() @MaxLength(PHOTO_IMAGE_MAX_LENGTH) @Matches(PHOTO_IMAGE, { message: PHOTO_IMAGE_MESSAGE }) photoImage?: string;
   @IsOptional() @IsString() @MaxLength(300) linkedinUrl?: string;
   @IsOptional() @IsBoolean() verified?: boolean;
 }

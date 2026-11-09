@@ -7,6 +7,7 @@ import { emailDate, webUrl } from '../common/email-template';
 import { randomBytes } from 'crypto';
 import { BookingsService, sessionUrl } from '../bookings/bookings.service';
 import { CreatePromoDto, CreateSlotsDto, ListMentorsQuery, UpdateMentorProfileDto } from './mentors.dto';
+import { saveMentorPhoto } from './mentor-photo';
 
 export const SLOT_MINUTES = 30;
 /** Only approved feedback is public. Reviews from before moderation existed have no status and stay visible. */
@@ -105,8 +106,18 @@ export class MentorsService {
 
   async updateMe(userId: string, dto: UpdateMentorProfileDto) {
     const p = await this.mine(userId);
-    await this.prisma.mentorProfile.update({ where: { id: p.id }, data: dto });
+    const { photoImage, ...rest } = dto;
+    const photo = photoImage === undefined ? {} : { photoUrl: await saveMentorPhoto(this.prisma, p.id, photoImage) };
+    await this.prisma.mentorProfile.update({ where: { id: p.id }, data: { ...rest, ...photo } });
     return this.me(userId);
+  }
+
+  /** A mentor's uploaded headshot, as shown on their public card and profile. */
+  async photo(id: string) {
+    if (!/^[a-f0-9]{24}$/i.test(id)) throw new NotFoundException('Photo not found');
+    const row = await this.prisma.mentorImage.findUnique({ where: { mentorId: id } });
+    if (!row) throw new NotFoundException('Photo not found');
+    return Buffer.from(row.data);
   }
 
   async acceptAgreement(userId: string) {
@@ -139,6 +150,13 @@ export class MentorsService {
     const fresh = data.filter((d) => { const t = d.startAt.getTime(); if (taken.has(t) || seen.has(t)) return false; seen.add(t); return true; });
     const res = await this.prisma.availabilitySlot.createMany({ data: fresh });
     return { created: res.count };
+  }
+
+  /** Removes the given slots if they are still open and have never had a booking; anything booked is left alone. */
+  async removeSlots(userId: string, ids: string[]) {
+    const p = await this.mine(userId);
+    const res = await this.prisma.availabilitySlot.deleteMany({ where: { id: { in: ids }, mentorId: p.id, isBooked: false, seatsTaken: 0, bookings: { none: {} } } });
+    return { removed: res.count };
   }
 
   async removeSlot(userId: string, slotId: string) {

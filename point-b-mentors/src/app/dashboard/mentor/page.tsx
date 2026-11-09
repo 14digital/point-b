@@ -2,21 +2,22 @@
 
 import { useState } from "react";
 import { RequireRole } from "@/components/require-role";
-import { Alert, Badge, Button, Container, EmptyState, Field, Mark, Skeleton, Spinner } from "@/components/ui";
+import { Alert, Badge, Button, Container, EmptyState, Field, FilterChips, Mark, Skeleton, Spinner } from "@/components/ui";
 import { Stars } from "@/components/feedback";
 import { DashboardHero, DateTile, InterviewCard, Panel, StatTile, Tabs, greeting, relative } from "@/components/dashboard";
 import { MentorCard } from "@/components/mentor-card";
+import { PhotoUpload } from "@/components/photo-upload";
+import { Availability, type MySlot } from "@/components/mentor-availability";
 import { Reveal } from "@/components/motion";
 import { api, errMsg } from "@/lib/api";
 import { STATUS_LABEL } from "@/lib/constants";
-import { fmtDay, fmtDayShort, fmtTime, formatMoney, groupByDay, initials, localTz } from "@/lib/format";
+import { fmtDay, fmtDayShort, fmtTime, formatMoney, initials } from "@/lib/format";
 import { useUrlTab } from "@/lib/use-url-tab";
 import { MySupport } from "@/components/my-support";
 import { useApi, useNow } from "@/lib/use-api";
 import type { Booking, Interview, MentorSummary, MyReview } from "@/lib/types";
 import { PayoutDetailsForm, PayoutDetailsView, type PayoutDetails } from "@/components/admin-mentor-detail";
 
-interface MySlot { id: string; startAt: string; endAt: string; isBooked: boolean; kind: "ONE_TO_ONE" | "GROUP"; capacity: number; seatsTaken: number; bookings: { reference: string; status: string }[] }
 interface Earnings { totals: { currency: "PKR" | "GBP"; grossMinor: number; feeMinor: number; payoutMinor: number; sessions: number; repeatSessions: number }[]; tierPercent: number | null; repeatPercent: number; commissionConfigured: boolean }
 interface MyStudent { id: string; name: string; email: string; lastSessionAt: string; sessions: number }
 interface MyPromo { id: string; studentId: string; code: string; percentOff: number; note: string; createdAt: string; expiresAt: string; usedAt: string | null; studentName: string; state: "ACTIVE" | "USED" | "EXPIRED" | "REVOKED" }
@@ -62,10 +63,10 @@ function Dashboard() {
         actions={<>{p && p.status === "ACTIVE" && <Button href={`/mentors/${p.slug}`} variant="secondary">View public profile</Button>}<Button onClick={() => goTo("Availability")}>Add availability</Button></>}
       >
         <div className="mt-10 grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <StatTile label="Upcoming sessions" value={bookings.loading ? "–" : upcoming.length} tone="sky" />
-          <StatTile label="Needs your outcome" value={bookings.loading ? "–" : toClose.length} tone={toClose.length ? "lemon" : "white"} delay={60} />
-          <StatTile label="Open slots" value={slots.loading ? "–" : openSlots} tone="mint" delay={120} />
-          <StatTile label={earnings.data?.commissionConfigured ? "Your earnings" : "Booked value"} value={formatMoney((earnings.data?.commissionConfigured ? totals?.payoutMinor : totals?.grossMinor) ?? 0, currency)} tone="peach" delay={180}
+          <StatTile label="Upcoming sessions" value={bookings.loading ? "–" : upcoming.length} tone="sky" onClick={() => goTo("Sessions")} />
+          <StatTile label="Needs your outcome" value={bookings.loading ? "–" : toClose.length} tone={toClose.length ? "lemon" : "white"} delay={60} onClick={() => goTo("Sessions")} />
+          <StatTile label="Open slots" value={slots.loading ? "–" : openSlots} tone="mint" delay={120} onClick={() => goTo("Availability")} />
+          <StatTile label={earnings.data?.commissionConfigured ? "Your earnings" : "Booked value"} value={formatMoney((earnings.data?.commissionConfigured ? totals?.payoutMinor : totals?.grossMinor) ?? 0, currency)} tone="peach" delay={180} onClick={() => goTo("Payouts")}
             note={earnings.data?.commissionConfigured && earnings.data.tierPercent != null ? `After ${earnings.data.tierPercent}% platform fee, ${earnings.data.repeatPercent}% for returning students` : "Payout terms are confirmed by POINT B."} />
         </div>
       </DashboardHero>
@@ -254,13 +255,21 @@ function Feedback({ loading, items }: { loading: boolean; items: MyReview[] }) {
   );
 }
 
+const SHORT_LIST = 4;
+
 function Sessions({ loading, upcoming, toClose, history, now, reload }: { loading: boolean; upcoming: MyBooking[]; toClose: MyBooking[]; history: MyBooking[]; now: number; reload: () => Promise<void> }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [confirmingNoShow, setConfirmingNoShow] = useState<string | null>(null);
+  const [allToClose, setAllToClose] = useState(false);
+  const [allHistory, setAllHistory] = useState(false);
+  const closing = allToClose ? toClose : toClose.slice(0, SHORT_LIST);
+  const past = allHistory ? history : history.slice(0, SHORT_LIST);
+  const more = "mt-3 w-full rounded-full border border-line bg-white py-2.5 text-sm font-medium text-ink transition-colors hover:border-ink/30";
 
   async function act(ref: string, action: "complete" | "no-show") {
     setBusy(ref + action); setError(null);
-    try { await api(`/bookings/${ref}/${action}`, { body: {} }); await reload(); } catch (e) { setError(errMsg(e)); } finally { setBusy(null); }
+    try { await api(`/bookings/${ref}/${action}`, { body: {} }); setConfirmingNoShow(null); await reload(); } catch (e) { setError(errMsg(e)); } finally { setBusy(null); }
   }
 
   return (
@@ -272,11 +281,11 @@ function Sessions({ loading, upcoming, toClose, history, now, reload }: { loadin
           <h2 className="font-display text-3xl text-ink">Record the outcome</h2>
           <p className="mt-1 text-sm text-ink-soft">Marking a session completed emails the student a feedback request.</p>
           <div className="mt-5 space-y-3">
-            {toClose.map((b) => (
+            {closing.map((b) => (
               <div key={b.id} className="flex flex-wrap items-center justify-between gap-4 rounded-3xl border-l-4 border-brass bg-white p-5 ring-1 ring-line sm:p-6">
                 <div className="flex items-center gap-4">
                   <DateTile iso={b.startAt} />
-                  <StudentChip name={b.studentName} />
+                  <span className="hidden sm:block"><StudentChip name={b.studentName} /></span>
                   <div>
                     <p className="font-display text-xl text-ink">{b.studentName}</p>
                     <p className="text-sm text-ink-soft">{fmtTime(b.startAt)}–{fmtTime(b.endAt)} · {b.agenda}</p>
@@ -286,11 +295,21 @@ function Sessions({ loading, upcoming, toClose, history, now, reload }: { loadin
                 <div className="flex flex-wrap gap-2">
                   {b.meetingLink && new Date(b.endAt).getTime() + 3600_000 > now && <a href={b.meetingLink} target="_blank" rel="noreferrer" className="rounded-full bg-paper-dim px-4 py-2 text-sm font-medium text-ink hover:bg-line">Join call</a>}
                   <Button size="sm" disabled={!!busy} onClick={() => act(b.reference, "complete")}>{busy === b.reference + "complete" ? <Spinner /> : "Mark completed"}</Button>
-                  <Button size="sm" variant="danger" disabled={!!busy} onClick={() => act(b.reference, "no-show")}>Student no-show</Button>
+                  {b.hostStartedAt && <Button size="sm" variant="ghost" disabled={!!busy} onClick={() => setConfirmingNoShow(b.reference)}>Student didn&rsquo;t join</Button>}
                 </div>
+                {confirmingNoShow === b.reference && (
+                  <div className="flex w-full flex-wrap items-center justify-between gap-3 rounded-2xl bg-paper p-4">
+                    <p className="text-sm text-ink">Mark {b.studentName.split(" ")[0]} as a no-show? They won&rsquo;t get a refund, and this can&rsquo;t be undone.</p>
+                    <div className="flex gap-2">
+                      <Button size="sm" variant="ghost" disabled={!!busy} onClick={() => setConfirmingNoShow(null)}>Go back</Button>
+                      <Button size="sm" variant="danger" disabled={!!busy} onClick={() => act(b.reference, "no-show")}>{busy === b.reference + "no-show" ? <Spinner /> : "Mark as no-show"}</Button>
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
           </div>
+          {toClose.length > SHORT_LIST && <button type="button" onClick={() => setAllToClose(!allToClose)} className={more}>{allToClose ? "Show fewer" : `Show all ${toClose.length}`}</button>}
         </section>
       )}
 
@@ -305,7 +324,7 @@ function Sessions({ loading, upcoming, toClose, history, now, reload }: { loadin
                 <div className="flex flex-wrap items-center justify-between gap-4">
                   <div className="flex min-w-0 items-center gap-4">
                     <DateTile iso={b.startAt} />
-                    <StudentChip name={b.studentName} />
+                    <span className="hidden sm:block"><StudentChip name={b.studentName} /></span>
                     <div className="min-w-0">
                       <p className="font-display text-xl text-ink">{b.studentName}</p>
                       <p className="text-sm text-ink-soft">{fmtTime(b.startAt)}–{fmtTime(b.endAt)} · {relative(b.startAt, now)}</p>
@@ -334,7 +353,7 @@ function Sessions({ loading, upcoming, toClose, history, now, reload }: { loadin
         <section>
           <h2 className="font-display text-3xl text-ink">History</h2>
           <div className="mt-5 overflow-hidden rounded-3xl bg-white ring-1 ring-line">
-            {history.map((b, i) => (
+            {past.map((b, i) => (
               <div key={b.id} className={`flex flex-wrap items-center justify-between gap-3 px-5 py-4 text-sm sm:px-6 ${i ? "border-t border-line" : ""}`}>
                 <div className="flex min-w-0 items-center gap-3">
                   <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-paper-dim text-xs text-ink">{initials(b.studentName)}</span>
@@ -347,109 +366,18 @@ function Sessions({ loading, upcoming, toClose, history, now, reload }: { loadin
               </div>
             ))}
           </div>
+          {history.length > SHORT_LIST && <button type="button" onClick={() => setAllHistory(!allHistory)} className={more}>{allHistory ? "Show fewer" : `Show all ${history.length}`}</button>}
         </section>
       )}
     </div>
   );
 }
 
-const TIMES = Array.from({ length: 34 }, (_, i) => ({ h: 6 + Math.floor(i / 2), m: (i % 2) * 30 }));
-
-function Availability({ slots, loading, reload }: { slots: MySlot[] | null; loading: boolean; reload: () => void }) {
-  const [date, setDate] = useState("");
-  const [picked, setPicked] = useState<string[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [ok, setOk] = useState<string | null>(null);
-  const [kind, setKind] = useState<"ONE_TO_ONE" | "GROUP">("ONE_TO_ONE");
-  const [capacity, setCapacity] = useState(4);
-  const today = new Date().toISOString().slice(0, 10);
-
-  const toISO = (t: string) => { const [h, m] = t.split(":").map(Number); const [y, mo, d] = date.split("-").map(Number); return new Date(y, mo - 1, d, h, m).toISOString(); };
-
-  async function add() {
-    setBusy(true); setError(null); setOk(null);
-    try {
-      const r = await api<{ created: number }>("/mentors/me/slots", { body: { startTimes: picked.map(toISO), kind, ...(kind === "GROUP" ? { capacity } : {}) } });
-      setOk(`${r.created} slot${r.created === 1 ? "" : "s"} published.`); setPicked([]); reload();
-    } catch (e) { setError(errMsg(e)); } finally { setBusy(false); }
-  }
-  async function remove(id: string) {
-    try { await api(`/mentors/me/slots/${id}`, { method: "DELETE" }); reload(); } catch (e) { setError(errMsg(e)); }
-  }
-
-  const grouped = groupByDay((slots ?? []).map((s) => ({ id: s.id, startAt: s.startAt, endAt: s.endAt })));
-  const byId = new Map((slots ?? []).map((s) => [s.id, s]));
-
-  return (
-    <div className="grid gap-8 lg:grid-cols-[380px_1fr]">
-      <Panel title="Add availability" className="lg:sticky lg:top-24 lg:self-start">
-        <p className="-mt-3 mb-5 text-xs text-ink-soft">Times are in your timezone ({localTz()}). Each slot is 30 minutes.</p>
-        <div className="grid grid-cols-2 gap-2">
-          {([["ONE_TO_ONE", "1:1 session", "Private, full price"], ["GROUP", "Group session", "Lower price per student"]] as const).map(([k, label, hint]) => (
-            <button key={k} type="button" aria-pressed={kind === k} onClick={() => setKind(k)} className={`rounded-2xl px-4 py-3 text-left text-xs transition-colors ${kind === k ? "bg-ink text-white" : "bg-paper-dim text-ink hover:bg-line"}`}>
-              <span className="block text-sm font-medium">{label}</span><span className={kind === k ? "text-white/70" : "text-ink-soft"}>{hint}</span>
-            </button>
-          ))}
-        </div>
-        {kind === "GROUP" && <div className="mt-4"><Field label="Seats per group session" hint="2 to 10 students"><input type="number" className="input" min={2} max={10} value={capacity} onChange={(e) => setCapacity(Math.min(10, Math.max(2, Number(e.target.value) || 2)))} /></Field></div>}
-        <div className="mt-4"><Field label="Date"><input type="date" className="input" min={today} value={date} onChange={(e) => { setDate(e.target.value); setPicked([]); }} /></Field></div>
-        {date && (
-          <div className="mt-4 grid grid-cols-4 gap-1.5">
-            {TIMES.map(({ h, m }) => {
-              const t = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
-              const on = picked.includes(t);
-              return <button key={t} type="button" aria-pressed={on} onClick={() => setPicked((s) => on ? s.filter((x) => x !== t) : [...s, t])} className={`rounded-full py-1.5 text-xs transition-colors ${on ? "bg-ink text-white" : "bg-paper-dim text-ink hover:bg-line"}`}>{t}</button>;
-            })}
-          </div>
-        )}
-        {error && <div className="mt-4"><Alert>{error}</Alert></div>}
-        {ok && <div className="mt-4"><Alert tone="success">{ok}</Alert></div>}
-        <Button className="mt-5 w-full" disabled={busy || picked.length === 0} onClick={add}>{busy ? <Spinner /> : `Publish ${picked.length || ""} slot${picked.length === 1 ? "" : "s"}`}</Button>
-      </Panel>
-
-      <div>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="font-display text-3xl text-ink">Your upcoming slots</h2>
-          <div className="flex flex-wrap gap-3 text-xs text-ink-soft">
-            <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-paper-dim ring-1 ring-line" />Open</span>
-            <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-lemon" />Some seats taken</span>
-            <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-mint" />Booked</span>
-          </div>
-        </div>
-        {loading ? <Skeleton className="mt-5 h-40 rounded-3xl" /> : grouped.length === 0 ? (
-          <div className="mt-5"><EmptyState title="No slots published" description="Students can only book times you publish here." /></div>
-        ) : (
-          <div className="mt-5 space-y-3">
-            {grouped.map((g) => (
-              <div key={g.key} className="flex gap-4 rounded-3xl bg-white p-4 ring-1 ring-line sm:p-5">
-                <DateTile iso={g.iso} />
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-ink">{fmtDay(g.iso)}</p>
-                  <div className="mt-2.5 flex flex-wrap gap-2">
-                    {g.slots.map((s) => {
-                      const full = byId.get(s.id)!;
-                      const label = full.kind === "GROUP" ? ` · group ${full.seatsTaken}/${full.capacity}` : "";
-                      return full.isBooked
-                        ? <span key={s.id} className="rounded-full bg-mint px-3 py-1.5 text-xs text-forest" title="Fully booked">{fmtTime(s.startAt)}{label || " · booked"}</span>
-                        : full.seatsTaken > 0
-                        ? <span key={s.id} className="rounded-full bg-lemon px-3 py-1.5 text-xs text-ink" title="Has bookings">{fmtTime(s.startAt)}{label}</span>
-                        : <button key={s.id} onClick={() => remove(s.id)} className="group rounded-full bg-paper-dim px-3 py-1.5 text-xs text-ink transition-colors hover:bg-rust-pale hover:text-rust" title="Remove slot">{fmtTime(s.startAt)}{label} <span className="ml-1 opacity-40 group-hover:opacity-100">×</span></button>;
-                    })}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function ProfileEditor({ p, onSaved }: { p: Profile; onSaved: () => void }) {
+function ProfileEditor({ p, onSaved }: { p: Profile; onSaved: () => unknown }) {
   const lines = (a: string[]) => a.join("\n");
-  const [f, setF] = useState({ title: p.title, organization: p.organization, introduction: p.introduction, careerSummary: p.careerSummary, helpTopics: lines(p.helpTopics), outsideScope: lines(p.outsideScope), qualifications: lines(p.qualifications), achievements: lines(p.achievements), linkedinUrl: p.linkedinUrl ?? "", photoUrl: p.photoUrl ?? "" });
+  const [f, setF] = useState({ title: p.title, organization: p.organization, introduction: p.introduction, careerSummary: p.careerSummary, helpTopics: lines(p.helpTopics), outsideScope: lines(p.outsideScope), qualifications: lines(p.qualifications), achievements: lines(p.achievements), linkedinUrl: p.linkedinUrl ?? "" });
+  // undefined: unchanged. A data URL: a newly chosen photo. null: removed.
+  const [photo, setPhoto] = useState<string | null | undefined>(undefined);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ tone: "error" | "success"; text: string } | null>(null);
   const split = (s: string) => s.split("\n").map((x) => x.trim()).filter(Boolean);
@@ -458,13 +386,14 @@ function ProfileEditor({ p, onSaved }: { p: Profile; onSaved: () => void }) {
   async function save() {
     setBusy(true); setMsg(null);
     try {
-      await api("/mentors/me/profile", { method: "PATCH", body: { title: f.title, organization: f.organization, introduction: f.introduction, careerSummary: f.careerSummary, helpTopics: split(f.helpTopics), outsideScope: split(f.outsideScope), qualifications: split(f.qualifications), achievements: split(f.achievements), ...(f.linkedinUrl ? { linkedinUrl: f.linkedinUrl } : {}), ...(f.photoUrl ? { photoUrl: f.photoUrl } : {}) } });
-      setMsg({ tone: "success", text: "Profile saved." }); onSaved();
+      await api("/mentors/me/profile", { method: "PATCH", body: { title: f.title, organization: f.organization, introduction: f.introduction, careerSummary: f.careerSummary, helpTopics: split(f.helpTopics), outsideScope: split(f.outsideScope), qualifications: split(f.qualifications), achievements: split(f.achievements), ...(f.linkedinUrl ? { linkedinUrl: f.linkedinUrl } : {}), ...(photo === undefined ? {} : { photoImage: photo ?? "" }) } });
+      setMsg({ tone: "success", text: "Profile saved." }); await onSaved(); setPhoto(undefined);
     } catch (e) { setMsg({ tone: "error", text: errMsg(e) }); } finally { setBusy(false); }
   }
 
+  const photoSrc = photo === undefined ? p.photoUrl ?? null : photo;
   // Live preview of the card students see in search results.
-  const preview: MentorSummary = { ...p, title: f.title, organization: f.organization, photoUrl: f.photoUrl || null };
+  const preview: MentorSummary = { ...p, title: f.title, organization: f.organization, photoUrl: photoSrc };
 
   return (
     <div className="grid gap-8 lg:grid-cols-[1fr_340px]">
@@ -492,7 +421,10 @@ function ProfileEditor({ p, onSaved }: { p: Profile; onSaved: () => void }) {
         </Panel>
         <Panel title="Photo and links">
           <div className="space-y-5">
-            <Field label="Profile photo URL" hint="A public https link to a clear, recent headshot. Shown on your card and profile."><input className="input" type="url" placeholder="https://" value={f.photoUrl} onChange={(e) => set("photoUrl", e.target.value)} /></Field>
+            <div>
+              <p className="mb-2 text-sm font-medium text-ink">Profile photo</p>
+              <PhotoUpload name={p.name} src={photoSrc} onChange={setPhoto} hint="JPG, PNG or WebP. A clear, recent headshot, shown on your card and profile." />
+            </div>
             <Field label="LinkedIn URL"><input className="input" type="url" value={f.linkedinUrl} onChange={(e) => set("linkedinUrl", e.target.value)} /></Field>
           </div>
         </Panel>
@@ -515,6 +447,9 @@ interface MyPayouts {
   hasPayoutDetails: boolean;
 }
 
+const monthKey = (iso: string) => { const d = new Date(iso); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; };
+const monthLabel = (key: string, month: "short" | "long") => new Date(`${key}-15T12:00:00`).toLocaleDateString("en-GB", { month, year: "numeric" });
+
 /** The mentor's money: what they've earned, what we've paid and what's on its way, plus where to pay them. */
 function PayoutSettings() {
   const data = useApi<MyPayouts>("/mentors/me/payouts");
@@ -523,6 +458,7 @@ function PayoutSettings() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const [showAll, setShowAll] = useState(false);
+  const [picked, setPicked] = useState("all");
   if (saved.loading || data.loading) return <Skeleton className="h-64 rounded-3xl" />;
   const editing = draft ?? (saved.data ? null : { method: "bank" });
   const d = data.data;
@@ -531,12 +467,31 @@ function PayoutSettings() {
     try { saved.setData(await api<PayoutDetails>("/mentors/me/payout-details", { method: "PUT", body: editing })); setDraft(null); setMsg({ tone: "success", text: "Saved. We'll pay your earnings into this account." }); }
     catch (e) { setMsg({ tone: "error", text: errMsg(e) }); } finally { setBusy(false); }
   }
-  const sessions = showAll ? d?.sessions ?? [] : (d?.sessions ?? []).slice(0, 8);
+  const months = [...new Set((d?.sessions ?? []).map((s) => monthKey(s.startAt)))];
+  const month = months.includes(picked) ? picked : "all";
+  const inMonth = month === "all" ? "" : monthLabel(month, "long");
+  const monthSessions = (d?.sessions ?? []).filter((s) => month === "all" || monthKey(s.startAt) === month);
+  const payments = (d?.payouts ?? []).filter((p) => month === "all" || monthKey(p.createdAt) === month);
+  const earned = (l: typeof monthSessions) => l.reduce((n, s) => n + (s.earnMinor ?? 0), 0);
+  // All time uses the statement totals; a single month is added up from its sessions.
+  const totals: MyPayouts["totals"] = month === "all" ? d?.totals ?? [] : (["PKR", "GBP"] as const).flatMap((currency) => {
+    const mine = monthSessions.filter((s) => s.currency === currency);
+    if (!mine.length) return [];
+    const unpaid = earned(mine.filter((s) => !s.paidOn));
+    return [{ currency, earnedMinor: earned(mine), paidMinor: earned(mine) - unpaid, dueMinor: unpaid, forCancelledMinor: 0, sessions: mine.length }];
+  });
+  const sessions = showAll ? monthSessions : monthSessions.slice(0, 8);
   return (
     <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,24rem)]">
       <div className="min-w-0 space-y-6">
-        {!d?.totals.length ? <Panel title="Your earnings"><p className="text-sm text-ink-soft">Your earnings appear here after your first paid session.</p></Panel> : d.totals.map((t) => (
-          <Panel key={t.currency} title={t.currency === "PKR" ? "Earnings · PKR" : "Earnings · GBP"} action={<span className="text-sm text-ink-soft">{t.sessions} paid session{t.sessions === 1 ? "" : "s"}</span>}>
+        {months.length > 0 && (
+          <div>
+            <FilterChips options={[["all", "All time"], ...months.map((m) => [m, monthLabel(m, "short")] as const)]} value={month} onChange={(m) => { setPicked(m); setShowAll(false); }} label="Show earnings for" />
+            {inMonth && <p className="mt-2 text-xs text-ink-soft">Earnings count in the month the session takes place.</p>}
+          </div>
+        )}
+        {!totals.length ? <Panel title="Your earnings"><p className="text-sm text-ink-soft">Your earnings appear here after your first paid session.</p></Panel> : totals.map((t) => (
+          <Panel key={t.currency} title={`${inMonth || "Earnings"} · ${t.currency}`} action={<span className="text-sm text-ink-soft">{t.sessions} paid session{t.sessions === 1 ? "" : "s"}</span>}>
             <div className="grid gap-2 sm:grid-cols-3">
               {([["Earned", t.earnedMinor, "bg-paper"], ["Paid to you", t.paidMinor, "bg-mint/60"], ["On its way", t.dueMinor, t.dueMinor ? "bg-lemon/60" : "bg-paper"]] as const).map(([k, v, bg]) => (
                 <div key={k} className={`flex items-baseline justify-between gap-3 rounded-2xl px-4 py-3 sm:block ${bg}`}><p className="text-xs text-ink-soft">{k}</p><p className="whitespace-nowrap font-display text-2xl leading-tight text-ink tabular-nums sm:mt-1">{formatMoney(v, t.currency)}</p></div>
@@ -547,9 +502,9 @@ function PayoutSettings() {
           </Panel>
         ))}
 
-        {!!d?.payouts.length && (
-          <Panel title="Payments we've sent">
-            <ul className="divide-y divide-line">{d.payouts.map((p) => (
+        {!!payments.length && (
+          <Panel title={inMonth ? `Payments sent in ${inMonth}` : "Payments we've sent"}>
+            <ul className="divide-y divide-line">{payments.map((p) => (
               <li key={p.id} className="flex items-center justify-between gap-3 py-3 text-sm">
                 <span className="min-w-0"><span className="block text-ink">{fmtDay(p.createdAt)}</span><span className="block truncate text-xs text-ink-soft">{p.sessions} session{p.sessions === 1 ? "" : "s"}{p.reference ? ` · ref ${p.reference}` : ""}{p.note ? ` · ${p.note}` : ""}</span></span>
                 <span className="whitespace-nowrap font-medium tabular-nums text-ink">{formatMoney(p.amountMinor, p.currency)}</span>
@@ -558,15 +513,15 @@ function PayoutSettings() {
           </Panel>
         )}
 
-        {!!d?.sessions.length && (
-          <Panel title="Sessions">
+        {!!monthSessions.length && (
+          <Panel title={inMonth ? `Sessions in ${inMonth}` : "Sessions"}>
             <ul className="divide-y divide-line">{sessions.map((s) => (
               <li key={s.reference} className="flex items-center gap-3 py-3 text-sm">
                 <span className="min-w-0 flex-1"><span className="block truncate text-ink">{s.studentName}</span><span className="block text-xs text-ink-soft">{fmtDayShort(s.startAt)}, {fmtTime(s.startAt)} · <span className="whitespace-nowrap">{formatMoney(s.priceMinor, s.currency)}{s.percent != null ? ` − ${s.percent}%` : ""}</span></span></span>
                 <span className="text-right"><span className="block whitespace-nowrap font-medium tabular-nums text-ink">{s.earnMinor == null ? "—" : formatMoney(s.earnMinor, s.currency)}</span><span className={`block text-xs ${s.paidOn ? "text-forest" : "text-ink-soft"}`}>{s.paidOn ? `Paid ${fmtDayShort(s.paidOn)}` : "On its way"}</span></span>
               </li>
             ))}</ul>
-            {d.sessions.length > 8 && <button type="button" onClick={() => setShowAll(!showAll)} className="mt-3 text-sm font-medium text-ink underline-offset-4 hover:underline">{showAll ? "Show fewer" : `Show all ${d.sessions.length}`}</button>}
+            {monthSessions.length > 8 && <button type="button" onClick={() => setShowAll(!showAll)} className="mt-3 text-sm font-medium text-ink underline-offset-4 hover:underline">{showAll ? "Show fewer" : `Show all ${monthSessions.length}`}</button>}
           </Panel>
         )}
       </div>

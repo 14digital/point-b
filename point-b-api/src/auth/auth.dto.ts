@@ -44,3 +44,12 @@ export class ChangePasswordDto {
   @IsString() currentPassword: string;
   @IsString() @MinLength(8) @MaxLength(100) newPassword: string;
 }
+
+export class UpdateAccountDto {
+  @IsOptional() @IsString() @MinLength(2) @MaxLength(80) name?: string;
+  @IsOptional() @IsString() @MaxLength(64) timezone?: string;
+}
+
+export class VerifyEmailDto { @IsString() @MinLength(6) @MaxLength(6) code: string; }
+/** Send a new code; with an email, also corrects a mistyped address first. */
+export class ResendEmailCodeDto { @IsOptional() @IsEmail() email?: string; }

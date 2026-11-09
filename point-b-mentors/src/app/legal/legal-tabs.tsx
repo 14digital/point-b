@@ -12,7 +12,7 @@ const ic = (d: ReactNode) => <svg width="20" height="20" viewBox="0 0 24 24" fil
 const TABS = [
   { id: "terms", label: "Terms of Use", tone: "bg-sky", icon: ic(<><path d="M6 3h9l4 4v14H6z" /><path d="M10 11h6M10 15h6" /></>) },
   { id: "privacy", label: "Privacy Policy", tone: "bg-lilac", icon: ic(<><rect x="5" y="10" width="14" height="10" rx="2" /><path d="M8 10V7a4 4 0 018 0v3" /></>) },
-  { id: "refunds", label: "Rescheduling & Refunds", tone: "bg-mint", icon: ic(<><path d="M4 12a8 8 0 0114-5.3L20 9" /><path d="M20 4v5h-5" /><path d="M20 12a8 8 0 01-14 5.3L4 15" /><path d="M4 20v-5h5" /></>) },
+  { id: "refunds", label: "Cancellations & Refunds", tone: "bg-mint", icon: ic(<><path d="M4 12a8 8 0 0114-5.3L20 9" /><path d="M20 4v5h-5" /><path d="M20 12a8 8 0 01-14 5.3L4 15" /><path d="M4 20v-5h5" /></>) },
   { id: "safeguarding", label: "Safeguarding", tone: "bg-peach", icon: ic(<path d="M12 3l8 3v6c0 4.5-3.4 8-8 9-4.6-1-8-4.5-8-9V6l8-3z" />) },
 ] as const;
 
@@ -66,17 +66,21 @@ const CONTENT: Record<TabId, { title: string; summary: string; inShort: string[]
     ],
   },
   refunds: {
-    title: "Rescheduling & Refunds",
+    title: "Cancellations & Refunds",
     summary: "What happens if your plans change, or a session doesn\u2019t go as expected.",
-    inShort: ["Booked sessions can\u2019t be cancelled", "Reschedule free up to {notice} before; payment carries over", "If a mentor can\u2019t attend: a new time or a full refund"],
+    inShort: ["Cancel up to {notice} before for a full refund", "Or move your session for free in the same period", "After that, no refund. If your mentor doesn\u2019t join, report it and we\u2019ll review it for a full refund"],
     sections: [
       {
+        heading: "Cancelling a session",
+        body: "A student can cancel a confirmed session from their dashboard up to {notice} before it starts and receive a full refund to their POINT B balance, which can be used for any future session. Within {notice} of the start, a session can no longer be cancelled and no refund is given. This includes a session the student does not attend.",
+      },
+      {
         heading: "Rescheduling a session",
-        body: "Booked sessions cannot be cancelled. Instead, a student can move a confirmed session to another available time with the same mentor, free of charge, up to {notice} before it starts. The original payment carries over. Within {notice} of the start, the session can no longer be moved.",
+        body: "A student can move a confirmed session to another available time with the same mentor, free of charge, up to {notice} before it starts. The original payment carries over. Within {notice} of the start, the session can no longer be moved.",
       },
       {
         heading: "If a mentor can\u2019t attend",
-        body: "If a mentor cannot attend or does not join, our support team arranges a new time with the same or another mentor, or issues a full refund to the original payment method.",
+        body: "If a mentor does not join within 10 minutes of the start, the student can report it from the session page or their dashboard. The POINT B team checks what happened and, if it is confirmed, returns the full price to the student\u2019s POINT B balance, whatever the timing. Our support team can also help arrange a new time with the same or another mentor.",
       },
       {
         heading: "Disputed sessions",
@@ -160,9 +164,6 @@ export function LegalTabs() {
                 </li>
               ))}
             </ol>
-            <div className="mt-8 rounded-2xl bg-paper-dim/70 p-4 text-xs leading-relaxed text-ink-soft">
-              Draft policies for this prototype, to be reviewed by legal counsel before public launch.
-            </div>
           </aside>
 
           {/* Policy */}
@@ -216,7 +217,6 @@ export function LegalTabs() {
             <Circle />
           </Link>
         </Reveal>
-        <p className="mt-8 text-xs text-ink-soft lg:hidden">Draft policies for this prototype, to be reviewed by legal counsel before public launch.</p>
       </Container>
     </div>
   );

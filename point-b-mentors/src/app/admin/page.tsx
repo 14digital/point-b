@@ -729,7 +729,7 @@ function MentorRow({ m, tiers, onSaved, onOpen }: { m: AdminMentor; tiers: TierR
   );
 }
 
-type AdminBooking = Booking & { student: { name: string; email: string }; slot: { startAt: string }; mentor: { user: { name: string } }; payments: { status: string; provider: string; bankSubmittedAt: string | null; reviewNote: string | null }[] };
+type AdminBooking = Booking & { mentorReportStatus?: string | null; student: { name: string; email: string }; slot: { startAt: string }; mentor: { user: { name: string } }; payments: { status: string; provider: string; bankSubmittedAt: string | null; reviewNote: string | null }[] };
 
 /** "Card · Paid", "Bank · Rejected", "Bank · Checking" — how the student paid and where it stands. */
 function paymentLabel(b: AdminBooking) {
@@ -746,9 +746,11 @@ function Bookings() {
   const [status, setStatus] = useState("");
   const [open, setOpen] = useState<string | null>(null);
   const { data, loading, error, reload } = useApi<AdminBooking[]>(`/admin/bookings${status ? `?status=${status}` : ""}`);
+  const reported = useApi<AdminBooking[]>("/admin/bookings?status=REPORTED");
+  const changed = () => { reload(); reported.reload(); };
   return (
     <Panel title="Bookings" action={data ? <span className="text-sm text-ink-soft">{data.length} shown</span> : undefined}>
-      <FilterChips className="mb-4" options={["", "PENDING_PAYMENT", "CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW"].map((k) => [k, k ? STATUS_LABEL[k] : "All"] as const)} value={status} onChange={setStatus} label="Filter bookings" />
+      <FilterChips className="mb-4" options={[...["", "PENDING_PAYMENT", "CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW"].map((k) => [k, k ? STATUS_LABEL[k] : "All"] as const), ["REPORTED", "Mentor reports"] as const]} value={status} onChange={setStatus} counts={reported.data?.length ? { REPORTED: reported.data.length } : {}} highlight="REPORTED" label="Filter bookings" />
       {error && <Alert>{error}</Alert>}
       {loading ? <Skeleton className="h-48" /> : !data?.length ? <EmptyState title="No bookings" description="Bookings appear here as students book sessions." /> : (
         <div className="-mx-6 overflow-x-auto sm:-mx-7">
@@ -766,6 +768,7 @@ function Bookings() {
                   <td className="whitespace-nowrap px-4 py-3.5 text-xs text-ink-soft">{paymentLabel(b)}</td>
                   <td className="py-3.5 pl-4 pr-6 sm:pr-7">
                     <Badge tone={b.awaitingVerification ? "brass" : TONE[b.status]}>{b.awaitingVerification ? "Checking payment" : STATUS_LABEL[b.status]}</Badge>
+                    {b.mentorReportStatus === "PENDING" && <p className="mt-1.5"><Badge tone="brass">Needs review</Badge></p>}
                     {why && <p className="mt-1.5 line-clamp-2 max-w-[15rem] text-xs text-rust" title={why}>{why}</p>}
                   </td>
                 </tr>
@@ -774,7 +777,7 @@ function Bookings() {
           </table>
         </div>
       )}
-      {open && <BookingDetailModal reference={open} onClose={() => setOpen(null)} onChanged={reload} />}
+      {open && <BookingDetailModal reference={open} onClose={() => setOpen(null)} onChanged={changed} />}
     </Panel>
   );
 }
@@ -788,7 +791,7 @@ const COMMISSION = [
 
 const SETTING_NAMES: Record<string, string> = {
   commission_professional: "Professional commission", commission_senior_specialist: "Senior Specialist commission", commission_executive: "Executive commission",
-  repeat_commission_percent: "Returning student commission", reschedule_notice_hours: "Rescheduling notice", group_price_percent: "Group seat price",
+  repeat_commission_percent: "Returning student commission", reschedule_notice_hours: "Cancellation and rescheduling deadline", group_price_percent: "Group seat price",
 };
 
 function SettingsTab({ role }: { role: "OWNER" | "OPERATIONS" | "FINANCE" }) {
@@ -923,7 +926,7 @@ function PricingSettings() {
 
       <SettingsSection title="Booking rules" text="Platform-wide rules. Changes apply to new bookings straight away.">
         <div className="grid gap-4 sm:grid-cols-2">
-          {([["reschedule_notice_hours", "Rescheduling notice", "How long before a session a student can still move it. Default is 48 hours (2 days).", "hours", undefined], ["group_price_percent", "Group seat price", "Each group seat as a share of the mentor's 1:1 price. Default is 40%.", "%", 100]] as const).map(([k, label, hint, unit, max]) => (
+          {([["reschedule_notice_hours", "Cancellation and rescheduling deadline", "How long before a session a student can still cancel for a full refund or move it. After this there is no refund. Default is 48 hours (2 days).", "hours", undefined], ["group_price_percent", "Group seat price", "Each group seat as a share of the mentor's 1:1 price. Default is 40%.", "%", 100]] as const).map(([k, label, hint, unit, max]) => (
             <div key={k} className="flex flex-col rounded-3xl bg-white p-5 ring-1 ring-line sm:p-6">
               <p className="font-display text-2xl leading-tight text-ink">{label}</p>
               <p className="mb-4 mt-1.5 text-xs leading-relaxed text-ink-soft">{hint}</p>

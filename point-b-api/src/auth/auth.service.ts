@@ -5,12 +5,16 @@ import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../common/notifications.service';
 import { webUrl } from '../common/email-template';
 import { PasswordLinksService } from '../common/password-links.service';
-import { ChangePasswordDto, DisableTwoFactorDto, LoginCodeDto, LoginDto, RegisterDto, ResetPasswordDto, UpdateContactDto } from './auth.dto';
+import { createHash, randomInt, timingSafeEqual } from 'crypto';
+import { ChangePasswordDto, DisableTwoFactorDto, LoginCodeDto, LoginDto, RegisterDto, ResetPasswordDto, UpdateAccountDto, UpdateContactDto } from './auth.dto';
 import { hashRecovery, newRecoveryCodes, newTotpSecret, otpauthUrl, verifyTotp } from '../common/totp';
 import { normalisePhone } from '../common/phone';
 import { ActivityService } from '../activity/activity.service';
 
 const RESET_LINK_HOURS = 1;
+const EMAIL_CODE_MINUTES = 30;
+const EMAIL_CODE_TRIES = 5;
+const EMAIL_CODE_RESEND_SECONDS = 30;
 
 const ageOn = (dob: Date) => Math.floor((Date.now() - dob.getTime()) / (365.25 * 24 * 3600 * 1000));
 
@@ -41,14 +45,16 @@ export class AuthService {
   /** Sets the new password and signs the user straight in. */
   async resetPassword(dto: ResetPasswordDto) {
     const user = await this.links.consume(dto.token, await bcrypt.hash(dto.password, 12));
+    // The link went to their inbox, so this also proves they own the address.
     const fresh = await this.prisma.user.findUniqueOrThrow({ where: { id: user.id } });
-    return this.session(fresh);
+    if (fresh.emailVerified === false) await this.prisma.user.update({ where: { id: user.id }, data: { emailVerified: true, emailCodeHash: null, emailCodeExpiresAt: null } });
+    return this.session({ ...fresh, emailVerified: true });
   }
 
-  private publicUser(u: { id: string; email: string; name: string; role: string; timezone: string; dateOfBirth: Date | null; guardianConsent: boolean; phone: string | null; whatsappAlerts: boolean; staffRole?: string | null; totpEnabledAt?: Date | null }) {
+  private publicUser(u: { id: string; email: string; name: string; role: string; timezone: string; dateOfBirth: Date | null; guardianConsent: boolean; phone: string | null; whatsappAlerts: boolean; staffRole?: string | null; totpEnabledAt?: Date | null; emailVerified?: boolean | null }) {
     const isMinor = u.dateOfBirth ? ageOn(u.dateOfBirth) < 18 : false;
     const staff = u.role === 'ADMIN' ? { staffRole: u.staffRole ?? 'OWNER', twoFactorEnabled: !!u.totpEnabledAt } : {};
-    return { id: u.id, email: u.email, name: u.name, role: u.role, timezone: u.timezone, isMinor, guardianConsent: u.guardianConsent, phone: u.phone, whatsappAlerts: u.whatsappAlerts, ...staff };
+    return { id: u.id, email: u.email, name: u.name, role: u.role, timezone: u.timezone, isMinor, guardianConsent: u.guardianConsent, phone: u.phone, whatsappAlerts: u.whatsappAlerts, emailVerified: u.emailVerified !== false, ...staff };
   }
 
   private async session(user: Parameters<AuthService['publicUser']>[0]) {
@@ -81,9 +87,10 @@ export class AuthService {
         timezone: dto.timezone ?? 'Asia/Karachi',
         phone: normalisePhone(dto.phone),
         whatsappAlerts: dto.whatsappAlerts ?? true,
+        emailVerified: false,
       },
     });
-    await this.notify.send(email, 'Welcome to POINT B Mentors', `Hi ${user.name.split(' ')[0]},\n\nWelcome to POINT B Mentors. Your account is ready.\n\nBrowse mentors who have been where you want to go, pick a time that suits you, and book a private 30-minute conversation. Choose a 1:1 session, or a group session at a lower price per person.`, user.id, { cta: { label: 'Find a mentor', url: `${webUrl()}/mentors` }, whatsapp: false });
+    await this.sendEmailCode(user);
     if (dateOfBirth && user.guardianEmail && ageOn(dateOfBirth) < 18) {
       await this.notify.send(
         user.guardianEmail,
@@ -189,7 +196,57 @@ export class AuthService {
     if (!(await bcrypt.compare(dto.currentPassword, user.passwordHash))) {
       throw new UnauthorizedException('Current password is incorrect');
     }
-    await this.prisma.user.update({ where: { id }, data: { passwordHash: await bcrypt.hash(dto.newPassword, 12) } });
-    return { ok: true };
+    // Signs out every other device; this one gets a fresh session.
+    const updated = await this.prisma.user.update({ where: { id }, data: { passwordHash: await bcrypt.hash(dto.newPassword, 12), passwordChangedAt: new Date() } });
+    return this.session(updated);
+  }
+
+  /** Name and timezone. A mentor's name is on their approved public profile, so the POINT B team changes it. */
+  async updateAccount(id: string, role: string, dto: UpdateAccountDto) {
+    if (dto.name !== undefined && role === 'MENTOR') throw new BadRequestException('Please contact support to change the name on your mentor profile.');
+    if (dto.timezone !== undefined) {
+      try { new Intl.DateTimeFormat('en-GB', { timeZone: dto.timezone }); } catch { throw new BadRequestException('Please choose a timezone from the list.'); }
+    }
+    await this.prisma.user.update({ where: { id }, data: { ...(dto.name !== undefined ? { name: dto.name.trim() } : {}), ...(dto.timezone !== undefined ? { timezone: dto.timezone } : {}) } });
+    return this.me(id);
+  }
+
+  private hashEmailCode = (id: string, code: string) => createHash('sha256').update(`${id}:${code}`).digest('hex');
+
+  /** Emails a fresh 6-digit code. Only its hash is stored, and it is left out of the in-app inbox on purpose. */
+  private async sendEmailCode(user: { id: string; email: string; name: string }) {
+    const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
+    const now = Date.now();
+    await this.prisma.user.update({ where: { id: user.id }, data: { emailCodeHash: this.hashEmailCode(user.id, code), emailCodeExpiresAt: new Date(now + EMAIL_CODE_MINUTES * 60_000), emailCodeSentAt: new Date(now), emailCodeAttempts: 0 } });
+    await this.notify.send(user.email, 'Confirm your email for POINT B Mentors', `Hi ${user.name.split(' ')[0]},\n\nYour confirmation code is ${code}\n\nEnter it on POINT B Mentors to confirm your email address. It expires in ${EMAIL_CODE_MINUTES} minutes. If you didn't create an account, you can ignore this email.`, undefined, { emailOnly: true, storedBody: 'Email confirmation code sent.' });
+  }
+
+  async resendEmailCode(id: string, rawEmail?: string) {
+    const user = await this.prisma.user.findUniqueOrThrow({ where: { id } });
+    if (user.emailVerified !== false) return this.me(id);
+    if (user.emailCodeSentAt && Date.now() - user.emailCodeSentAt.getTime() < EMAIL_CODE_RESEND_SECONDS * 1000) throw new BadRequestException('Please wait a few seconds before asking for another code.');
+    const email = rawEmail?.toLowerCase();
+    if (email && email !== user.email) {
+      if (await this.prisma.user.findUnique({ where: { email } })) throw new ConflictException('An account with this email already exists');
+      await this.prisma.user.update({ where: { id }, data: { email } });
+    }
+    await this.sendEmailCode({ ...user, email: email ?? user.email });
+    return this.me(id);
+  }
+
+  async verifyEmail(id: string, code: string) {
+    const user = await this.prisma.user.findUniqueOrThrow({ where: { id } });
+    if (user.emailVerified !== false) return this.me(id);
+    if (!user.emailCodeHash || !user.emailCodeExpiresAt || user.emailCodeExpiresAt.getTime() < Date.now() || (user.emailCodeAttempts ?? 0) >= EMAIL_CODE_TRIES) {
+      throw new BadRequestException('That code has expired. Please send yourself a new one.');
+    }
+    const given = Buffer.from(this.hashEmailCode(id, code));
+    if (!timingSafeEqual(given, Buffer.from(user.emailCodeHash))) {
+      await this.prisma.user.update({ where: { id }, data: { emailCodeAttempts: { increment: 1 } } });
+      throw new BadRequestException('That code is not right. Please check your email and try again.');
+    }
+    await this.prisma.user.update({ where: { id }, data: { emailVerified: true, emailCodeHash: null, emailCodeExpiresAt: null, emailCodeAttempts: null } });
+    await this.notify.send(user.email, 'Welcome to POINT B Mentors', `Hi ${user.name.split(' ')[0]},\n\nWelcome to POINT B Mentors. Your account is ready.\n\nBrowse mentors who have been where you want to go, pick a time that suits you, and book a private 30-minute conversation. Choose a 1:1 session, or a group session at a lower price per person.`, user.id, { cta: { label: 'Find a mentor', url: `${webUrl()}/mentors` }, whatsapp: false });
+    return this.me(id);
   }
 }

@@ -62,14 +62,15 @@ export function Nav() {
         <div className="hidden flex-1 justify-center lg:flex">{!isMentor && <HeaderSearch light={overlay} />}</div>
 
         <div className="ml-auto hidden shrink-0 items-center gap-5 whitespace-nowrap lg:flex">
-          {!hideMarketing && <Link href="/how-it-works" className={`text-sm ${text}`}>How it works</Link>}
-          {!hideMarketing && <Link href="/become-a-mentor" className={`text-sm ${text}`}>Become a mentor</Link>}
+          {!hideMarketing && <Link href="/how-it-works" className={`text-sm ${text} ${user ? "hidden xl:inline" : ""}`}>How it works</Link>}
+          {!hideMarketing && <Link href="/become-a-mentor" className={`text-sm ${text} ${user ? "hidden xl:inline" : ""}`}>Become a mentor</Link>}
           {user ? (
             <>
               <NotificationBell light={overlay} />
               <Link href={HOME_BY_ROLE[user.role]} className={`rounded-full px-4 py-2 text-sm font-medium ${overlay ? "bg-white/20 text-white backdrop-blur hover:bg-white/30" : "bg-ink text-white hover:bg-ink-soft"}`}>
                 {user.role === "ADMIN" ? "Admin" : "Dashboard"}
               </Link>
+              {user.role !== "ADMIN" && <Link href="/account" className={`text-sm ${text}`}>Account</Link>}
               <button onClick={logout} className={`text-sm ${text}`}>Sign out</button>
             </>
           ) : (
@@ -90,6 +91,7 @@ export function Nav() {
             {links.map((link) => (
               <Link key={link.href} href={link.href} onClick={() => setOpen(false)} className="rounded-lg px-2 py-2.5 text-sm text-ink-soft hover:bg-paper-dim hover:text-ink">{link.label}</Link>
             ))}
+            {user && user.role !== "ADMIN" && <Link href="/account" onClick={() => setOpen(false)} className="rounded-lg px-2 py-2.5 text-sm text-ink-soft hover:bg-paper-dim hover:text-ink">Account</Link>}
             <div className="mt-2 flex gap-2 border-t border-line pt-3">
               <Link href={user ? HOME_BY_ROLE[user.role] : "/sign-in"} onClick={() => setOpen(false)} className="flex-1 rounded-full bg-ink px-4 py-2.5 text-center text-sm font-medium text-white">
                 {user ? "Dashboard" : "Sign in"}

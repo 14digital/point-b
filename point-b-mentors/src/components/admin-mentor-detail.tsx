@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Alert, Badge, Button, Skeleton, Spinner } from "@/components/ui";
 import { FinanceModal, SectionTitle } from "@/components/finance-modal";
 import { BookingDetailModal } from "@/components/booking-detail";
+import { PhotoUpload } from "@/components/photo-upload";
 import { useToast } from "@/components/toast";
 import { useAuth } from "@/lib/auth";
 import { api, errMsg } from "@/lib/api";
@@ -17,7 +18,7 @@ interface MentorDetail {
   id: string; slug: string; title: string; organization: string; introduction: string; careerSummary: string; photoUrl: string | null; linkedinUrl: string | null;
   level: Level; status: string; category: "LOCAL" | "INTERNATIONAL"; verified: boolean; createdAt: string; payoutDetails: PayoutDetails | null;
   user: { name: string; email: string; phone: string | null };
-  stats: { completed: number; upcoming: number; cancelled: number; noShows: number; rating: number | null; reviews: number; hiddenReviews: number; earnedMinor: number; dueMinor: number; paidMinor: number; forCancelledMinor: number };
+  stats: { completed: number; upcoming: number; cancelled: number; noShows: number; mentorNoShows: number; rating: number | null; reviews: number; hiddenReviews: number; earnedMinor: number; dueMinor: number; paidMinor: number; forCancelledMinor: number };
   openSlots: number;
   availability: { day: string; open: number; booked: number }[];
   recentBookings: { reference: string; status: string; priceMinor: number; currency: Currency; startAt: string; studentName: string }[];
@@ -31,7 +32,7 @@ export function MentorDetailModal({ id, onClose, onChanged }: { id: string; onCl
   const toast = useToast();
   const { user } = useAuth();
   const d = useApi<MentorDetail>(`/admin/mentors/${id}/profile`);
-  const [edit, setEdit] = useState<Partial<MentorDetail> | null>(null);
+  const [edit, setEdit] = useState<(Partial<MentorDetail> & { photoImage?: string }) | null>(null);
   const [pay, setPay] = useState<PayoutDetails | null>(null);
   const [busy, setBusy] = useState(false);
   const [booking, setBooking] = useState<string | null>(null);
@@ -64,7 +65,7 @@ export function MentorDetailModal({ id, onClose, onChanged }: { id: string; onCl
             {([
               ["Rating", m.stats.rating ? `${m.stats.rating.toFixed(1)} ★` : "—", `${m.stats.reviews} review${m.stats.reviews === 1 ? "" : "s"}${m.stats.hiddenReviews ? `, ${m.stats.hiddenReviews} hidden` : ""}`],
               ["Sessions", String(m.stats.completed), `${m.stats.upcoming} upcoming`],
-              ["Cancelled / no-show", `${m.stats.cancelled} / ${m.stats.noShows}`, "all time"],
+              ["Cancelled / no-show", `${m.stats.cancelled} / ${m.stats.noShows}`, m.stats.mentorNoShows ? `Mentor missed ${m.stats.mentorNoShows}` : "all time"],
               ["Owed to mentor", formatMoney(m.stats.dueMinor, currency), `${formatMoney(m.stats.paidMinor, currency)} paid of ${formatMoney(m.stats.earnedMinor, currency)}`],
             ] as const).map(([k, v, note]) => (
               <div key={k} className="rounded-2xl bg-paper px-4 py-3"><p className="text-[11px] text-ink-soft">{k}</p><p className="mt-0.5 font-display text-2xl leading-tight text-ink tabular-nums">{v}</p><p className="text-[11px] text-ink-soft">{note}</p></div>
@@ -94,13 +95,13 @@ export function MentorDetailModal({ id, onClose, onChanged }: { id: string; onCl
           </section>
 
           <section>
-            <SectionTitle aside={canEdit && !edit ? <button type="button" onClick={() => setEdit({ title: m.title, organization: m.organization, introduction: m.introduction, careerSummary: m.careerSummary, photoUrl: m.photoUrl, linkedinUrl: m.linkedinUrl, verified: m.verified })} className="text-xs font-medium text-ink underline-offset-4 hover:underline">Edit profile</button> : <a href={`/mentors/${m.slug}`} target="_blank" rel="noreferrer" className="text-xs text-ink-soft underline-offset-4 hover:text-ink hover:underline">Public profile ↗</a>}>Profile</SectionTitle>
+            <SectionTitle aside={canEdit && !edit ? <button type="button" onClick={() => setEdit({ title: m.title, organization: m.organization, introduction: m.introduction, careerSummary: m.careerSummary, linkedinUrl: m.linkedinUrl, verified: m.verified })} className="text-xs font-medium text-ink underline-offset-4 hover:underline">Edit profile</button> : <a href={`/mentors/${m.slug}`} target="_blank" rel="noreferrer" className="text-xs text-ink-soft underline-offset-4 hover:text-ink hover:underline">Public profile ↗</a>}>Profile</SectionTitle>
             {edit ? (
               <div className="space-y-3 rounded-2xl bg-paper p-4">
+                <PhotoUpload name={m.user.name} src={edit.photoImage === undefined ? m.photoUrl : edit.photoImage || null} onChange={(image) => setEdit({ ...edit, photoImage: image ?? "" })} />
                 <div className="grid gap-3 sm:grid-cols-2">
                   <label className="block text-xs text-ink-soft">Headline<input className="input mt-1 bg-white" value={edit.title ?? ""} maxLength={120} onChange={(e) => setEdit({ ...edit, title: e.target.value })} /></label>
                   <label className="block text-xs text-ink-soft">Organisation<input className="input mt-1 bg-white" value={edit.organization ?? ""} maxLength={120} onChange={(e) => setEdit({ ...edit, organization: e.target.value })} /></label>
-                  <label className="block text-xs text-ink-soft">Photo URL<input className="input mt-1 bg-white" value={edit.photoUrl ?? ""} maxLength={500} onChange={(e) => setEdit({ ...edit, photoUrl: e.target.value })} placeholder="https://…" /></label>
                   <label className="block text-xs text-ink-soft">LinkedIn<input className="input mt-1 bg-white" value={edit.linkedinUrl ?? ""} maxLength={300} onChange={(e) => setEdit({ ...edit, linkedinUrl: e.target.value })} /></label>
                 </div>
                 <label className="block text-xs text-ink-soft">Introduction<textarea className="input mt-1 min-h-20 bg-white" value={edit.introduction ?? ""} maxLength={2000} onChange={(e) => setEdit({ ...edit, introduction: e.target.value })} /></label>

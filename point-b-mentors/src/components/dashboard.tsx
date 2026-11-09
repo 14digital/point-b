@@ -29,14 +29,19 @@ export function DashboardHero({ eyebrow, title, subtitle, actions, children }: {
 
 const TONES = { peach: "bg-peach", sky: "bg-sky", mint: "bg-mint", lemon: "bg-lemon", lilac: "bg-lilac", white: "bg-paper-dim" } as const;
 
-export function StatTile({ label, value, note, tone = "white", delay = 0 }: { label: string; value: ReactNode; note?: ReactNode; tone?: keyof typeof TONES; delay?: number }) {
-  return (
-    <div className={`animate-rise rounded-3xl p-5 sm:p-6 ${TONES[tone]}`} style={{ ["--rise-delay" as string]: `${delay}ms` }}>
-      <p className="text-sm text-ink/70">{label}</p>
-      <p className="mt-2 font-display text-4xl leading-none text-ink sm:text-[2.75rem]">{value}</p>
-      {note && <p className="mt-2 text-xs leading-relaxed text-ink/60">{note}</p>}
-    </div>
+export function StatTile({ label, value, note, tone = "white", delay = 0, onClick }: { label: string; value: ReactNode; note?: ReactNode; tone?: keyof typeof TONES; delay?: number; onClick?: () => void }) {
+  const cls = `animate-rise block w-full rounded-3xl p-5 text-left sm:p-6 ${TONES[tone]}`;
+  const style = { ["--rise-delay" as string]: `${delay}ms` };
+  const body = (
+    <>
+      <span className="block text-sm text-ink/70">{label}</span>
+      <span className="mt-2 block font-display text-4xl leading-none text-ink sm:text-[2.75rem]">{value}</span>
+      {note && <span className="mt-2 block text-xs leading-relaxed text-ink/60">{note}</span>}
+    </>
   );
+  return onClick
+    ? <button type="button" onClick={onClick} style={style} className={`${cls} transition-transform hover:-translate-y-0.5`}>{body}</button>
+    : <div style={style} className={cls}>{body}</div>;
 }
 
 /** Calendar-style date block: month, day number, weekday. */

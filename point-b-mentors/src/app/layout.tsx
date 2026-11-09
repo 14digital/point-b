@@ -6,6 +6,7 @@ import { Footer } from "@/components/footer";
 import { ActivityTracker } from "@/components/activity-tracker";
 import { PaymentDueBar } from "@/components/payment-due-bar";
 import { AuthProvider } from "@/lib/auth";
+import { siteUrl } from "@/lib/server-api";
 
 const display = Newsreader({
   variable: "--font-fraunces",
@@ -20,6 +21,9 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL(siteUrl()),
+  openGraph: { siteName: "POINT B Mentors", type: "website", locale: "en_GB" },
+  twitter: { card: "summary_large_image" },
   title: "POINT B Mentors — 30 minutes with someone who's been there",
   description:
     "Book a private 30-minute conversation with experienced professionals. Local and international mentors, transparent pricing, straightforward booking.",

@@ -26,6 +26,8 @@ export class SupportController {
 
   /** Tickets sent while signed in, plus any sent from the public form with the same email address. */
   private mine(user: AuthUser) {
+    // Matching by address is only safe once the account has proven it owns that address.
+    if (!user.emailVerified) return { userId: user.id };
     return { OR: [{ userId: user.id }, { email: user.email.toLowerCase() }] };
   }
 

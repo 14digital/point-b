@@ -73,7 +73,7 @@ export default function HowItWorksPage() {
         </div>
 
         <dl className="animate-rise mt-16 grid grid-cols-2 overflow-hidden rounded-3xl bg-white/80 ring-1 ring-ink/5 backdrop-blur sm:grid-cols-4" style={{ ["--rise-delay" as string]: "240ms" }}>
-          {[["30 min", "per session"], ["8 steps", "search to feedback"], ["{notice}", "free rescheduling window"], ["PKR · GBP", "local and international"]].map(([v, l], i) => (
+          {[["30 min", "per session"], ["8 steps", "search to feedback"], ["{notice}", "to cancel or reschedule free"], ["PKR · GBP", "local and international"]].map(([v, l], i) => (
             <div key={l} className={`px-6 py-5 ${i ? "sm:border-l" : ""} ${i % 2 ? "border-l" : ""} ${i > 1 ? "border-t sm:border-t-0" : ""} border-line`}>
               <dt className="sr-only">{l}</dt>
               <dd className="font-display text-3xl text-ink"><NoticeText text={v} /></dd>

@@ -16,7 +16,7 @@ interface DetailPayment {
 }
 interface BookingDetailData {
   id: string; reference: string; status: string; sessionKind: "ONE_TO_ONE" | "GROUP"; agenda: string; currentSituation: string; usefulOutcome: string; materialsToReview: string;
-  currency: Currency; walletAppliedMinor: number | null; repeatStudent: boolean | null; awaitingVerification: boolean | null; hostStartedAt: string | null; rescheduleCount: number; rescheduledAt: string | null;
+  currency: Currency; walletAppliedMinor: number | null; repeatStudent: boolean | null; awaitingVerification: boolean | null; hostStartedAt: string | null; mentorReportStatus: string | null; mentorReportedAt: string | null; mentorReportNote: string | null; rescheduleCount: number; rescheduledAt: string | null;
   cancelledAt: string | null; cancelReason: string | null; completedAt: string | null; createdAt: string;
   slot: { startAt: string; endAt: string; capacity: number };
   student: { id: string; name: string; email: string; phone: string | null };
@@ -46,7 +46,7 @@ export function BookingDetailModal({ reference, onClose, onChanged }: { referenc
   const toast = useToast();
   const now = useNow();
   const d = useApi<BookingDetailData>(`/admin/bookings/${reference}`);
-  const [action, setAction] = useState<null | "cancel" | "complete" | "no-show">(null);
+  const [action, setAction] = useState<null | "cancel" | "complete" | "no-show" | "approve-report" | "decline-report">(null);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const b = d.data;
@@ -56,6 +56,12 @@ export function BookingDetailModal({ reference, onClose, onChanged }: { referenc
     if (!action || !b) return;
     setBusy(true);
     try {
+      if (action === "approve-report" || action === "decline-report") {
+        await api(`/bookings/${b.reference}/mentor-report`, { body: { approve: action === "approve-report", note: reason.trim() || undefined } });
+        toast(action === "approve-report" ? "Approved. The price was added to the student\u2019s balance and they\u2019ve been emailed." : "Declined. No refund was issued and the student has been emailed.");
+        setAction(null); setReason(""); await d.reload(); onChanged();
+        return;
+      }
       if (action === "cancel") await api(`/bookings/${b.reference}/cancel`, { body: { reason: reason.trim() || "Cancelled by POINT B" } });
       else await api(`/bookings/${b.reference}/${action}`, { method: "POST" });
       toast(action === "cancel" ? (b.status === "CONFIRMED" ? "Booking cancelled and the price added to the student\u2019s balance. They\u2019ve been emailed." : "Booking cancelled and the slot released.") : action === "complete" ? "Marked as completed. The student has been asked for feedback." : "Marked as a no-show.");
@@ -76,14 +82,26 @@ export function BookingDetailModal({ reference, onClose, onChanged }: { referenc
           <textarea className="input min-h-16" maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Reason (shown to the student), e.g. Mentor unavailable due to illness" />
         </>
       )}
+      {(action === "approve-report" || action === "decline-report") && (
+        <>
+          <p className="text-sm text-ink">{action === "approve-report" ? <>Confirm that the mentor didn&rsquo;t join, cancel this session and add <span className="font-medium">{money(b.money.paidMinor)}</span> to {b.student.name.split(" ")[0]}&rsquo;s POINT B balance?</> : <>Decline this report? No refund is issued and the session stays as it is.</>}</p>
+          {action === "approve-report" && b.payout && <p className="rounded-xl bg-lemon/60 px-3 py-2 text-xs text-ink">The mentor was already paid {money(b.money.payoutMinor)} for this session on {short(b.payout.createdAt)}. Approving won&rsquo;t take that back, so plan to recover it from their next payout.</p>}
+          <textarea className="input min-h-16" maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Note for the student (optional)" />
+        </>
+      )}
       {action === "complete" && <p className="text-sm text-ink">Mark this session as completed? The student will be asked for feedback.</p>}
       {action === "no-show" && <p className="text-sm text-ink">Mark the student as a no-show? No refund is issued.</p>}
       <div className="flex justify-end gap-2">
         <button type="button" disabled={busy} onClick={() => setAction(null)} className="rounded-full px-4 py-2 text-sm text-ink ring-1 ring-line hover:ring-ink/40">Back</button>
-        <button type="button" disabled={busy} onClick={run} className={`inline-flex min-w-36 items-center justify-center rounded-full px-4 py-2 text-sm font-medium text-white disabled:opacity-60 ${action === "complete" ? "bg-ink" : "bg-rust"}`}>
-          {busy ? <Spinner /> : action === "cancel" ? (b.status === "CONFIRMED" ? "Cancel and credit balance" : "Cancel booking") : action === "complete" ? "Mark completed" : "Mark no-show"}
+        <button type="button" disabled={busy} onClick={run} className={`inline-flex min-w-36 items-center justify-center rounded-full px-4 py-2 text-sm font-medium text-white disabled:opacity-60 ${action === "complete" || action === "approve-report" ? "bg-ink" : "bg-rust"}`}>
+          {busy ? <Spinner /> : action === "approve-report" ? "Approve and refund" : action === "decline-report" ? "Decline report" : action === "cancel" ? (b.status === "CONFIRMED" ? "Cancel and credit balance" : "Cancel booking") : action === "complete" ? "Mark completed" : "Mark no-show"}
         </button>
       </div>
+    </div>
+  ) : b.mentorReportStatus === "PENDING" && (b.status === "CONFIRMED" || b.status === "COMPLETED") ? (
+    <div className="flex flex-wrap items-center justify-end gap-2">
+      <button type="button" onClick={() => setAction("decline-report")} className="rounded-full px-4 py-2 text-sm text-ink ring-1 ring-line hover:ring-ink/40">Decline report</button>
+      <button type="button" onClick={() => setAction("approve-report")} className="rounded-full bg-ink px-4 py-2 text-sm font-medium text-white">Approve refund</button>
     </div>
   ) : (b.status === "PENDING_PAYMENT" || b.status === "CONFIRMED") ? (
     <div className="flex flex-wrap items-center justify-end gap-2">
@@ -103,6 +121,12 @@ export function BookingDetailModal({ reference, onClose, onChanged }: { referenc
       totalNote={b ? `${b.student.name} with ${b.mentor.user.name}` : undefined}>
       {d.loading && !b ? <Skeleton className="h-64 rounded-2xl" /> : d.error || !b ? <Alert>{d.error}</Alert> : (
         <>
+          {b.mentorReportStatus && (
+            <div className={`rounded-2xl px-4 py-3 text-sm ${b.mentorReportStatus === "PENDING" ? "bg-lemon/60" : "bg-paper"}`}>
+              <p className="font-medium text-ink">{b.mentorReportStatus === "PENDING" ? "Needs your review: student says the mentor didn\u2019t join" : b.mentorReportStatus === "APPROVED" ? "Mentor report approved and refunded" : "Mentor report declined"}</p>
+              <p className="mt-0.5 text-ink-soft">{b.mentorReportedAt ? `Reported ${short(b.mentorReportedAt)}. ` : ""}Our records show the mentor {b.hostStartedAt ? `opened the call room ${short(b.hostStartedAt)}` : "never opened the call room"}.{b.mentorReportNote ? ` Note: ${b.mentorReportNote}` : ""}</p>
+            </div>
+          )}
           {explanation && (
             <div className="rounded-2xl bg-rust-pale px-4 py-3 text-sm text-rust">
               <p className="font-medium">{explanation.startsWith("Payment rejected") ? "Payment rejected" : "Cancelled"}{b.cancelledAt ? ` · ${short(b.cancelledAt)}` : ""}</p>

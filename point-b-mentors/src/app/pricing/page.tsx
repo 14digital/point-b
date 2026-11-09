@@ -22,7 +22,7 @@ const INCLUDED = [
   "The full 30 minutes with your chosen mentor",
   "A private video call on POINT B, no download needed",
   "Your preparation notes shared with the mentor beforehand",
-  "Free rescheduling up to {notice} before the session",
+  "Cancel for a full refund, or reschedule free, up to {notice} before",
 ];
 
 /** "Rs 1,000 – 2,000" or "£25 – 35"; a single price when the range is one value. */

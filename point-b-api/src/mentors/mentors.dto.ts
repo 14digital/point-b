@@ -1,6 +1,7 @@
 import { Type } from 'class-transformer';
-import { ArrayMaxSize, IsArray, IsDateString, IsEnum, IsInt, IsMongoId, IsOptional, IsString, IsUrl, Max, MaxLength, Min } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsDateString, IsEnum, IsInt, IsMongoId, IsOptional, IsString, IsUrl, Matches, Max, MaxLength, Min } from 'class-validator';
 import { MentorCategory, MentorLevel, SessionKind } from '@prisma/client';
+import { PHOTO_IMAGE, PHOTO_IMAGE_MAX_LENGTH, PHOTO_IMAGE_MESSAGE } from './mentor-photo';
 
 export class ListMentorsQuery {
   @IsOptional() @IsEnum(MentorCategory) category?: MentorCategory;
@@ -28,13 +29,18 @@ export class UpdateMentorProfileDto {
   @IsOptional() @IsArray() @ArrayMaxSize(6) @IsString({ each: true }) expertise?: string[];
   @IsOptional() @IsArray() @ArrayMaxSize(6) @IsString({ each: true }) industries?: string[];
   @IsOptional() @IsUrl() linkedinUrl?: string;
-  /** Public https URL of a square or portrait headshot. */
-  @IsOptional() @IsUrl({ protocols: ['https'], require_protocol: true }) photoUrl?: string;
+  /** A new headshot as a JPEG data URL; "" removes it, omitted keeps the current one. */
+  @IsOptional() @IsString() @MaxLength(PHOTO_IMAGE_MAX_LENGTH) @Matches(PHOTO_IMAGE, { message: PHOTO_IMAGE_MESSAGE }) photoImage?: string;
+}
+
+/** Open slots to take off the calendar in one go, such as a whole day. */
+export class RemoveSlotsDto {
+  @IsArray() @ArrayMaxSize(100) @IsMongoId({ each: true }) ids: string[];
 }
 
 export class CreateSlotsDto {
   /** ISO start times; each creates one 30-minute slot. Must be on :00 or :30 and in the future. */
-  @IsArray() @ArrayMaxSize(200) @IsDateString({}, { each: true }) startTimes: string[];
+  @IsArray() @ArrayMaxSize(1000) @IsDateString({}, { each: true }) startTimes: string[];
   /** ONE_TO_ONE (default) or GROUP, where several students share the slot at a lower per-seat price. */
   @IsOptional() @IsEnum(SessionKind) kind?: SessionKind;
   /** Seats for a GROUP slot (2 to 10). Ignored for ONE_TO_ONE. */

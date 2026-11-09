@@ -34,8 +34,9 @@ export class NotificationsService {
     }
   }
 
-  async send(toEmail: string, subject: string, body: string, userId?: string, opts: EmailOptions = {}) {
-    await this.prisma.notification.create({ data: { toEmail, subject, body, userId } });
+  async send(toEmail: string, subject: string, body: string, userId?: string, opts: EmailOptions & { storedBody?: string } = {}) {
+    // storedBody keeps secrets, such as a confirmation code, out of the inbox and admin outbox.
+    await this.prisma.notification.create({ data: { toEmail, subject, body: opts.storedBody ?? body, userId } });
     if (!opts.emailOnly) await this.alsoWhatsApp(toEmail, subject, body, userId, opts);
     if (!this.transport) return this.log.log(`email (not delivered) -> ${toEmail}: ${subject}`);
     try {

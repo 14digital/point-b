@@ -88,6 +88,12 @@ model User {
   dateOfBirth         DateTime?
   guardianEmail       String?
   guardianConsent     Boolean   @default(false)
+  // Students who sign up start at false until they enter the code we email. Unset on older accounts and on mentors and team members, whose address was already proven.
+  emailVerified       Boolean?
+  emailCodeHash       String?
+  emailCodeExpiresAt  DateTime?
+  emailCodeSentAt     DateTime?
+  emailCodeAttempts   Int?
   phone               String? // international format, e.g. +923001234567
   whatsappAlerts      Boolean   @default(false) // the user agreed to receive their alerts on WhatsApp too
   isActive            Boolean   @default(true)
@@ -278,6 +284,13 @@ model Booking {
   status               BookingStatus @default(PENDING_PAYMENT)
   meetingLink          String?
   cancelledAt          DateTime?
+  // A student's report that the mentor didn't join: PENDING until an admin approves (refund) or declines it.
+  mentorReportStatus    String?
+  mentorReportedAt      DateTime?
+  mentorReportDecidedAt DateTime?
+  mentorReportNote      String?
+  // Set when the mentor's absence is confirmed and the student refunded.
+  mentorNoShowAt       DateTime?
   cancelReason         String?
   completedAt          DateTime?
   createdAt            DateTime      @default(now())
@@ -414,6 +427,15 @@ model PricingRule {
   updatedAt  DateTime    @updatedAt
 
   @@unique([level, currency])
+}
+
+/**
+ * A mentor's uploaded headshot, one per mentor. Kept apart from MentorProfile so listing mentors never loads the images.
+ */
+model MentorImage {
+  mentorId  String   @id @map("_id") @db.ObjectId
+  data      Bytes
+  updatedAt DateTime @updatedAt
 }
 
 model Setting {

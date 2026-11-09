@@ -31,7 +31,7 @@ export async function api<T>(path: string, opts: { method?: string; body?: unkno
   const data = await res.json().catch(() => null);
   if (!res.ok) {
     const m = data?.message;
-    throw new ApiError(res.status, Array.isArray(m) ? m.join(". ") : m ?? "Something went wrong. Please try again.");
+    throw new ApiError(res.status, res.status === 429 ? "Too many attempts. Please wait a few minutes and try again." : Array.isArray(m) ? m.join(". ") : m ?? "Something went wrong. Please try again.");
   }
   return data as T;
 }

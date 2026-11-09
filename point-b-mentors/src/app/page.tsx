@@ -17,7 +17,7 @@ const FAQ = [
   { q: "How do I know who is right for me?", a: "Search by topic or challenge, then read the profile: background, what they can and cannot help with, and reviews from other students. You book directly, with no back and forth." },
   { q: "What is the difference between 1:1 and group sessions?", a: "A 1:1 session is a private 30-minute call. A group session is shared with a few other students, so each person pays a lower price and gets a smaller share of the time." },
   { q: "How much does a session cost?", a: "Local mentors cost Rs 1,000 to Rs 2,500 and international mentors £25 to £60 for a private session. Group seats cost less. The price is always shown before you book." },
-  { q: "What if I can\u2019t make my session?", a: "Reschedule it from your dashboard up to {notice} before the start, for free, and your payment carries over. Booked sessions can\u2019t be cancelled. If a mentor can\u2019t attend, our team arranges a new time or a full refund." },
+  { q: "What if I can\u2019t make my session?", a: "Up to {notice} before the start, you can cancel from your dashboard for a full refund to your POINT B balance, or move it to another time for free. After that there\u2019s no refund. If your mentor doesn\u2019t join, report it and our team will review it for a full refund." },
   { q: "How do the video calls work?", a: "Sessions run in your browser, with nothing to install. The room opens 10 minutes before the start, and we email you a reminder 30 minutes ahead." },
 ];
 

@@ -19,6 +19,8 @@ export interface AuthUser {
   role: Role;
   /** Admins only: OWNER, OPERATIONS or FINANCE. */
   staffRole?: StaffRole;
+  /** False only for a student who hasn't entered their email code yet. */
+  emailVerified?: boolean;
 }
 
 export type StaffRole = 'OWNER' | 'OPERATIONS' | 'FINANCE';
@@ -63,7 +65,7 @@ export class AuthGuard implements CanActivate {
         // A password reset signs out every session issued before it.
         const stale = !!user?.passwordChangedAt && (payload.iat ?? 0) * 1000 < user.passwordChangedAt.getTime() - 1000;
         if (user && user.isActive && !stale) {
-          req.user = { id: user.id, email: user.email, name: user.name, role: user.role, staffRole: user.role === 'ADMIN' ? ((user.staffRole as StaffRole) ?? 'OWNER') : undefined } as AuthUser;
+          req.user = { id: user.id, email: user.email, name: user.name, role: user.role, emailVerified: user.emailVerified !== false, staffRole: user.role === 'ADMIN' ? ((user.staffRole as StaffRole) ?? 'OWNER') : undefined } as AuthUser;
         }
       } catch {
         if (!isPublic) throw new UnauthorizedException('Invalid or expired session');

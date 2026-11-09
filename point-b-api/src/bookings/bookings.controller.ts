@@ -1,7 +1,7 @@
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, Post } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AuthUser, CurrentUser, Public, Roles, Staff } from '../common/auth';
-import { CancelBookingDto, CreateBookingDto, CreateReviewDto, PromoCheckDto, RescheduleBookingDto } from './bookings.dto';
+import { CancelBookingDto, DecideMentorReportDto, CreateBookingDto, CreateReviewDto, PromoCheckDto, RescheduleBookingDto } from './bookings.dto';
 import { BookingsService } from './bookings.service';
 
 @ApiTags('bookings')
@@ -19,7 +19,9 @@ export class BookingsController {
   @Get(':reference/call') call(@CurrentUser() u: AuthUser, @Param('reference') ref: string) { return this.bookings.call(u, ref); }
   @Get(':reference') get(@CurrentUser() u: AuthUser, @Param('reference') ref: string) { return this.bookings.get(u, ref); }
   @Roles('STUDENT') @Post(':reference/reschedule') reschedule(@CurrentUser() u: AuthUser, @Param('reference') ref: string, @Body() dto: RescheduleBookingDto) { return this.bookings.reschedule(u, ref, dto.slotId); }
-  /** Students may only release an unpaid hold; confirmed sessions are rescheduled, not cancelled. Admins can cancel for support cases. */
+  /** Students release an unpaid hold, or cancel a confirmed session for a full refund before the deadline. Admins can cancel for support cases. */
+  @Roles('STUDENT') @HttpCode(200) @Post(':reference/report-mentor-missing') reportMissing(@CurrentUser() u: AuthUser, @Param('reference') ref: string) { return this.bookings.reportMissingMentor(u, ref); }
+  @Staff('OPERATIONS', 'FINANCE') @Roles('ADMIN') @HttpCode(200) @Post(':reference/mentor-report') decideReport(@CurrentUser() u: AuthUser, @Param('reference') ref: string, @Body() dto: DecideMentorReportDto) { return this.bookings.decideMentorReport(u, ref, dto.approve, dto.note); }
   @Staff('OPERATIONS', 'FINANCE') @Roles('STUDENT', 'ADMIN') @Post(':reference/cancel') cancel(@CurrentUser() u: AuthUser, @Param('reference') ref: string, @Body() dto: CancelBookingDto) { return this.bookings.cancel(u, ref, dto); }
   @Staff('OPERATIONS') @Roles('MENTOR', 'ADMIN') @Post(':reference/complete') complete(@CurrentUser() u: AuthUser, @Param('reference') ref: string) { return this.bookings.markCompleted(u, ref); }
   @Staff('OPERATIONS') @Roles('MENTOR', 'ADMIN') @Post(':reference/no-show') noShow(@CurrentUser() u: AuthUser, @Param('reference') ref: string) { return this.bookings.markCompleted(u, ref, 'NO_SHOW'); }

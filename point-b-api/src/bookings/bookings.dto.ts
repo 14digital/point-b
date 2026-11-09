@@ -1,4 +1,4 @@
-import { IsIn, IsInt, IsOptional, IsString, IsMongoId, MaxLength, Max, Min, MinLength } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsOptional, IsString, IsMongoId, MaxLength, Max, Min, MinLength } from 'class-validator';
 
 export const AGENDAS = [
   'Career guidance', 'Professional development', 'Interview preparation', 'CV and portfolio review',
@@ -31,4 +31,10 @@ export class CancelBookingDto {
 export class CreateReviewDto {
   @IsInt() @Min(1) @Max(5) rating: number;
   @IsString() @MinLength(5) @MaxLength(1000) comment: string;
+}
+
+export class DecideMentorReportDto {
+  @IsBoolean() approve: boolean;
+  /** Sent to the student with the decision. */
+  @IsOptional() @IsString() @MaxLength(500) note?: string;
 }

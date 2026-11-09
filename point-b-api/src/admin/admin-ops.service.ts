@@ -8,6 +8,7 @@ import { emailDate, webUrl } from '../common/email-template';
 import { STAFF_ROLES, StaffRole } from '../common/auth';
 import { commissionRules, feeOf } from '../common/pricing';
 import { WalletService } from '../common/wallet.service';
+import { saveMentorPhoto } from '../mentors/mentor-photo';
 import { Currency } from '@prisma/client';
 
 const isId = (id: string) => /^[a-f0-9]{24}$/i.test(id);
@@ -291,7 +292,7 @@ export class AdminOpsService {
     const in14 = new Date(now.getTime() + 14 * 86_400_000);
     const [slots, bookings, reviews, payouts, rules] = await Promise.all([
       this.prisma.availabilitySlot.findMany({ where: { mentorId: id, startAt: { gte: now, lt: in14 } }, orderBy: { startAt: 'asc' }, select: { startAt: true, kind: true, isBooked: true, capacity: true, seatsTaken: true } }),
-      this.prisma.booking.findMany({ where: { mentorId: id }, orderBy: { createdAt: 'desc' }, select: { reference: true, status: true, priceMinor: true, currency: true, platformFeeMinor: true, commissionPercent: true, payoutId: true, createdAt: true, slot: { select: { startAt: true } }, student: { select: { name: true } } } }),
+      this.prisma.booking.findMany({ where: { mentorId: id }, orderBy: { createdAt: 'desc' }, select: { reference: true, status: true, mentorNoShowAt: true, priceMinor: true, currency: true, platformFeeMinor: true, commissionPercent: true, payoutId: true, createdAt: true, slot: { select: { startAt: true } }, student: { select: { name: true } } } }),
       this.prisma.review.findMany({ where: { booking: { mentorId: id } }, select: { rating: true, status: true } }),
       this.prisma.mentorPayout.findMany({ where: { mentorId: id }, orderBy: { createdAt: 'desc' }, select: { id: true, createdAt: true, amountMinor: true, currency: true, sessions: true, reference: true } }),
       commissionRules(this.prisma),
@@ -303,7 +304,7 @@ export class AdminOpsService {
     return {
       ...m,
       stats: {
-        completed: count('COMPLETED'), upcoming: bookings.filter((b) => b.status === 'CONFIRMED' && b.slot.startAt > now).length, cancelled: count('CANCELLED'), noShows: count('NO_SHOW'),
+        completed: count('COMPLETED'), upcoming: bookings.filter((b) => b.status === 'CONFIRMED' && b.slot.startAt > now).length, cancelled: count('CANCELLED'), noShows: count('NO_SHOW'), mentorNoShows: bookings.filter((b) => b.mentorNoShowAt).length,
         rating: publicReviews.length ? publicReviews.reduce((n, r) => n + r.rating, 0) / publicReviews.length : null, reviews: reviews.length, hiddenReviews: reviews.filter((r) => r.status === 'HIDDEN').length,
         earnedMinor: paid.reduce((n, b) => n + earn(b), 0), dueMinor: paid.filter((b) => !b.payoutId).reduce((n, b) => n + earn(b), 0), paidMinor: payouts.reduce((n, x) => n + x.amountMinor, 0),
         forCancelledMinor: bookings.filter((b) => b.payoutId && !(PAID as readonly string[]).includes(b.status)).reduce((n, b) => n + earn(b), 0),
@@ -322,9 +323,10 @@ export class AdminOpsService {
   async updateMentorProfile(adminId: string, id: string, dto: Record<string, unknown>) {
     const m = await this.prisma.mentorProfile.findUnique({ where: { id }, select: { id: true, slug: true } });
     if (!m) throw new NotFoundException('Mentor not found');
-    const fields = ['title', 'organization', 'introduction', 'careerSummary', 'photoUrl', 'linkedinUrl', 'verified'] as const;
-    const data = Object.fromEntries(fields.filter((f) => dto[f] !== undefined).map((f) => [f, typeof dto[f] === 'string' ? (dto[f] as string).trim() || null : dto[f]]));
+    const fields = ['title', 'organization', 'introduction', 'careerSummary', 'linkedinUrl', 'verified'] as const;
+    const data: Record<string, unknown> = Object.fromEntries(fields.filter((f) => dto[f] !== undefined).map((f) => [f, typeof dto[f] === 'string' ? (dto[f] as string).trim() || null : dto[f]]));
     if ('title' in data && !data.title) throw new BadRequestException('The headline can’t be empty.');
+    if (typeof dto.photoImage === 'string') data.photoUrl = await saveMentorPhoto(this.prisma, id, dto.photoImage);
     await this.prisma.mentorProfile.update({ where: { id }, data });
     await this.audit(adminId, 'MENTOR_PROFILE_EDITED', 'MentorProfile', id, Object.keys(data).join(', '));
     return this.mentor(id);

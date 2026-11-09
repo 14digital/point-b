@@ -387,7 +387,7 @@ export class AdminService {
   // ---------- bookings / reporting ----------
   listBookings(status?: string) {
     return this.prisma.booking.findMany({
-      where: status ? { status: status as never } : {}, orderBy: { createdAt: 'desc' }, take: 200,
+      where: status === 'REPORTED' ? { mentorReportStatus: 'PENDING' } : status ? { status: status as never } : {}, orderBy: { createdAt: 'desc' }, take: 200,
       include: { slot: true, student: { select: { id: true, name: true, email: true } }, mentor: { select: { id: true, slug: true, user: { select: { name: true } } } }, payments: true },
     });
   }

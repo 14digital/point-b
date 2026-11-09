@@ -83,6 +83,7 @@ function describe(e: Event): { text: string; tone: string; important?: boolean }
     case "bank_transfer_submitted": return { text: "Sent bank transfer details", tone: "bg-sky", important: true };
     case "bank_transfer_rejected": return { text: `Bank transfer rejected${e.label ? `: ${e.label}` : ""}`, tone: "bg-rust-pale", important: true };
     case "booking_cancelled": return { text: `Booking cancelled${e.label ? ` (${e.label.toLowerCase()})` : ""}`, tone: "bg-peach", important: true };
+    case "mentor_reported": return { text: "Reported that the mentor didn't join", tone: "bg-peach", important: true };
     case "rescheduled": return { text: "Rescheduled a session", tone: "bg-sky", important: true };
     case "session_joined": return { text: "Joined the call", tone: "bg-mint", important: true };
     case "review_left": return { text: "Left feedback", tone: "bg-mint", important: true };

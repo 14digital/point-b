@@ -34,13 +34,13 @@ const COLUMNS = [
     links: [
       { href: "/legal?tab=terms", label: "Terms of use" },
       { href: "/legal?tab=privacy", label: "Privacy policy" },
-      { href: "/legal?tab=refunds", label: "Rescheduling & refunds" },
+      { href: "/legal?tab=refunds", label: "Cancellations & refunds" },
       { href: "/legal?tab=safeguarding", label: "Safeguarding" },
     ],
   },
 ];
 
-const PROMISES = ["Verified professionals", "Private video calls", "Free rescheduling up to {notice} before"];
+const PROMISES = ["Verified professionals", "Private video calls", "Free cancellation up to {notice} before"];
 
 export function Footer() {
   return (
