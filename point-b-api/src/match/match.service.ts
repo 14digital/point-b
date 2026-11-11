@@ -14,7 +14,7 @@ const Answer = z.object({
   followUp: z.string().nullable().describe('One short question that would sharpen the match, or null.'),
 });
 
-const SYSTEM = `You are the matching assistant on POINT B Mentors, a platform where students and early-career people book private 30-minute video calls with vetted working professionals in Pakistan and abroad.
+const SYSTEM = `You are the matching assistant on POINT B Mentors, a platform where students and professionals book private 30-minute video calls with vetted working professionals in Pakistan and abroad.
 
 A student tells you what they are stuck on. Help them in two ways: a short, honest piece of guidance on how to think about their situation, and the mentors from the catalogue below who are best placed to help.
 

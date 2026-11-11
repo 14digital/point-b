@@ -2,11 +2,12 @@
 
 import { LiveChats } from "@/components/admin-chats";
 import { ReferralCodes } from "@/components/admin-referrals";
+import { AdminNav } from "@/components/admin-nav";
 import { playChime } from "@/lib/sound";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { RequireRole } from "@/components/require-role";
 import { Alert, Badge, Button, Container, EmptyState, Field, FilterChips, Mark, Skeleton, Spinner, pastelFor } from "@/components/ui";
-import { DashboardHero, DateTile, Panel, StatTile, Tabs, greeting } from "@/components/dashboard";
+import { DashboardHero, DateTile, Panel, StatTile, greeting } from "@/components/dashboard";
 import { useAuth } from "@/lib/auth";
 import { api, apiObjectUrl, errMsg } from "@/lib/api";
 import { LEVEL_LABEL, STATUS_LABEL } from "@/lib/constants";
@@ -31,13 +32,13 @@ import { Flag, countryIn } from "@/components/flag";
 import { formatPhone } from "@/components/phone-input";
 import type { AdminInterview, AppStatus, Application, Booking, Currency, Level } from "@/lib/types";
 
-const TABS = ["Overview", "Applications", "Mentors", "Bookings", "Students", "Reviews", "Support", "Live chat", "Referrals", "User tracking", "Activity", "Settings"] as const;
+const TABS = ["Overview", "Applications", "Mentors", "Bookings", "Mentees", "Reviews", "Support", "Live chat", "Referrals", "User tracking", "Activity", "Settings"] as const;
 type Tab = (typeof TABS)[number];
 /** What each team role sees. Owners see everything. */
 const TABS_FOR: Record<"OWNER" | "OPERATIONS" | "FINANCE", readonly Tab[]> = {
   OWNER: TABS,
-  OPERATIONS: ["Overview", "Applications", "Mentors", "Bookings", "Students", "Reviews", "Support", "Live chat", "Referrals", "User tracking", "Settings"],
-  FINANCE: ["Overview", "Mentors", "Bookings", "Students", "Referrals", "Settings"],
+  OPERATIONS: ["Overview", "Applications", "Mentors", "Bookings", "Mentees", "Reviews", "Support", "Live chat", "Referrals", "User tracking", "Settings"],
+  FINANCE: ["Overview", "Mentors", "Bookings", "Mentees", "Referrals", "Settings"],
 };
 
 const TONE: Record<string, "neutral" | "brass" | "forest" | "rust"> = {
@@ -86,7 +87,7 @@ function Console() {
         subtitle={toReview ? `${toReview} application${toReview === 1 ? "" : "s"} waiting for review, and ${s?.bookings.CONFIRMED ?? 0} upcoming confirmed session${s?.bookings.CONFIRMED === 1 ? "" : "s"}.` : "Everything is up to date. Here's how the platform is doing."}
         actions={<><Button variant="secondary" href="/mentors">View live site</Button>{!!toReview && ops && <Button onClick={() => setTab("Applications")}>Review applications</Button>}</>}
       >
-        <div className="mt-10"><Tabs tabs={tabs} value={tab} onChange={setTab} counts={{ ...(toReview && ops ? { Applications: toReview } : {}), ...(consentWaiting ? { Students: consentWaiting } : {}), ...(openTickets ? { Support: openTickets } : {}), ...(unreadChats ? { "Live chat": unreadChats } : {}), ...(reviewsWaiting ? { Reviews: reviewsWaiting } : {}) }} /></div>
+        <div className="mt-10"><AdminNav tabs={tabs} value={tab} onChange={setTab} counts={{ ...(toReview && ops ? { Applications: toReview } : {}), ...(consentWaiting ? { Mentees: consentWaiting } : {}), ...(openTickets ? { Support: openTickets } : {}), ...(unreadChats ? { "Live chat": unreadChats } : {}), ...(reviewsWaiting ? { Reviews: reviewsWaiting } : {}) }} /></div>
       </DashboardHero>
       <Container className="py-10 sm:py-12">
         {tab === "Overview" && <Overview role={role} onReview={() => setTab("Applications")} onOpenApp={(id) => { setFocusId(id); setTab("Applications"); }} onGo={setTab}
@@ -94,7 +95,7 @@ function Console() {
         {tab === "Applications" && <Applications initialId={focusId} />}
         {tab === "Mentors" && <Mentors />}
         {tab === "Bookings" && <Bookings />}
-        {tab === "Students" && <Students onChanged={students.reload} />}
+        {tab === "Mentees" && <Students onChanged={students.reload} />}
         {tab === "Reviews" && <Reviews onChanged={reviews.reload} />}
         {tab === "Support" && <Support meId={user?.id ?? ""} onChanged={tickets.reload} />}
         {tab === "Live chat" && <LiveChats onChanged={chatsReload} />}
@@ -129,7 +130,7 @@ function Overview({ role, onReview, onOpenApp, onGo, urgentTickets, consentWaiti
   const money = role !== "OPERATIONS";
   const alerts = [
     urgentTickets > 0 && { tone: "bg-rust-pale ring-rust/20", text: `${urgentTickets} safeguarding report${urgentTickets === 1 ? "" : "s"} waiting`, action: "Open support", go: "Support" as Tab },
-    consentWaiting > 0 && { tone: "bg-lemon/70 ring-amber/20", text: `${consentWaiting} under-18 student${consentWaiting === 1 ? "" : "s"} waiting for guardian consent`, action: "Review", go: "Students" as Tab },
+    consentWaiting > 0 && { tone: "bg-lemon/70 ring-amber/20", text: `${consentWaiting} under-18 mentee${consentWaiting === 1 ? "" : "s"} waiting for guardian consent`, action: "Review", go: "Mentees" as Tab },
     twoStepOff && { tone: "bg-white ring-line", text: "Protect your admin account with two-step sign-in", action: "Set up", go: "Settings" as Tab },
   ].filter(Boolean) as { tone: string; text: string; action: string; go: Tab }[];
   const head = (
@@ -164,8 +165,8 @@ function Overview({ role, onReview, onOpenApp, onGo, urgentTickets, consentWaiti
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatTile label="Active mentors" value={s.activeMentors} note={filtered ? `${s.newMentors} joined in this period` : undefined} tone="mint" />
         <StatTile label="Applications in pipeline" value={pipeline} note={filtered ? `${s.applications.SUBMITTED ?? 0} awaiting first review · ${pipelineOverall} in pipeline overall` : `${s.applications.SUBMITTED ?? 0} awaiting first review`} tone="sky" delay={60} />
-        <StatTile label={filtered ? "New students" : "Registered students"} value={s.students} note={filtered ? `${s.studentsTotal} registered in total` : undefined} tone="peach" delay={120} />
-        <StatTile label="Booking conversion" value={s.bookingConversion == null ? "—" : `${Math.round(s.bookingConversion * 100)}%`} note={`${s.repeatStudents} repeat student${s.repeatStudents === 1 ? "" : "s"}`} tone="lilac" delay={180} />
+        <StatTile label={filtered ? "New mentees" : "Registered mentees"} value={s.students} note={filtered ? `${s.studentsTotal} registered in total` : undefined} tone="peach" delay={120} />
+        <StatTile label="Booking conversion" value={s.bookingConversion == null ? "—" : `${Math.round(s.bookingConversion * 100)}%`} note={`${s.repeatStudents} repeat mentee${s.repeatStudents === 1 ? "" : "s"}`} tone="lilac" delay={180} />
       </div>
 
       {money && <BankTransfers />}
@@ -612,7 +613,7 @@ function Mentors() {
       {noSlots > 0 && (
         <button type="button" onClick={() => setFilter("noslots")} className="flex w-full items-center gap-4 group rounded-3xl bg-lemon/60 px-5 py-4 text-left ring-1 ring-amber/15 transition-colors hover:bg-lemon/90">
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white text-ink"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden><rect x="3" y="4.5" width="14" height="12.5" rx="2.5" stroke="currentColor" strokeWidth="1.5" /><path d="M3 8.5h14M7 2.5v3.5M13 2.5v3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg></span>
-          <span className="min-w-0 flex-1"><span className="block font-medium text-ink">{noSlots} active mentor{noSlots === 1 ? " has" : "s have"} no open times in the next 14 days</span><span className="block text-sm text-ink-soft">Students can&rsquo;t book them. A nudge to add availability usually helps.</span></span>
+          <span className="min-w-0 flex-1"><span className="block font-medium text-ink">{noSlots} active mentor{noSlots === 1 ? " has" : "s have"} no open times in the next 14 days</span><span className="block text-sm text-ink-soft">Mentees can&rsquo;t book them. A nudge to add availability usually helps.</span></span>
           <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-white px-3.5 py-1.5 text-sm font-medium text-ink shadow-sm">Show<svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden className="transition-transform group-hover:translate-x-0.5"><path d="M7.5 5l5 5-5 5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg></span>
         </button>
       )}
@@ -768,10 +769,10 @@ function Bookings() {
     <Panel title="Bookings" action={data ? <span className="text-sm text-ink-soft">{data.length} shown</span> : undefined}>
       <FilterChips className="mb-4" options={[...["", "PENDING_PAYMENT", "CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW"].map((k) => [k, k ? STATUS_LABEL[k] : "All"] as const), ["REPORTED", "Mentor reports"] as const]} value={status} onChange={setStatus} counts={reported.data?.length ? { REPORTED: reported.data.length } : {}} highlight="REPORTED" label="Filter bookings" />
       {error && <Alert>{error}</Alert>}
-      {loading ? <Skeleton className="h-48" /> : !data?.length ? <EmptyState title="No bookings" description="Bookings appear here as students book sessions." /> : (
+      {loading ? <Skeleton className="h-48" /> : !data?.length ? <EmptyState title="No bookings" description="Bookings appear here as mentees book sessions." /> : (
         <div className="-mx-6 overflow-x-auto sm:-mx-7">
           <table className="w-full min-w-[860px] text-left text-sm">
-            <thead className="text-xs text-ink-soft"><tr className="border-y border-line bg-paper/60">{["Booking", "Student", "Mentor", "When", "Amount", "Payment", "Status"].map((h) => <th key={h} className="px-4 py-3 font-medium first:pl-6 last:pr-6 sm:first:pl-7 sm:last:pr-7">{h}</th>)}</tr></thead>
+            <thead className="text-xs text-ink-soft"><tr className="border-y border-line bg-paper/60">{["Booking", "Mentee", "Mentor", "When", "Amount", "Payment", "Status"].map((h) => <th key={h} className="px-4 py-3 font-medium first:pl-6 last:pr-6 sm:first:pl-7 sm:last:pr-7">{h}</th>)}</tr></thead>
             <tbody className="divide-y divide-line">{data.map((b) => {
               const why = cancelExplanation(b);
               return (
@@ -802,12 +803,12 @@ const COMMISSION = [
   { key: "commission_professional", label: "Professional", hint: "Tier 1 · first session with a mentor", tone: "bg-sky" },
   { key: "commission_senior_specialist", label: "Senior Specialist", hint: "Tier 2 · first session with a mentor", tone: "bg-mint" },
   { key: "commission_executive", label: "Executive / Industry Leader", hint: "Tier 3 · first session with a mentor", tone: "bg-lilac" },
-  { key: "repeat_commission_percent", label: "Returning student", hint: "Any tier · another 1:1 with the same mentor", tone: "bg-lemon" },
+  { key: "repeat_commission_percent", label: "Returning mentee", hint: "Any tier · another 1:1 with the same mentor", tone: "bg-lemon" },
 ] as const;
 
 const SETTING_NAMES: Record<string, string> = {
   commission_professional: "Professional commission", commission_senior_specialist: "Senior Specialist commission", commission_executive: "Executive commission",
-  repeat_commission_percent: "Returning student commission", reschedule_notice_hours: "Cancellation and rescheduling deadline", group_price_percent: "Group seat price",
+  repeat_commission_percent: "Returning mentee commission", reschedule_notice_hours: "Cancellation and rescheduling deadline", group_price_percent: "Group seat price",
 };
 
 function SettingsTab({ role }: { role: "OWNER" | "OPERATIONS" | "FINANCE" }) {
@@ -914,11 +915,11 @@ function PricingSettings() {
         )}
       </SettingsSection>
 
-      <SettingsSection title="Bank app & QR" text="Students paying in PKR can scan your QR code or transfer from any banking app, then send the transaction ID. You approve each payment in the Overview after checking your bank statement.">
+      <SettingsSection title="Bank app & QR" text="Mentees paying in PKR can scan your QR code or transfer from any banking app, then send the transaction ID. You approve each payment in the Overview after checking your bank statement.">
         <BankSettings />
       </SettingsSection>
 
-      <SettingsSection title="Platform commission" text="The platform's share of each paid session; the rest goes to the mentor. A lower rate applies when a student books another 1:1 with a mentor they've already met. Each booking keeps the rate in force when it was made.">
+      <SettingsSection title="Platform commission" text="The platform's share of each paid session; the rest goes to the mentor. A lower rate applies when a mentee books another 1:1 with a mentor they've already met. Each booking keeps the rate in force when it was made.">
         <div className="grid gap-4 sm:grid-cols-2">
           {COMMISSION.map(({ key, label, hint, tone }) => {
             const current = settings.data?.[key] ?? (key.startsWith("commission_") ? settings.data?.commission_percent : undefined);
@@ -942,7 +943,7 @@ function PricingSettings() {
 
       <SettingsSection title="Booking rules" text="Platform-wide rules. Changes apply to new bookings straight away.">
         <div className="grid gap-4 sm:grid-cols-2">
-          {([["reschedule_notice_hours", "Cancellation and rescheduling deadline", "How long before a session a student can still cancel for a full refund or move it. After this there is no refund. Default is 48 hours (2 days).", "hours", undefined], ["group_price_percent", "Group seat price", "Each group seat as a share of the mentor's 1:1 price. Default is 40%.", "%", 100]] as const).map(([k, label, hint, unit, max]) => (
+          {([["reschedule_notice_hours", "Cancellation and rescheduling deadline", "How long before a session a mentee can still cancel for a full refund or move it. After this there is no refund. Default is 48 hours (2 days).", "hours", undefined], ["group_price_percent", "Group seat price", "Each group seat as a share of the mentor's 1:1 price. Default is 40%.", "%", 100]] as const).map(([k, label, hint, unit, max]) => (
             <div key={k} className="flex flex-col rounded-3xl bg-white p-5 ring-1 ring-line sm:p-6">
               <p className="font-display text-2xl leading-tight text-ink">{label}</p>
               <p className="mb-4 mt-1.5 text-xs leading-relaxed text-ink-soft">{hint}</p>

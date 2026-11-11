@@ -60,7 +60,7 @@ function Dashboard() {
       <DashboardHero
         eyebrow={<><span>Mentor dashboard</span>{p && <Badge tone={p.status === "ACTIVE" ? "forest" : p.status === "ONBOARDING" ? "brass" : "rust"}>{STATUS_LABEL[p.status] ?? p.status}</Badge>}</>}
         title={<>{greeting()}, <Mark color="mint">{p ? p.name.split(" ")[0] : "mentor"}</Mark></>}
-        subtitle={upcoming[0] ? `Your next session is ${relative(upcoming[0].startAt, now)}, with ${upcoming[0].studentName}.` : toClose.length ? `${toClose.length} session${toClose.length > 1 ? "s" : ""} need an outcome from you.` : "No sessions booked yet. Publishing more times helps students find you."}
+        subtitle={upcoming[0] ? `Your next session is ${relative(upcoming[0].startAt, now)}, with ${upcoming[0].studentName}.` : toClose.length ? `${toClose.length} session${toClose.length > 1 ? "s" : ""} need an outcome from you.` : "No sessions booked yet. Publishing more times helps mentees find you."}
         actions={<>{p && p.status === "ACTIVE" && <Button href={`/mentors/${p.slug}`} variant="secondary">View public profile</Button>}<Button onClick={() => goTo("Availability")}>Add availability</Button></>}
       >
         <div className="mt-10 grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -68,7 +68,7 @@ function Dashboard() {
           <StatTile label="Needs your outcome" value={bookings.loading ? "–" : toClose.length} tone={toClose.length ? "lemon" : "white"} delay={60} onClick={() => goTo("Sessions")} />
           <StatTile label="Open slots" value={slots.loading ? "–" : openSlots} tone="mint" delay={120} onClick={() => goTo("Availability")} />
           <StatTile label={earnings.data?.commissionConfigured ? "Your earnings" : "Booked value"} value={formatMoney((earnings.data?.commissionConfigured ? totals?.payoutMinor : totals?.grossMinor) ?? 0, currency)} tone="peach" delay={180} onClick={() => goTo("Payouts")}
-            note={earnings.data?.commissionConfigured && earnings.data.tierPercent != null ? `After ${earnings.data.tierPercent}% platform fee, ${earnings.data.repeatPercent}% for returning students` : "Payout terms are confirmed by POINT B."} />
+            note={earnings.data?.commissionConfigured && earnings.data.tierPercent != null ? `After ${earnings.data.tierPercent}% platform fee, ${earnings.data.repeatPercent}% for returning mentees` : "Payout terms are confirmed by POINT B."} />
         </div>
       </DashboardHero>
 
@@ -172,17 +172,17 @@ function PromoCodes({ live, repeatPercent }: { live: boolean; repeatPercent: num
     <div className="space-y-10">
       <MyReferralCodes />
       <div className="grid gap-3 sm:grid-cols-3">
-        {[["Invite them back", "Ask a student to book again at the end of a session, and send them a code here."], ["Up to 50% off", "You choose the discount, from 5% to 50%. It comes off the session price."], [`${repeatPercent}% platform fee`, "Every 1:1 with a returning student has a lower platform fee, so more of the price is yours."]].map(([t, d], i) => (
+        {[["Invite them back", "Ask a mentee to book again at the end of a session, and send them a code here."], ["Up to 50% off", "You choose the discount, from 5% to 50%. It comes off the session price."], [`${repeatPercent}% platform fee`, "Every 1:1 with a returning mentee has a lower platform fee, so more of the price is yours."]].map(([t, d], i) => (
           <div key={t} className={`rounded-3xl p-5 ${["bg-mint/60", "bg-lemon/60", "bg-sky/60"][i]}`}><p className="font-display text-2xl text-ink">{t}</p><p className="mt-1 text-sm leading-relaxed text-ink/70">{d}</p></div>
         ))}
       </div>
       {msg && <Alert tone={msg.tone}>{msg.text}</Alert>}
 
       <section>
-        <h2 className="font-display text-3xl text-ink">Your students</h2>
-        <p className="mt-1 text-sm text-ink-soft">Students who have had a paid session with you. Each can hold one unused code from you at a time.</p>
+        <h2 className="font-display text-3xl text-ink">Your mentees</h2>
+        <p className="mt-1 text-sm text-ink-soft">Mentees who have had a paid session with you. Each can hold one unused code from you at a time.</p>
         {!live && <div className="mt-4"><Alert tone="info">You can send promo codes once your profile is live.</Alert></div>}
-        {list.length === 0 ? <div className="mt-5"><EmptyState title="No students yet" description="After your first paid session, the student appears here and you can invite them back with a code." /></div> : (
+        {list.length === 0 ? <div className="mt-5"><EmptyState title="No mentees yet" description="After your first paid session, the mentee appears here and you can invite them back with a code." /></div> : (
           <div className="mt-5 overflow-hidden rounded-3xl bg-white ring-1 ring-line">
             {list.map((st, i) => (
               <div key={st.id} className={i ? "border-t border-line" : ""}>
@@ -198,7 +198,7 @@ function PromoCodes({ live, repeatPercent }: { live: boolean; repeatPercent: num
                     <div className="flex items-baseline justify-between"><p className="text-sm font-medium text-ink">Discount</p><p className="font-display text-3xl tabular-nums text-ink">{form.percentOff}% off</p></div>
                     <input type="range" min={5} max={50} step={5} value={form.percentOff} onChange={(e) => setForm({ ...form, percentOff: Number(e.target.value) })} className="mt-2 w-full accent-ink" aria-label="Discount percentage" />
                     <div className="flex justify-between text-[11px] text-ink-soft"><span>5%</span><span>50% maximum</span></div>
-                    <div className="mt-4"><Field label="Note to the student (optional)"><input className="input" maxLength={300} value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} placeholder={`e.g. Great talking today. Let's pick up on your CV next time.`} /></Field></div>
+                    <div className="mt-4"><Field label="Note to the mentee (optional)"><input className="input" maxLength={300} value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} placeholder={`e.g. Great talking today. Let's pick up on your CV next time.`} /></Field></div>
                     <div className="mt-4 flex flex-wrap justify-end gap-2">
                       <Button size="sm" variant="secondary" disabled={busy === "send"} onClick={() => setForm(null)}>Cancel</Button>
                       <Button size="sm" disabled={busy === "send"} onClick={send}>{busy === "send" ? <Spinner /> : `Email code to ${st.name.split(" ")[0]}`}</Button>
@@ -251,8 +251,8 @@ function Feedback({ loading, items }: { loading: boolean; items: MyReview[] }) {
   );
   return (
     <div className="space-y-6">
-      <p className="max-w-2xl text-sm text-ink-soft">Every piece of feedback from your students is shown here. The POINT B team reviews it and decides what appears on your public profile and counts towards your rating, so ratings stay fair for everyone. If you think a review breaks the rules, contact support.</p>
-      {items.length === 0 ? <EmptyState title="No feedback yet" description="After a session finishes, the student is invited to leave feedback, and it appears here." /> : <div className="space-y-3">{items.map(card)}</div>}
+      <p className="max-w-2xl text-sm text-ink-soft">Every piece of feedback from your mentees is shown here. The POINT B team reviews it and decides what appears on your public profile and counts towards your rating, so ratings stay fair for everyone. If you think a review breaks the rules, contact support.</p>
+      {items.length === 0 ? <EmptyState title="No feedback yet" description="After a session finishes, the mentee is invited to leave feedback, and it appears here." /> : <div className="space-y-3">{items.map(card)}</div>}
     </div>
   );
 }
@@ -281,7 +281,7 @@ function Sessions({ loading, upcoming, toClose, history, now, reload }: { loadin
       {toClose.length > 0 && (
         <section>
           <h2 className="font-display text-3xl text-ink">Record the outcome</h2>
-          <p className="mt-1 text-sm text-ink-soft">Marking a session completed emails the student a feedback request.</p>
+          <p className="mt-1 text-sm text-ink-soft">Marking a session completed emails the mentee a feedback request.</p>
           <div className="mt-5 space-y-3">
             {closing.map((b) => (
               <div key={b.id} className="flex flex-wrap items-center justify-between gap-4 rounded-3xl border-l-4 border-amber bg-white p-5 ring-1 ring-line sm:p-6">
@@ -297,7 +297,7 @@ function Sessions({ loading, upcoming, toClose, history, now, reload }: { loadin
                 <div className="flex flex-wrap gap-2">
                   {b.meetingLink && new Date(b.endAt).getTime() + 3600_000 > now && <a href={b.meetingLink} target="_blank" rel="noreferrer" className="rounded-full bg-paper-dim px-4 py-2 text-sm font-medium text-ink hover:bg-line">Join call</a>}
                   <Button size="sm" disabled={!!busy} onClick={() => act(b.reference, "complete")}>{busy === b.reference + "complete" ? <Spinner /> : "Mark completed"}</Button>
-                  {b.hostStartedAt && <Button size="sm" variant="ghost" disabled={!!busy} onClick={() => setConfirmingNoShow(b.reference)}>Student didn&rsquo;t join</Button>}
+                  {b.hostStartedAt && <Button size="sm" variant="ghost" disabled={!!busy} onClick={() => setConfirmingNoShow(b.reference)}>Mentee didn&rsquo;t join</Button>}
                 </div>
                 {confirmingNoShow === b.reference && (
                   <div className="flex w-full flex-wrap items-center justify-between gap-3 rounded-2xl bg-paper p-4">
@@ -319,7 +319,7 @@ function Sessions({ loading, upcoming, toClose, history, now, reload }: { loadin
         <h2 className="font-display text-3xl text-ink">Upcoming sessions</h2>
         <div className="mt-5 space-y-3">
           {loading ? <><Skeleton className="h-36 rounded-3xl" /><Skeleton className="h-36 rounded-3xl" /></> : upcoming.length === 0 ? (
-            <EmptyState title="No upcoming sessions" description="When a student books and pays, their preparation notes will appear here." />
+            <EmptyState title="No upcoming sessions" description="When a mentee books and pays, their preparation notes will appear here." />
           ) : upcoming.map((b, i) => (
             <Reveal key={b.id} delay={i * 60}>
               <div className="rounded-3xl bg-white p-5 ring-1 ring-line sm:p-6">
@@ -338,7 +338,7 @@ function Sessions({ loading, upcoming, toClose, history, now, reload }: { loadin
                   </div>
                 </div>
                 <details className="group mt-4 rounded-2xl bg-paper-dim px-4 py-3">
-                  <summary className="flex cursor-pointer items-center justify-between text-sm font-medium text-ink">Student&rsquo;s preparation notes<span className="faq-plus text-lg font-light transition-transform">+</span></summary>
+                  <summary className="flex cursor-pointer items-center justify-between text-sm font-medium text-ink">Mentee&rsquo;s preparation notes<span className="faq-plus text-lg font-light transition-transform">+</span></summary>
                   <dl className="mt-3 space-y-2 text-sm text-ink-soft">
                     <div><dt className="font-medium text-ink">Current situation</dt><dd>{b.currentSituation}</dd></div>
                     <div><dt className="font-medium text-ink">What would make this useful</dt><dd>{b.usefulOutcome}</dd></div>
@@ -401,7 +401,7 @@ function ProfileEditor({ p, onSaved }: { p: Profile; onSaved: () => unknown }) {
     <div className="grid gap-8 lg:grid-cols-[1fr_340px]">
       <div className="space-y-6">
         <Panel title="About you">
-          <p className="-mt-3 mb-5 text-sm text-ink-soft">This is what students see on your public profile. Write in your own voice and keep claims specific and accurate.</p>
+          <p className="-mt-3 mb-5 text-sm text-ink-soft">This is what mentees see on your public profile. Write in your own voice and keep claims specific and accurate.</p>
           <div className="space-y-5">
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Professional title"><input className="input" value={f.title} onChange={(e) => set("title", e.target.value)} /></Field>
@@ -557,7 +557,7 @@ function MyReferralCodes() {
       <div className="grid gap-6 p-6 sm:p-8 lg:grid-cols-[1fr_auto] lg:items-center">
         <div>
           <p className="text-xs font-medium uppercase tracking-[0.14em] text-lime">Your POINT B referral code</p>
-          <h2 className="mt-3 font-display text-3xl leading-tight sm:text-4xl">Share it. Students save, you&rsquo;re paid in full.</h2>
+          <h2 className="mt-3 font-display text-3xl leading-tight sm:text-4xl">Share it. Mentees save, you&rsquo;re paid in full.</h2>
           <p className="mt-3 max-w-xl text-sm leading-relaxed text-white/70">
             Anyone who books a 1:1 with you using this code gets a discount, and POINT B covers it. Your pay is worked out on your full session price{first ? `, ${first}` : ""}.
           </p>
@@ -570,7 +570,7 @@ function MyReferralCodes() {
                 <div className="flex items-center justify-between gap-4">
                   <button type="button" onClick={() => copy(c.id, c.code)} className="text-left" title="Copy code">
                     <span className="block font-mono text-2xl font-semibold tracking-[0.14em]">{c.code}</span>
-                    <span className="text-xs text-white/60">{copied === c.id ? "Copied" : `${c.percentOff}% off for students · tap to copy`}</span>
+                    <span className="text-xs text-white/60">{copied === c.id ? "Copied" : `${c.percentOff}% off for mentees · tap to copy`}</span>
                   </button>
                   <span className="rounded-full bg-lime px-3 py-1 text-xs font-semibold text-ink">{c.state === "ACTIVE" ? `${c.bookings} booked` : c.state === "EXPIRED" ? "Ended" : "Limit reached"}</span>
                 </div>

@@ -15,7 +15,7 @@ const TOPICS = SUPPORT_TOPICS;
 const SHORTCUTS = [
   { tone: "bg-sky", title: "Manage a booking", text: "Cancel or reschedule a session, or find your meeting link, from your dashboard.", href: "/dashboard/student", cta: "Open dashboard" },
   { tone: "bg-mint", title: "Cancelling or rescheduling", text: "Cancel for a full refund, or move your session for free, up to {notice} before it starts.", href: "/legal?tab=refunds", cta: "Read the policy" },
-  { tone: "bg-peach", title: "Mentor with us", text: "Share what you know with students who are a few steps behind you.", href: "/become-a-mentor", cta: "How it works" },
+  { tone: "bg-peach", title: "Mentor with us", text: "Share what you know with students and professionals who are a few steps behind you.", href: "/become-a-mentor", cta: "How it works" },
 ];
 
 export default function ContactPage() {

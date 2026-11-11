@@ -42,7 +42,7 @@ export class NotificationsService {
     try {
       await this.transport.sendMail({
         from: this.from ?? 'POINT B Mentors <no-reply@pointb.example>',
-        to: toEmail, subject, ...(opts.replyTo ? { replyTo: opts.replyTo } : {}), ...(({ html, text }) => ({ html, text }))(renderEmail(subject, body, opts)),
+        to: toEmail, subject, ...(opts.replyTo ? { replyTo: opts.replyTo } : {}), ...renderEmail(subject, body, opts),
       });
       this.log.log(`email -> ${toEmail}: ${subject}`);
     } catch (e) {

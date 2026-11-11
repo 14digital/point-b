@@ -109,18 +109,18 @@ export class AdminOpsService {
     const u = await this.prisma.user.findFirst({ where: { id, role: 'STUDENT' } });
     if (!u) throw new NotFoundException('Student not found');
     const active = await this.prisma.booking.count({ where: { studentId: id, status: { in: ['PENDING_PAYMENT', 'CONFIRMED'] } } });
-    if (active) throw new BadRequestException(`This student has ${active} upcoming or unpaid booking${active === 1 ? '' : 's'}. Cancel or complete them first.`);
+    if (active) throw new BadRequestException(`This mentee has ${active} upcoming or unpaid booking${active === 1 ? '' : 's'}. Cancel or complete them first.`);
     await this.prisma.user.update({
       where: { id },
       data: {
-        name: 'Erased student', email: `erased-${id}@erased.invalid`, phone: null, dateOfBirth: null, guardianEmail: null, whatsappAlerts: false,
+        name: 'Erased mentee', email: `erased-${id}@erased.invalid`, phone: null, dateOfBirth: null, guardianEmail: null, whatsappAlerts: false,
         isActive: false, suspendedReason: null, anonymizedAt: new Date(), passwordHash: await bcrypt.hash(randomBytes(24).toString('hex'), 10), resetTokenHash: null,
       },
     });
     await this.prisma.savedMentor.deleteMany({ where: { userId: id } });
     const tickets = await this.prisma.supportTicket.findMany({ where: { OR: [{ userId: id }, { email: u.email }] }, select: { id: true, urgent: true } });
     for (const t of tickets) {
-      await this.prisma.supportTicket.update({ where: { id: t.id }, data: { name: 'Erased student', email: `erased-${id}@erased.invalid`, userId: id, ...(t.urgent ? {} : { message: '[Removed when the account was erased]' }) } });
+      await this.prisma.supportTicket.update({ where: { id: t.id }, data: { name: 'Erased mentee', email: `erased-${id}@erased.invalid`, userId: id, ...(t.urgent ? {} : { message: '[Removed when the account was erased]' }) } });
     }
     await this.prisma.activityEvent.deleteMany({ where: { userId: id } });
     await this.audit(adminId, 'STUDENT_ERASED', 'User', id, 'Personal data erased on request');
@@ -240,7 +240,7 @@ export class AdminOpsService {
     if (!STAFF_ROLES.includes(dto.staffRole)) throw new BadRequestException('Choose a role');
     const email = dto.email.trim().toLowerCase();
     const existing = await this.prisma.user.findUnique({ where: { email } });
-    if (existing && existing.role !== 'ADMIN') throw new ConflictException('That email belongs to a student or mentor account. Use a different email for team access.');
+    if (existing && existing.role !== 'ADMIN') throw new ConflictException('That email belongs to a mentee or mentor account. Use a different email for team access.');
     if (existing?.isActive) throw new ConflictException('This person is already on the team.');
     const user = existing
       ? await this.prisma.user.update({ where: { id: existing.id }, data: { isActive: true, staffRole: dto.staffRole, name: dto.name.trim() } })

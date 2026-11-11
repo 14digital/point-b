@@ -132,13 +132,13 @@ function AddAvailability({ existing, reload }: { existing: Set<number>; reload: 
       </div>
 
       <div className="mt-5 grid grid-cols-2 gap-2">
-        {([["ONE_TO_ONE", "1:1 session", "Private, full price"], ["GROUP", "Group session", "Lower price per student"]] as const).map(([k, label, hint]) => (
+        {([["ONE_TO_ONE", "1:1 session", "Private, full price"], ["GROUP", "Group session", "Lower price per mentee"]] as const).map(([k, label, hint]) => (
           <button key={k} type="button" aria-pressed={kind === k} onClick={() => setKind(k)} className={`rounded-2xl border px-4 py-3 text-left text-xs transition-colors ${kind === k ? "border-ink bg-white ring-1 ring-ink" : "border-line bg-white hover:border-ink/30"}`}>
             <span className="block text-sm font-medium text-ink">{label}</span><span className="text-ink-soft">{hint}</span>
           </button>
         ))}
       </div>
-      {kind === "GROUP" && <div className="mt-4"><Field label="Seats per group session" hint="2 to 10 students"><input type="number" className="input" min={2} max={10} value={capacity} onChange={(e) => setCapacity(Math.min(10, Math.max(2, Number(e.target.value) || 2)))} /></Field></div>}
+      {kind === "GROUP" && <div className="mt-4"><Field label="Seats per group session" hint="2 to 10 mentees"><input type="number" className="input" min={2} max={10} value={capacity} onChange={(e) => setCapacity(Math.min(10, Math.max(2, Number(e.target.value) || 2)))} /></Field></div>}
 
       {mode === "weekly" ? (
         <>
@@ -284,7 +284,7 @@ export function Availability({ slots, loading, reload }: { slots: MySlot[] | nul
         </div>
         {notice && <div className="mt-4"><Alert tone={notice.tone}>{notice.text}</Alert></div>}
         {loading && !slots ? <Skeleton className="mt-5 h-40 rounded-3xl" /> : grouped.length === 0 ? (
-          <div className="mt-5"><EmptyState title="No slots published" description="Students can only book times you publish here." /></div>
+          <div className="mt-5"><EmptyState title="No slots published" description="Mentees can only book times you publish here." /></div>
         ) : (
           <div className="mt-5 space-y-3">
             {shown.map((g) => <DayCard key={g.key} iso={g.iso} slots={g.slots.map((s) => byId.get(s.id)!)} existing={existing} reload={reload} onNotice={setNotice} />)}

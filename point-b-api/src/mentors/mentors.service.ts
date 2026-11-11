@@ -1,3 +1,4 @@
+import { TOPICS, topicsFor } from '../common/topics';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -60,7 +61,8 @@ export class MentorsService {
         { expertise: { has: q.q } },
       ];
     }
-    const rows = await this.prisma.mentorProfile.findMany({ where, include: { user: { select: { name: true } } } });
+    const all = await this.prisma.mentorProfile.findMany({ where, include: { user: { select: { name: true } } } });
+    const rows = q.topic ? all.filter((r) => topicsFor(r).includes(q.topic!)) : all;
     let items = await Promise.all(rows.map((r) => this.decorate(r, region)));
     const sort = q.sort ?? 'soonest';
     items.sort((a, b) => {
@@ -73,10 +75,24 @@ export class MentorsService {
     return { total: items.length, page, limit, items: items.slice((page - 1) * limit, page * limit) };
   }
 
+  /** Every topic, industry and language live mentors offer, plus how many mentors offer each (for the filters). */
   async facets() {
-    const rows = await this.prisma.mentorProfile.findMany({ where: { status: 'ACTIVE' }, select: { expertise: true, industries: true, languages: true } });
+    const rows = await this.prisma.mentorProfile.findMany({ where: { status: 'ACTIVE' }, select: { expertise: true, industries: true, languages: true, level: true, category: true, helpTopics: true, title: true } });
     const uniq = (k: 'expertise' | 'industries' | 'languages') => [...new Set(rows.flatMap((r) => r[k]))].sort();
-    return { expertise: uniq('expertise'), industries: uniq('industries'), languages: uniq('languages') };
+    const tally = (values: string[]) => values.reduce<Record<string, number>>((m, v) => ((m[v] = (m[v] ?? 0) + 1), m), {});
+    const perTopic = tally(rows.flatMap((r) => topicsFor(r)));
+    return {
+      expertise: uniq('expertise'), industries: uniq('industries'), languages: uniq('languages'),
+      // The main topics, in their set order, with how many live mentors are under each (empty ones left out).
+      topics: TOPICS.map((t) => ({ key: t.key, label: t.label, count: perTopic[t.key] ?? 0 })).filter((t) => t.count > 0),
+      counts: {
+        total: rows.length,
+        expertise: tally(rows.flatMap((r) => [...new Set(r.expertise)])),
+        languages: tally(rows.flatMap((r) => [...new Set(r.languages)])),
+        level: tally(rows.map((r) => r.level)),
+        category: tally(rows.map((r) => r.category)),
+      },
+    };
   }
 
   async getBySlug(slug: string, country?: string | null) {
@@ -295,7 +311,7 @@ export class MentorsService {
     if (p.status !== 'ACTIVE') throw new BadRequestException('Promo codes can be sent once your profile is live.');
     if (dto.percentOff > MAX_PROMO_PERCENT) throw new BadRequestException(`A promo code can give at most ${MAX_PROMO_PERCENT}% off.`);
     const had = await this.prisma.booking.findFirst({ where: { mentorId: p.id, studentId: dto.studentId, status: { in: ['CONFIRMED', 'COMPLETED'] } }, include: { student: { select: { id: true, name: true, email: true } } } });
-    if (!had) throw new BadRequestException('Promo codes are for students who have already had a session with you.');
+    if (!had) throw new BadRequestException('Promo codes are for mentees who have already had a session with you.');
     const active = await this.prisma.promoCode.findFirst({ where: { mentorId: p.id, studentId: dto.studentId, usedAt: null, revokedAt: null, expiresAt: { gt: new Date() } } });
     if (active) throw new BadRequestException(`${had.student.name.split(' ')[0]} already has an unused code from you (${active.code}). Revoke it first to send a new one.`);
     let code = '';
@@ -322,7 +338,7 @@ export class MentorsService {
     if (!r) throw new NotFoundException('Promo code not found');
     if (r.usedAt) throw new BadRequestException('This code has already been used.');
     const held = await this.prisma.booking.findFirst({ where: { promoCodeId: r.id, status: 'PENDING_PAYMENT' }, select: { id: true } });
-    if (held) throw new BadRequestException('The student is paying with this code right now. Try again in 15 minutes.');
+    if (held) throw new BadRequestException('Your mentee is paying with this code right now. Try again in 15 minutes.');
     await this.prisma.promoCode.update({ where: { id }, data: { revokedAt: new Date() } });
     return this.myPromos(userId);
   }

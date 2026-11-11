@@ -59,7 +59,7 @@ export function ReferralCodes() {
         {([
           ["Active codes", String(active), "bg-mint/60"],
           ["Paid bookings", String(bookings), "bg-sky/60"],
-          ["Students saved", moneyList(sumBy(all, "discountMinor")), "bg-peach/60"],
+          ["Mentees saved", moneyList(sumBy(all, "discountMinor")), "bg-peach/60"],
           ["Mentors earned", moneyList(sumBy(all, "mentorMinor")), "bg-lilac/60"],
         ] as const).map(([k, v, tone]) => (
           <div key={k} className={`rounded-3xl p-5 ${tone}`}>
@@ -74,13 +74,13 @@ export function ReferralCodes() {
         <div className="grid gap-px bg-white/10 md:grid-cols-[1.1fr_repeat(3,1fr)]">
           <div className="bg-ink p-6 sm:p-7">
             <p className="text-xs font-medium uppercase tracking-[0.14em] text-lime">Company referral codes</p>
-            <p className="mt-3 font-display text-2xl leading-tight sm:text-[1.7rem]">Students save. Mentors are paid in full.</p>
+            <p className="mt-3 font-display text-2xl leading-tight sm:text-[1.7rem]">Mentees save. Mentors are paid in full.</p>
             {!creating && <Button variant="light" size="sm" className="mt-5" onClick={() => setCreating(true)}>+ New referral code</Button>}
           </div>
           {[
             ["1", "Make a code for a mentor", "Choose the mentor and the discount. We suggest a code from their name, like DENIS10."],
             ["2", "The mentor shares it", "They see it on their dashboard with a link that fills in the code at checkout."],
-            ["3", "POINT B covers the discount", "The student pays less, and the mentor's pay is worked out on the full price."],
+            ["3", "POINT B covers the discount", "The mentee pays less, and the mentor's pay is worked out on the full price."],
           ].map(([n, t, d]) => (
             <div key={n} className="bg-ink p-6 sm:p-7">
               <span className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 font-display text-lg text-lime">{n}</span>
@@ -103,7 +103,7 @@ export function ReferralCodes() {
         </div>
         {list.loading ? <div className="grid gap-4 lg:grid-cols-2"><Skeleton className="h-56 rounded-3xl" /><Skeleton className="h-56 rounded-3xl" /></div>
           : list.error ? <Alert>{list.error}</Alert>
-          : !rows.length ? <EmptyState title={all.length ? "No codes here" : "No referral codes yet"} description={all.length ? "Try another filter." : "Make the first one for a mentor. They can share it with students straight away."} />
+          : !rows.length ? <EmptyState title={all.length ? "No codes here" : "No referral codes yet"} description={all.length ? "Try another filter." : "Make the first one for a mentor. They can share it with mentees straight away."} />
           : <div className="grid gap-4 lg:grid-cols-2">{rows.map((r) => <CodeCard key={r.id} r={r} onChanged={list.setData} />)}</div>}
       </div>
     </div>
@@ -179,7 +179,7 @@ function CreateCode({ mentors, loading, onCancel, onCreated }: { mentors: Mentor
           </div>
 
           <div>
-            <div className="mb-2 flex items-baseline justify-between"><p className="text-sm font-medium text-ink">Student discount</p><p className="font-display text-2xl leading-none text-ink">{percent}%</p></div>
+            <div className="mb-2 flex items-baseline justify-between"><p className="text-sm font-medium text-ink">Mentee discount</p><p className="font-display text-2xl leading-none text-ink">{percent}%</p></div>
             <div className="flex flex-wrap gap-2">
               {QUICK.map((p) => (
                 <button key={p} type="button" onClick={() => setPercent(p)} aria-pressed={percent === p}
@@ -203,7 +203,7 @@ function CreateCode({ mentors, loading, onCancel, onCreated }: { mentors: Mentor
             </label>
             <label className="block"><span className="mb-1.5 block text-sm font-medium text-ink">Limit <span className="font-normal text-ink-soft">(optional)</span></span>
               <input className="input" type="number" min={1} placeholder="No limit" value={limit} onChange={(e) => setLimit(e.target.value.replace(/\D/g, ""))} />
-              <span className="mt-1 block text-xs text-ink-soft">Total bookings allowed. Each student can use it once.</span>
+              <span className="mt-1 block text-xs text-ink-soft">Total bookings allowed. Each mentee can use it once.</span>
             </label>
             <label className="block"><span className="mb-1.5 block text-sm font-medium text-ink">Ends on <span className="font-normal text-ink-soft">(optional)</span></span>
               <input className="input" type="date" min={new Date().toISOString().slice(0, 10)} value={ends} onChange={(e) => setEnds(e.target.value)} />
@@ -224,7 +224,7 @@ function CreateCode({ mentors, loading, onCancel, onCreated }: { mentors: Mentor
             <p className="mt-1 text-sm text-ink-soft">{percent}% off a 1:1 with {mentor?.user.name ?? "this mentor"}</p>
           </div>
           {mentor && <Example mentor={mentor} percent={percent} />}
-          <p className="mt-5 text-xs leading-relaxed text-ink-soft">Works for 1:1 sessions. Each student can use a code once. You can pause it at any time.</p>
+          <p className="mt-5 text-xs leading-relaxed text-ink-soft">Works for 1:1 sessions. Each mentee can use a code once. You can pause it at any time.</p>
         </aside>
       </div>
     </div>
@@ -237,7 +237,7 @@ function Example({ mentor, percent }: { mentor: MentorOption; percent: number })
   return (
     <dl className="mt-4 space-y-2 rounded-2xl bg-white p-5 text-sm ring-1 ring-line">
       <div className="flex justify-between gap-3"><dt className="text-ink-soft">Session price</dt><dd className="tabular-nums text-ink">{formatMoney(price, mentor.currency)}</dd></div>
-      <div className="flex justify-between gap-3"><dt className="text-ink-soft">Student pays</dt><dd className="tabular-nums font-medium text-ink">{formatMoney(price - off, mentor.currency)}</dd></div>
+      <div className="flex justify-between gap-3"><dt className="text-ink-soft">Mentee pays</dt><dd className="tabular-nums font-medium text-ink">{formatMoney(price - off, mentor.currency)}</dd></div>
       <div className="flex justify-between gap-3 border-t border-dashed border-line pt-2"><dt className="text-ink-soft">Mentor is paid on</dt><dd className="tabular-nums font-medium text-forest">{formatMoney(price, mentor.currency)}</dd></div>
       <div className="flex justify-between gap-3"><dt className="text-ink-soft">POINT B covers</dt><dd className="tabular-nums text-ink">{formatMoney(off, mentor.currency)}</dd></div>
     </dl>
@@ -291,7 +291,7 @@ function CodeCard({ r, onChanged }: { r: Referral; onChanged: (rows: Referral[])
 
       <dl className="mt-4 grid grid-cols-3 gap-3 text-sm">
         <div><dt className="text-xs text-ink-soft">Bookings</dt><dd className="mt-0.5 font-medium tabular-nums text-ink">{r.bookings}{r.maxUses ? <span className="text-ink-soft"> / {r.maxUses}</span> : null}</dd></div>
-        <div><dt className="text-xs text-ink-soft">Students saved</dt><dd className="mt-0.5 truncate font-medium tabular-nums text-ink">{moneyList(sumBy([r], "discountMinor"))}</dd></div>
+        <div><dt className="text-xs text-ink-soft">Mentees saved</dt><dd className="mt-0.5 truncate font-medium tabular-nums text-ink">{moneyList(sumBy([r], "discountMinor"))}</dd></div>
         <div><dt className="text-xs text-ink-soft">Mentor earned</dt><dd className="mt-0.5 truncate font-medium tabular-nums text-forest">{moneyList(sumBy([r], "mentorMinor"))}</dd></div>
       </dl>
       {usage !== null && <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-paper-dim"><div className="h-full rounded-full bg-forest transition-all" style={{ width: `${usage}%` }} /></div>}

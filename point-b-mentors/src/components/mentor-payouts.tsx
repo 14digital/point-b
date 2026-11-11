@@ -200,7 +200,7 @@ function MentorLedgerView({ mentor, currency, eyebrow, query, onBack, onChanged,
                       </span>
                       <div className="min-w-0 flex-1">
                         <p className="text-sm text-ink"><span className="font-medium">{day(s.startAt)}</span> · {time(s.startAt)}</p>
-                        <p className="mt-0.5 truncate text-xs text-ink-soft">{s.studentName} · {s.kind === "GROUP" ? "Group" : "1:1"} · {status}{s.returning ? " · Returning student" : ""} · {s.reference}</p>
+                        <p className="mt-0.5 truncate text-xs text-ink-soft">{s.studentName} · {s.kind === "GROUP" ? "Group" : "1:1"} · {status}{s.returning ? " · Returning mentee" : ""} · {s.reference}</p>
                         <p className="mt-1 text-xs text-ink-soft tabular-nums">{money(s.priceMinor)} − {s.percent == null ? "commission not set" : `${s.percent}% commission`}{s.feeMinor != null ? ` (${money(s.feeMinor)})` : ""}</p>
                       </div>
                       <div className="text-right">

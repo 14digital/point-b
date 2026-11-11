@@ -7,6 +7,8 @@ export class ListMentorsQuery {
   @IsOptional() @IsEnum(MentorCategory) category?: MentorCategory;
   @IsOptional() @IsEnum(MentorLevel) level?: MentorLevel;
   @IsOptional() @IsString() expertise?: string;
+  /** One of the main topics (see common/topics.ts). */
+  @IsOptional() @IsString() topic?: string;
   @IsOptional() @IsString() industry?: string;
   @IsOptional() @IsString() language?: string;
   @IsOptional() @IsString() q?: string;

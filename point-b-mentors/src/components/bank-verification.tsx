@@ -66,7 +66,7 @@ function TransferCard({ t, onDone }: { t: BankTransfer; onDone: (rows: BankTrans
     setBusy(true);
     try {
       onDone(await api<BankTransfer[]>(`/payments/admin/bank-transfers/${t.id}/${kind}`, { body: kind === "reject" ? { reason } : {} }));
-      toast(kind === "approve" ? `Approved. ${t.studentName.split(" ")[0]}'s booking is confirmed and both sides have been notified.` : "Rejected. The slot is released and the student has been told why.");
+      toast(kind === "approve" ? `Approved. ${t.studentName.split(" ")[0]}'s booking is confirmed and both sides have been notified.` : "Rejected. The slot is released and the mentee has been told why.");
     } catch (e) { toast(errMsg(e), "error"); setBusy(false); }
   }
 
@@ -103,7 +103,7 @@ function TransferCard({ t, onDone }: { t: BankTransfer; onDone: (rows: BankTrans
           <ul className="mt-4 flex flex-wrap gap-1.5 text-xs">
             <Check ok={!t.checks.txnReusedIn.length} text={t.txnRef ? (t.checks.txnReusedIn.length ? `ID used on ${t.checks.txnReusedIn.join(", ")}` : "Transaction ID not used before") : "No transaction ID"} neutral={!t.txnRef} />
             {t.hasProof && <Check ok={!t.checks.proofReusedIn.length} text={t.checks.proofReusedIn.length ? `Screenshot reused from ${t.checks.proofReusedIn.join(", ")}` : "Screenshot not seen before"} />}
-            {t.checks.senderMatchesStudent != null && <Check ok={t.checks.senderMatchesStudent} warn text={t.checks.senderMatchesStudent ? "Sender name matches student" : "Sender name differs (could be family)"} />}
+            {t.checks.senderMatchesStudent != null && <Check ok={t.checks.senderMatchesStudent} warn text={t.checks.senderMatchesStudent ? "Sender name matches mentee" : "Sender name differs (could be family)"} />}
             {t.checks.sessionStartsSoon && <Check ok={false} warn text="Session is within 6 hours" />}
           </ul>
         </div>
@@ -112,7 +112,7 @@ function TransferCard({ t, onDone }: { t: BankTransfer; onDone: (rows: BankTrans
       <div className="border-t border-line bg-paper/50 px-4 py-3.5 sm:px-5">
         {mode === "reject" ? (
           <div className="space-y-3">
-            <p className="text-sm font-medium text-ink">Why couldn&rsquo;t it be verified? <span className="font-normal text-ink-soft">The student sees this.</span></p>
+            <p className="text-sm font-medium text-ink">Why couldn&rsquo;t it be verified? <span className="font-normal text-ink-soft">The mentee sees this.</span></p>
             <div className="flex flex-wrap gap-1.5">
               {REASONS.map((r) => <button key={r} type="button" onClick={() => setReason(r)} className={`rounded-full px-3 py-1.5 text-left text-xs transition-colors ${reason === r ? "bg-ink text-white" : "bg-white text-ink ring-1 ring-line hover:ring-ink/40"}`}>{r.replace(/\.$/, "")}</button>)}
             </div>

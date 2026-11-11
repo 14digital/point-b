@@ -189,7 +189,7 @@ export function SignInForm() {
                 </div>
                 {mode === "up" && (
                   <>
-                    <Field label="Date of birth (optional)" hint="Students under 18 need a parent or guardian to give consent before booking.">
+                    <Field label="Date of birth (optional)" hint="Anyone under 18 needs a parent or guardian to give consent before booking.">
                       <input className="input" type="date" max={new Date().toISOString().slice(0, 10)} value={f.dob} onChange={(e) => set("dob", e.target.value)} />
                     </Field>
                     {isMinor && (

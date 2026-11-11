@@ -133,7 +133,7 @@ export function LiveChats({ onChanged }: { onChanged?: () => void }) {
                             </span>
                             <span className="mt-1.5 flex items-center gap-1.5">
                               <ModeChip mode={c.mode} name={c.agentName} />
-                              {c.role && <span className="rounded-full bg-paper px-2 py-0.5 text-[10px] font-medium text-ink-soft">{c.role === "MENTOR" ? "Mentor" : "Student"}</span>}
+                              {c.role && <span className="rounded-full bg-paper px-2 py-0.5 text-[10px] font-medium text-ink-soft">{c.role === "MENTOR" ? "Mentor" : "Mentee"}</span>}
                             </span>
                           </span>
                         </button>
@@ -152,7 +152,7 @@ export function LiveChats({ onChanged }: { onChanged?: () => void }) {
               <div className="chat-wallpaper flex h-full min-h-[420px] flex-col items-center justify-center p-10 text-center">
                 <span className="flex h-16 w-16 items-center justify-center rounded-full bg-white shadow-sm"><Image src="/brand/pointb-mark.png" alt="" width={40} height={40} className="h-10 w-10 object-contain" /></span>
                 <p className="mt-5 font-display text-2xl text-ink">Pick a conversation</p>
-                <p className="mt-2 max-w-sm text-sm text-ink-soft">Read what visitors, students and mentors are asking. Reply yourself whenever you like: the AI steps back while you&rsquo;re in the chat.</p>
+                <p className="mt-2 max-w-sm text-sm text-ink-soft">Read what visitors, mentees and mentors are asking. Reply yourself whenever you like: the AI steps back while you&rsquo;re in the chat.</p>
               </div>
             )}
         </section>

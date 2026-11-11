@@ -40,7 +40,7 @@ export function Reviews({ onChanged }: { onChanged?: () => void }) {
       <Panel title="Feedback">
         <p className="-mt-2 mb-4 text-sm text-ink-soft">Only the POINT B team decides what is published. Approve fair, genuine feedback, including critical feedback. Keep it private only if it breaks the rules: abuse, personal details, or nothing to do with the session.</p>
         <FilterChips className="mb-4" options={FILTERS} value={filter} onChange={setFilter} counts={{ PENDING: waiting }} highlight="PENDING" label="Filter feedback" />
-        {list.loading ? <Skeleton className="h-48 rounded-2xl" /> : list.error ? <Alert>{list.error}</Alert> : !rows.length ? <EmptyState title={filter === "PENDING" ? "Nothing waiting" : "No feedback here"} description={filter === "PENDING" ? "New feedback from students appears here for approval." : "Try another filter."} /> : (
+        {list.loading ? <Skeleton className="h-48 rounded-2xl" /> : list.error ? <Alert>{list.error}</Alert> : !rows.length ? <EmptyState title={filter === "PENDING" ? "Nothing waiting" : "No feedback here"} description={filter === "PENDING" ? "New feedback from mentees appears here for approval." : "Try another filter."} /> : (
           <ul className="space-y-3">{rows.map((r) => <ReviewCard key={r.id} r={r} onChanged={(next) => { list.setData(next); onChanged?.(); }} />)}</ul>
         )}
       </Panel>
@@ -71,7 +71,7 @@ function ReviewCard({ r, onChanged }: { r: AdminReview; onChanged: (rows: AdminR
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-medium text-ink" style={{ backgroundColor: pastelFor(r.studentName) }}>{initials(r.studentName)}</span>
           <div className="min-w-0">
             <p className="text-sm text-ink"><span className="font-medium">{r.studentName}</span> <span className="text-ink-soft">on</span> <a href={`/mentors/${r.mentorSlug}`} target="_blank" rel="noreferrer" className="font-medium underline-offset-4 hover:underline">{r.mentorName}</a></p>
-            <p className="text-xs text-ink-soft">Session {fmtDay(r.sessionAt).replace(/^\w+, /, "")} · <span className="whitespace-nowrap font-mono">{r.reference}</span> · sent {fmtDay(r.createdAt).replace(/^\w+, /, "")}{r.editedAt ? ` · edited by the student ${fmtDay(r.editedAt).replace(/^\w+, /, "")}` : ""}</p>
+            <p className="text-xs text-ink-soft">Session {fmtDay(r.sessionAt).replace(/^\w+, /, "")} · <span className="whitespace-nowrap font-mono">{r.reference}</span> · sent {fmtDay(r.createdAt).replace(/^\w+, /, "")}{r.editedAt ? ` · edited by the mentee ${fmtDay(r.editedAt).replace(/^\w+, /, "")}` : ""}</p>
           </div>
         </div>
         <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${STATE[r.status][1]}`}>{STATE[r.status][0]}</span>

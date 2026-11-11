@@ -21,12 +21,12 @@ type TabId = (typeof TABS)[number]["id"];
 const CONTENT: Record<TabId, { title: string; summary: string; inShort: string[]; sections: { heading: string; body: string }[] }> = {
   terms: {
     title: "Terms of Use",
-    summary: "The ground rules for using POINT B Mentors, for students and mentors alike.",
+    summary: "The ground rules for using POINT B Mentors, for students, professionals and mentors alike.",
     inShort: ["Sessions are 30-minute video calls with screened mentors", "Accurate account details; under-18s need guardian consent", "Mentors follow a code of conduct"],
     sections: [
       {
         heading: "The service",
-        body: "POINT B Mentors connects students and professionals with independent mentors for paid 30-minute video conversations. POINT B screens and approves mentors but does not guarantee specific outcomes from any session.",
+        body: "POINT B Mentors connects students and professionals (“mentees”) with independent mentors for paid 30-minute video conversations. POINT B screens and approves mentors but does not guarantee specific outcomes from any session.",
       },
       {
         heading: "Accounts",
@@ -34,7 +34,7 @@ const CONTENT: Record<TabId, { title: string; summary: string; inShort: string[]
       },
       {
         heading: "Mentor conduct",
-        body: "Mentors agree to a code of conduct before their profile is activated, covering professionalism, honesty about their experience, and appropriate boundaries with students.",
+        body: "Mentors agree to a code of conduct before their profile is activated, covering professionalism, honesty about their experience, and appropriate boundaries with mentees.",
       },
       {
         heading: "Changes to these terms",
@@ -72,15 +72,15 @@ const CONTENT: Record<TabId, { title: string; summary: string; inShort: string[]
     sections: [
       {
         heading: "Cancelling a session",
-        body: "A student can cancel a confirmed session from their dashboard up to {notice} before it starts and receive a full refund to their POINT B balance, which can be used for any future session. Within {notice} of the start, a session can no longer be cancelled and no refund is given. This includes a session the student does not attend.",
+        body: "A mentee can cancel a confirmed session from their dashboard up to {notice} before it starts and receive a full refund to their POINT B balance, which can be used for any future session. Within {notice} of the start, a session can no longer be cancelled and no refund is given. This includes a session the mentee does not attend.",
       },
       {
         heading: "Rescheduling a session",
-        body: "A student can move a confirmed session to another available time with the same mentor, free of charge, up to {notice} before it starts. The original payment carries over. Within {notice} of the start, the session can no longer be moved.",
+        body: "A mentee can move a confirmed session to another available time with the same mentor, free of charge, up to {notice} before it starts. The original payment carries over. Within {notice} of the start, the session can no longer be moved.",
       },
       {
         heading: "If a mentor can\u2019t attend",
-        body: "If a mentor does not join within 10 minutes of the start, the student can report it from the session page or their dashboard. The POINT B team checks what happened and, if it is confirmed, returns the full price to the student\u2019s POINT B balance, whatever the timing. Our support team can also help arrange a new time with the same or another mentor.",
+        body: "If a mentor does not join within 10 minutes of the start, the mentee can report it from the session page or their dashboard. The POINT B team checks what happened and, if it is confirmed, returns the full price to the mentee\u2019s POINT B balance, whatever the timing. Our support team can also help arrange a new time with the same or another mentor.",
       },
       {
         heading: "Disputed sessions",
@@ -90,12 +90,12 @@ const CONTENT: Record<TabId, { title: string; summary: string; inShort: string[]
   },
   safeguarding: {
     title: "Safeguarding",
-    summary: "How we keep every conversation safe, especially for students under 18.",
+    summary: "How we keep every conversation safe, especially for anyone under 18.",
     inShort: ["Every mentor is interviewed before approval", "Sessions stay on the platform\u2019s video link", "Concerns go to the POINT B team and are treated as urgent"],
     sections: [
       {
         heading: "Users under 18",
-        body: "Students under 18 require parental or guardian consent before booking, and bookings for minors are subject to additional review.",
+        body: "Anyone under 18 requires parental or guardian consent before booking, and bookings for minors are subject to additional review.",
       },
       {
         heading: "Mentor vetting",
@@ -103,7 +103,7 @@ const CONTENT: Record<TabId, { title: string; summary: string; inShort: string[]
       },
       {
         heading: "Communication boundaries",
-        body: "Sessions take place through the platform's video link. Mentors and students are not expected to exchange personal contact details, particularly where a student is under 18.",
+        body: "Sessions take place through the platform's video link. Mentors and mentees are not expected to exchange personal contact details, particularly where a mentee is under 18.",
       },
       {
         heading: "Reporting a concern",

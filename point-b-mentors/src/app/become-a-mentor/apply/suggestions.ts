@@ -57,7 +57,7 @@ export function topicsFor(goodAt: string[], industry: string) {
 export const MOTIVATION_STARTERS = [
   "I wish someone had told me earlier that ",
   "When I was starting out, the advice that helped me most was ",
-  "I want to help students avoid the mistakes I made with ",
+  "I want to help mentees avoid the mistakes I made with ",
   "The people I can help most are those who ",
 ];
 
@@ -71,7 +71,7 @@ export function draftMotivation(f: { currentRole: string; industry: string; year
   const strengths = f.strengths.slice(0, 2).map((s) => s.toLowerCase());
   return [
     background && `${background}.`,
-    skills.length > 0 && `I'd like to mentor because I can help students with ${list(skills)}.`,
+    skills.length > 0 && `I'd like to mentor because I can help mentees with ${list(skills)}.`,
     strengths.length > 0 && `${strengths.length > 1 ? "My strongest points are" : "My strongest point is"} ${list(strengths)}.`,
   ].filter(Boolean).join(" ");
 }

@@ -58,13 +58,13 @@ export function BookingDetailModal({ reference, onClose, onChanged }: { referenc
     try {
       if (action === "approve-report" || action === "decline-report") {
         await api(`/bookings/${b.reference}/mentor-report`, { body: { approve: action === "approve-report", note: reason.trim() || undefined } });
-        toast(action === "approve-report" ? "Approved. The price was added to the student\u2019s balance and they\u2019ve been emailed." : "Declined. No refund was issued and the student has been emailed.");
+        toast(action === "approve-report" ? "Approved. The price was added to the mentee\u2019s balance and they\u2019ve been emailed." : "Declined. No refund was issued and the mentee has been emailed.");
         setAction(null); setReason(""); await d.reload(); onChanged();
         return;
       }
       if (action === "cancel") await api(`/bookings/${b.reference}/cancel`, { body: { reason: reason.trim() || "Cancelled by POINT B" } });
       else await api(`/bookings/${b.reference}/${action}`, { method: "POST" });
-      toast(action === "cancel" ? (b.status === "CONFIRMED" ? "Booking cancelled and the price added to the student\u2019s balance. They\u2019ve been emailed." : "Booking cancelled and the slot released.") : action === "complete" ? "Marked as completed. The student has been asked for feedback." : "Marked as a no-show.");
+      toast(action === "cancel" ? (b.status === "CONFIRMED" ? "Booking cancelled and the price added to the mentee\u2019s balance. They\u2019ve been emailed." : "Booking cancelled and the slot released.") : action === "complete" ? "Marked as completed. The mentee has been asked for feedback." : "Marked as a no-show.");
       setAction(null); setReason("");
       await d.reload(); onChanged();
     } catch (e) { toast(errMsg(e), "error"); } finally { setBusy(false); }
@@ -77,20 +77,20 @@ export function BookingDetailModal({ reference, onClose, onChanged }: { referenc
         <>
           <p className="text-sm text-ink">{b.status === "CONFIRMED"
             ? <>Cancel this session and add <span className="font-medium">{money(b.money.paidMinor)}</span> to {b.student.name.split(" ")[0]}&rsquo;s POINT B balance. Nothing is refunded to their card or bank; the balance pays for their next session.</>
-            : "Cancel this booking and release the slot. Nothing has been paid, and any balance it used goes back to the student."}</p>
+            : "Cancel this booking and release the slot. Nothing has been paid, and any balance it used goes back to the mentee."}</p>
           {b.payout && <p className="rounded-xl bg-lemon/60 px-3 py-2 text-xs text-ink">The mentor was already paid {money(b.money.payoutMinor)} for this session on {short(b.payout.createdAt)}. Cancelling won&rsquo;t take that back, so plan to recover it from their next payout.</p>}
-          <textarea className="input min-h-16" maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Reason (shown to the student), e.g. Mentor unavailable due to illness" />
+          <textarea className="input min-h-16" maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Reason (shown to the mentee), e.g. Mentor unavailable due to illness" />
         </>
       )}
       {(action === "approve-report" || action === "decline-report") && (
         <>
           <p className="text-sm text-ink">{action === "approve-report" ? <>Confirm that the mentor didn&rsquo;t join, cancel this session and add <span className="font-medium">{money(b.money.paidMinor)}</span> to {b.student.name.split(" ")[0]}&rsquo;s POINT B balance?</> : <>Decline this report? No refund is issued and the session stays as it is.</>}</p>
           {action === "approve-report" && b.payout && <p className="rounded-xl bg-lemon/60 px-3 py-2 text-xs text-ink">The mentor was already paid {money(b.money.payoutMinor)} for this session on {short(b.payout.createdAt)}. Approving won&rsquo;t take that back, so plan to recover it from their next payout.</p>}
-          <textarea className="input min-h-16" maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Note for the student (optional)" />
+          <textarea className="input min-h-16" maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Note for the mentee (optional)" />
         </>
       )}
-      {action === "complete" && <p className="text-sm text-ink">Mark this session as completed? The student will be asked for feedback.</p>}
-      {action === "no-show" && <p className="text-sm text-ink">Mark the student as a no-show? No refund is issued.</p>}
+      {action === "complete" && <p className="text-sm text-ink">Mark this session as completed? The mentee will be asked for feedback.</p>}
+      {action === "no-show" && <p className="text-sm text-ink">Mark the mentee as a no-show? No refund is issued.</p>}
       <div className="flex justify-end gap-2">
         <button type="button" disabled={busy} onClick={() => setAction(null)} className="rounded-full px-4 py-2 text-sm text-ink ring-1 ring-line hover:ring-ink/40">Back</button>
         <button type="button" disabled={busy} onClick={run} className={`inline-flex min-w-36 items-center justify-center rounded-full px-4 py-2 text-sm font-medium text-white disabled:opacity-60 ${action === "complete" || action === "approve-report" ? "bg-ink" : "bg-rust"}`}>
@@ -123,7 +123,7 @@ export function BookingDetailModal({ reference, onClose, onChanged }: { referenc
         <>
           {b.mentorReportStatus && (
             <div className={`rounded-2xl px-4 py-3 text-sm ${b.mentorReportStatus === "PENDING" ? "bg-lemon/60" : "bg-paper"}`}>
-              <p className="font-medium text-ink">{b.mentorReportStatus === "PENDING" ? "Needs your review: student says the mentor didn\u2019t join" : b.mentorReportStatus === "APPROVED" ? "Mentor report approved and refunded" : "Mentor report declined"}</p>
+              <p className="font-medium text-ink">{b.mentorReportStatus === "PENDING" ? "Needs your review: mentee says the mentor didn\u2019t join" : b.mentorReportStatus === "APPROVED" ? "Mentor report approved and refunded" : "Mentor report declined"}</p>
               <p className="mt-0.5 text-ink-soft">{b.mentorReportedAt ? `Reported ${short(b.mentorReportedAt)}. ` : ""}Our records show the mentor {b.hostStartedAt ? `opened the call room ${short(b.hostStartedAt)}` : "never opened the call room"}.{b.mentorReportNote ? ` Note: ${b.mentorReportNote}` : ""}</p>
             </div>
           )}
@@ -135,7 +135,7 @@ export function BookingDetailModal({ reference, onClose, onChanged }: { referenc
           )}
 
           <section className="grid gap-3 sm:grid-cols-2">
-            <Person label="Student" name={b.student.name} lines={[b.student.email, b.student.phone ?? "No phone"]} />
+            <Person label="Mentee" name={b.student.name} lines={[b.student.email, b.student.phone ?? "No phone"]} />
             <Person label="Mentor" name={b.mentor.user.name} lines={[b.mentor.user.email, LEVEL_LABEL[b.mentor.level]]} href={`/mentors/${b.mentor.slug}`} />
           </section>
 
@@ -147,12 +147,12 @@ export function BookingDetailModal({ reference, onClose, onChanged }: { referenc
               ["Focus", b.agenda],
               ["Rescheduled", b.rescheduleCount ? `${b.rescheduleCount}×${b.rescheduledAt ? `, last on ${short(b.rescheduledAt)}` : ""}` : "No"],
               ["Call room", b.hostStartedAt ? `Mentor opened it ${short(b.hostStartedAt)}` : "Not opened yet"],
-              ["Returning student", b.repeatStudent ? "Yes" : "No"],
+              ["Returning mentee", b.repeatStudent ? "Yes" : "No"],
             ]} />
           </section>
 
           <section>
-            <SectionTitle>Student&rsquo;s preparation notes</SectionTitle>
+            <SectionTitle>Mentee&rsquo;s preparation notes</SectionTitle>
             <div className="space-y-2 text-sm">
               <Note label="Where they are now" text={b.currentSituation} />
               <Note label="What would help" text={b.usefulOutcome} />
@@ -165,17 +165,17 @@ export function BookingDetailModal({ reference, onClose, onChanged }: { referenc
             <Sum lines={[
               ["Price before discounts", money(b.money.listPriceMinor)],
               [b.promo ? `Promo ${b.promo.code} (${b.promo.percentOff}% off)` : "Promo discount", `− ${money(b.money.discountMinor)}`],
-              ["Student paid", money(b.money.paidMinor), true],
-              [`Company revenue${b.money.commissionPercent != null ? ` (${b.money.commissionPercent}%${b.repeatStudent ? ", returning student" : ""})` : ""}`, b.money.feeMinor == null ? "Not configured" : `− ${money(b.money.feeMinor)}`],
+              ["Mentee paid", money(b.money.paidMinor), true],
+              [`Company revenue${b.money.commissionPercent != null ? ` (${b.money.commissionPercent}%${b.repeatStudent ? ", returning mentee" : ""})` : ""}`, b.money.feeMinor == null ? "Not configured" : `− ${money(b.money.feeMinor)}`],
               ["Mentor earns", money(b.money.payoutMinor), true],
             ]} />
             <p className="mt-2 text-xs text-ink-soft">
               {b.payout ? <>Paid to the mentor on {short(b.payout.createdAt)}{b.payout.reference ? `, ref ${b.payout.reference}` : ""}{b.payout.sessions > 1 ? ` (part of a ${money(b.payout.amountMinor)} payout for ${b.payout.sessions} sessions)` : ""}.</>
                 : b.status === "CONFIRMED" || b.status === "COMPLETED" ? "Not paid to the mentor yet." : "No mentor payout for this booking."}
-              {b.walletAppliedMinor ? ` ${money(b.walletAppliedMinor)} of the price was paid from the student's POINT B balance.` : ""}
+              {b.walletAppliedMinor ? ` ${money(b.walletAppliedMinor)} of the price was paid from the mentee's POINT B balance.` : ""}
               {b.money.feeIsEstimate && b.money.feeMinor != null ? " Commission uses today's tier rate, as this booking was made before rates were saved on bookings." : ""}
             </p>
-            {(b.status === "CONFIRMED" || b.status === "COMPLETED" || b.status === "NO_SHOW" || b.payments.some((p) => p.status === "REFUNDED")) && <a href={`/receipt/${b.reference}`} target="_blank" rel="noreferrer" className="mt-2 inline-block text-xs font-medium text-ink underline-offset-4 hover:underline">Student&rsquo;s receipt ↗</a>}
+            {(b.status === "CONFIRMED" || b.status === "COMPLETED" || b.status === "NO_SHOW" || b.payments.some((p) => p.status === "REFUNDED")) && <a href={`/receipt/${b.reference}`} target="_blank" rel="noreferrer" className="mt-2 inline-block text-xs font-medium text-ink underline-offset-4 hover:underline">Mentee&rsquo;s receipt ↗</a>}
           </section>
 
           <section>
@@ -187,7 +187,7 @@ export function BookingDetailModal({ reference, onClose, onChanged }: { referenc
 
           {b.review && (
             <section>
-              <SectionTitle>Student&rsquo;s review</SectionTitle>
+              <SectionTitle>Mentee&rsquo;s review</SectionTitle>
               <div className="rounded-2xl bg-paper px-4 py-3 text-sm">
                 <p className="text-ink"><span className="text-brass">{"★".repeat(b.review.rating)}</span><span className="text-line">{"★".repeat(5 - b.review.rating)}</span> <span className="text-xs text-ink-soft">· {b.review.status === "HIDDEN" ? "Hidden by the mentor" : b.review.status === "PENDING" ? "Waiting for the mentor" : "Public"}</span></p>
                 <p className="mt-1 text-ink-soft">{b.review.comment}</p>

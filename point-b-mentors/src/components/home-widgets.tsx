@@ -24,8 +24,8 @@ export function HeroBadge() {
 
 /** "Topics you can get help with" chips along the bottom of the hero. */
 export function HeroTopics() {
-  const facets = useApi<{ expertise: string[] }>("/mentors/facets");
-  const all = facets.data?.expertise ?? [];
+  const facets = useApi<{ topics?: Topic[] }>("/mentors/facets");
+  const all = facets.data?.topics ?? [];
   const row = useRef<HTMLDivElement>(null);
   const more = useRef<HTMLAnchorElement>(null);
   const [fit, setFit] = useState(all.length);
@@ -57,8 +57,8 @@ export function HeroTopics() {
       <div ref={row} className="flex min-w-0 flex-1 gap-2 overflow-hidden">
         {all.map((x, i) => (
           // Chips that don't fit stay in the DOM (invisible, ordered last) so they can be measured on resize.
-          <Link key={x} data-chip href={`/mentors?expertise=${encodeURIComponent(x)}`} aria-hidden={i >= fit || undefined} tabIndex={i >= fit ? -1 : undefined}
-            className={`${chip} bg-white/15 hover:bg-white/25 ${i >= fit ? "invisible order-2" : ""}`}>{x}</Link>
+          <Link key={x.key} data-chip href={`/mentors?topic=${x.key}`} aria-hidden={i >= fit || undefined} tabIndex={i >= fit ? -1 : undefined}
+            className={`${chip} bg-white/15 hover:bg-white/25 ${i >= fit ? "invisible order-2" : ""}`}>{x.label}</Link>
         ))}
         <Link ref={more} href="/mentors" className={`${chip} order-1 bg-white/30 font-medium hover:bg-white/40 ${hidden > 0 ? "" : "invisible order-3"}`}>+{Math.max(hidden, 1)} more</Link>
       </div>
@@ -97,29 +97,47 @@ export function MentorCarousel() {
   );
 }
 
-const ICONS = [
-  <path key="a" d="M10 3a7 7 0 100 14 7 7 0 000-14zm0 3.5a3.5 3.5 0 110 7 3.5 3.5 0 010-7zM10 9.2v1.6" />,
-  <path key="b" d="M3 15l4.5-4.5 3 3L17 7M12.5 7H17v4.5" />,
-  <path key="c" d="M10 16.5s-6-3.6-6-8a3.4 3.4 0 016-2.2A3.4 3.4 0 0116 8.5c0 4.4-6 8-6 8z" />,
-  <path key="d" d="M4 6.5h12v9H4zM7.5 6.5V4.5h5v2M4 10.5h12" />,
-  <path key="e" d="M7 9a2.5 2.5 0 100-5 2.5 2.5 0 000 5zM13.5 9a2 2 0 100-4 2 2 0 000 4zM2.5 16c0-2.5 2-4.5 4.5-4.5s4.5 2 4.5 4.5M12 11.6c2.6-.4 5 1.4 5 4.4" />,
-  <path key="f" d="M3.5 16.5V9M8.5 16.5V5M13.5 16.5v-5M17 16.5H3" />,
-];
+const p = (d: string) => <path d={d} />;
+/** One icon per main topic (the list lives in the API: common/topics.ts). */
+const TOPIC_ICON: Record<string, ReactNode> = {
+  career: p("M3.5 7.5h13v8.5h-13zM7.5 7.5V5.5a1.5 1.5 0 011.5-1.5h2a1.5 1.5 0 011.5 1.5v2M3.5 11h13"),
+  leadership: p("M10 3l2 4 4.5.6-3.2 3.1.8 4.5L10 13l-4.1 2.2.8-4.5L3.5 7.6 8 7z"),
+  business: p("M3 15l4.5-4.5 3 3L17 7M12.5 7H17v4.5"),
+  startups: p("M10 17s-1-3.5 0-7 4-6.5 6.5-7c-.5 2.5-3.5 5.5-7 6.5S3 10 3 10M6.5 13.5l-2 2"),
+  technology: p("M3.5 4.5h13v9h-13zM7 16.5h6M10 13.5v3M7.5 8l-1.5 1.5L7.5 11M12.5 8l1.5 1.5-1.5 1.5"),
+  ai: p("M7 3.5v2M13 3.5v2M7 14.5v2M13 14.5v2M3.5 7h2M3.5 13h2M14.5 7h2M14.5 13h2M5.5 5.5h9v9h-9zM8.5 8.5h3v3h-3z"),
+  marketing: p("M3.5 8.5v3h2.5l5 3.5v-10l-5 3.5zM14 7.5a3.5 3.5 0 010 5"),
+  finance: p("M3.5 16.5h13M5 14V9M8.5 14V9M11.5 14V9M15 14V9M3 7.5L10 3.5l7 4z"),
+  health: p("M10 16.5s-6-3.6-6-8a3.4 3.4 0 016-2.2A3.4 3.4 0 0116 8.5c0 4.4-6 8-6 8zM7.5 9.5h5M10 7v5"),
+  education: p("M2.5 7.5L10 4l7.5 3.5L10 11zM5.5 9v4c1.2 1.3 2.8 2 4.5 2s3.3-.7 4.5-2V9M17.5 7.5v4"),
+  engineering: p("M10 6.5a3.5 3.5 0 100 7 3.5 3.5 0 000-7zM10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M4.7 15.3l1.4-1.4M13.9 6.1l1.4-1.4"),
+};
 
-/** Topic tiles built from the expertise areas mentors actually offer. */
+type Topic = { key: string; label: string; count: number };
+
+/** Tiles for the main topics: the same list as the mentors page filter, each with how many mentors cover it. */
 export function TopicTiles() {
-  const { data, loading } = useApi<{ expertise: string[] }>("/mentors/facets");
+  const { data, loading } = useApi<{ topics?: Topic[] }>("/mentors/facets");
   if (loading) return <div className="mt-10 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">{Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="aspect-square rounded-3xl" />)}</div>;
-  const topics = data?.expertise.slice(0, 12) ?? [];
+  const topics = data?.topics ?? [];
   if (!topics.length) return null;
   return (
     <div className="mt-10 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
       {topics.map((t, i) => (
-        <Reveal key={t} delay={(i % 6) * 70}><Link href={`/mentors?expertise=${encodeURIComponent(t)}`} className="group flex aspect-square flex-col justify-between rounded-3xl bg-paper-dim p-5 transition-colors hover:bg-ink hover:text-white">
-          <svg width="26" height="26" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden>{ICONS[i % ICONS.length]}</svg>
-          <span className="text-[0.95rem] leading-snug">{t}</span>
+        <Reveal key={t.key} delay={(i % 6) * 70}><Link href={`/mentors?topic=${t.key}`} className="group flex aspect-square flex-col justify-between rounded-3xl bg-paper-dim p-5 transition-colors hover:bg-ink hover:text-white">
+          <svg width="26" height="26" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden>{TOPIC_ICON[t.key] ?? TOPIC_ICON.career}</svg>
+          <span>
+            <span className="block text-[0.95rem] leading-snug">{t.label}</span>
+            <span className="mt-1 block text-xs text-ink-soft transition-colors group-hover:text-white/60">{t.count} mentor{t.count === 1 ? "" : "s"}</span>
+          </span>
         </Link></Reveal>
       ))}
+      {topics.length % 6 !== 0 && (
+        <Reveal delay={(topics.length % 6) * 70}><Link href="/mentors" className="group flex aspect-square flex-col justify-between rounded-3xl bg-ink p-5 text-white transition-colors hover:bg-brass-dark">
+          <svg width="26" height="26" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden className="text-lime"><path d="M4 10h12M11 5l5 5-5 5" /></svg>
+          <span className="block text-[0.95rem] leading-snug">Browse all mentors</span>
+        </Link></Reveal>
+      )}
     </div>
   );
 }

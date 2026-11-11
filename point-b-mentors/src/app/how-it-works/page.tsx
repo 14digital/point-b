@@ -143,7 +143,7 @@ export default function HowItWorksPage() {
           <Reveal delay={80} className="flex h-full flex-col rounded-[2rem] bg-lilac p-8 sm:p-10">
             <p className="text-xs font-medium uppercase tracking-[0.14em] text-ink/60">Group session</p>
             <p className="mt-4 font-display text-4xl text-ink">Learn alongside others</p>
-            <p className="mt-3 flex-1 text-[0.95rem] leading-relaxed text-ink/70">Share the call with a few other students. You hear other people&rsquo;s questions too, at a lower price per seat.</p>
+            <p className="mt-3 flex-1 text-[0.95rem] leading-relaxed text-ink/70">Share the call with a few other students and professionals. You hear other people&rsquo;s questions too, at a lower price per seat.</p>
             <ul className="mt-6 space-y-2 text-sm text-ink">
               {["Small groups", "Questions from different angles", "Lower price per seat"].map((x) => <Check key={x}>{x}</Check>)}
             </ul>

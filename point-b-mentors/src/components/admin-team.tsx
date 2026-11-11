@@ -14,7 +14,7 @@ interface Member { id: string; name: string; email: string; staffRole: StaffRole
 
 export const ROLE_INFO: Record<StaffRole, { label: string; text: string; tone: string }> = {
   OWNER: { label: "Owner", text: "Everything, including pricing, the team and erasing accounts.", tone: "bg-lilac" },
-  OPERATIONS: { label: "Operations", text: "Applications, mentors, bookings, students, reviews and support.", tone: "bg-sky" },
+  OPERATIONS: { label: "Operations", text: "Applications, mentors, bookings, mentees, reviews and support.", tone: "bg-sky" },
   FINANCE: { label: "Finance", text: "Payments to verify, mentor payouts, exports and bookings.", tone: "bg-mint" },
 };
 

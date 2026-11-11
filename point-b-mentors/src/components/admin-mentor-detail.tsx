@@ -75,7 +75,7 @@ export function MentorDetailModal({ id, onClose, onChanged }: { id: string; onCl
           {m.stats.forCancelledMinor > 0 && <Alert tone="info">{formatMoney(m.stats.forCancelledMinor, currency)} already paid to this mentor was for sessions that were later cancelled. Recover it from their next payout, or note it as a goodwill payment.</Alert>}
 
           <section>
-            <SectionTitle aside={<span className={`text-xs ${m.openSlots ? "text-ink-soft" : "font-medium text-rust"}`}>{m.openSlots ? `${m.openSlots} open time${m.openSlots === 1 ? "" : "s"}` : "No open times. Students can't book."}</span>}>Next 14 days</SectionTitle>
+            <SectionTitle aside={<span className={`text-xs ${m.openSlots ? "text-ink-soft" : "font-medium text-rust"}`}>{m.openSlots ? `${m.openSlots} open time${m.openSlots === 1 ? "" : "s"}` : "No open times. Mentees can't book."}</span>}>Next 14 days</SectionTitle>
             <div className="flex items-end gap-1.5 rounded-2xl bg-paper px-3 pb-2 pt-3" role="img" aria-label={`Availability for the next 14 days: ${m.openSlots} open times`}>
               {m.availability.map((a) => {
                 const total = a.open + a.booked;

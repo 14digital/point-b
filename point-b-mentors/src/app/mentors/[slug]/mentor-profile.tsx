@@ -147,7 +147,7 @@ export function MentorProfile() {
                 {[
                   ["bg-peach", "Before", `Share your situation and goal when you book. ${first} reads it ahead of time.`],
                   ["bg-lilac", "During", "A private video call in your browser. No downloads, no small talk needed."],
-                  ["bg-lemon", "After", "Leave with clear next steps, then rate the session to help other students."],
+                  ["bg-lemon", "After", "Leave with clear next steps, then rate the session to help other students and professionals."],
                 ].map(([tone, label, text], i) => (
                   <Reveal key={label} delay={i * 80} className={`rounded-3xl ${tone} p-6`}>
                     <p className="text-xs font-medium uppercase tracking-[0.14em] text-ink/60">{label}</p>
@@ -158,11 +158,11 @@ export function MentorProfile() {
             </Section>
 
             {/* Reviews */}
-            <Section id="reviews" eyebrow="Reviews" title="From students who&rsquo;ve met with them">
+            <Section id="reviews" eyebrow="Reviews" title={`From students and professionals who’ve met ${first}`}>
               {m.reviews.length === 0 ? (
                 <div className="rounded-3xl border border-dashed border-ink/15 px-6 py-12 text-center">
                   <p className="font-display text-2xl text-ink">No reviews yet</p>
-                  <p className="mx-auto mt-2 max-w-sm text-sm text-ink-soft">Only students who complete a session can leave a review, so every rating here is from a real call.</p>
+                  <p className="mx-auto mt-2 max-w-sm text-sm text-ink-soft">Only students and professionals who complete a session can leave a review, so every rating here is from a real call.</p>
                 </div>
               ) : (
                 <>

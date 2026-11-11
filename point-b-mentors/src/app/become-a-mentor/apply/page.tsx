@@ -17,7 +17,7 @@ const INDUSTRIES = ["Banking & Financial Services", "Technology", "Marketing & B
 
 const STEPS = [
   { title: "About you", blurb: "How we can reach you." },
-  { title: "Your experience", blurb: "What students will be learning from." },
+  { title: "Your experience", blurb: "What mentees will be learning from." },
   { title: "Mentoring", blurb: "What you'd like to help with, and why." },
 ];
 
@@ -229,7 +229,7 @@ function ApplyForm() {
           <p className="animate-rise mt-5 text-[1.05rem] leading-relaxed text-ink-soft" style={{ ["--rise-delay" as string]: "120ms" }}>
             {update
               ? "Your answers are filled in below. Make the changes our team asked for, check the review step, and send it back."
-              : "Every mentor is screened and interviewed before their profile goes live, so students know they’re talking to someone who’s really been there."}
+              : "Every mentor is screened and interviewed before their profile goes live, so mentees know they’re talking to someone who’s really been there."}
           </p>
         </div>
 
@@ -345,7 +345,7 @@ function ApplyForm() {
                     <div className="animate-rise space-y-6">
                       <ChipQuestion stem="My strongest points are…" hint="Based on what you picked above." max={10}
                         options={strengthsFor(form.specialistAreas)} value={form.strengths} onChange={(v) => set("strengths", v)} />
-                      <ChipQuestion stem="I can help students with…" hint="We've put the likeliest ones first." max={12} fixed error={errors.topicsOffered}
+                      <ChipQuestion stem="I can help mentees with…" hint="We've put the likeliest ones first." max={12} fixed error={errors.topicsOffered}
                         options={[...new Set([...topicsFor(form.specialistAreas, form.industry), ...AGENDAS])]} value={form.topicsOffered} onChange={(v) => set("topicsOffered", v)} />
                     </div>
                   )}
@@ -353,7 +353,7 @@ function ApplyForm() {
                   <div>
                     <p className="mb-2.5 text-sm font-medium text-ink">How would you like to take part?</p>
                     <div className="grid gap-3 sm:grid-cols-2">
-                      {([["Paid", "Earn a fee for each session, at the rate for your experience level."], ["Voluntary", "Give your time for free. Students still book and prepare the same way."]] as const).map(([opt, d]) => {
+                      {([["Paid", "Earn a fee for each session, at the rate for your experience level."], ["Voluntary", "Give your time for free. Mentees still book and prepare the same way."]] as const).map(([opt, d]) => {
                         const on = form.participation === opt;
                         return (
                           <label key={opt} className={`flex cursor-pointer gap-3 rounded-2xl border p-4 transition-colors ${on ? "border-ink bg-paper" : "border-line hover:border-ink/40"}`}>
@@ -368,7 +368,7 @@ function ApplyForm() {
 
                   <div>
                     <label htmlFor="motivation" className="mb-2.5 block font-display text-2xl text-ink">Why do you want to mentor?</label>
-                    <textarea id="motivation" className={`input min-h-28 leading-relaxed ${errors.motivation ? "border-rust/60" : ""}`} maxLength={2000} value={form.motivation} onChange={(e) => set("motivation", e.target.value)} placeholder="What would you like students to take away from a conversation with you?" />
+                    <textarea id="motivation" className={`input min-h-28 leading-relaxed ${errors.motivation ? "border-rust/60" : ""}`} maxLength={2000} value={form.motivation} onChange={(e) => set("motivation", e.target.value)} placeholder="What would you like mentees to take away from a conversation with you?" />
                     {errors.motivation ? <p className="mt-1.5 text-xs text-rust">{errors.motivation}</p>
                       : <p className="mt-1.5 text-xs text-ink-soft">{drafted ? "This is a starting point. Edit it so it sounds like you." : "A sentence or two is enough."}</p>}
                     {!form.motivation.trim() && (

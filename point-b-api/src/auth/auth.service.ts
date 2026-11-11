@@ -74,7 +74,7 @@ export class AuthService {
       const age = ageOn(dateOfBirth);
       if (age < 13) throw new BadRequestException('You must be at least 13 to use POINT B Mentors');
       if (age < 18 && !dto.guardianEmail) {
-        throw new BadRequestException('A parent or guardian email is required for students under 18');
+        throw new BadRequestException('A parent or guardian email is required for anyone under 18');
       }
     }
     const user = await this.prisma.user.create({

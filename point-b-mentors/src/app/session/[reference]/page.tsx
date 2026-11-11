@@ -113,7 +113,7 @@ function FeedbackPanel({ reference, mentorName, home, bare }: { reference: strin
   return (
     <div className="mx-auto max-w-lg rounded-3xl border border-line bg-white p-6 sm:p-8">
       <h1 className="font-display text-3xl text-ink">How did it go?</h1>
-      <p className="mt-2 text-sm text-ink-soft">Your session with {mentorName} has finished. A minute of feedback helps other students and your mentor.</p>
+      <p className="mt-2 text-sm text-ink-soft">Your session with {mentorName} has finished. A minute of feedback helps your mentor, and others choosing who to talk to.</p>
       <div className="mt-5">{body}</div>
       <Link href={home}><Button variant="secondary" className="mt-6">Back to dashboard</Button></Link>
     </div>

@@ -43,7 +43,7 @@ export default function BecomeMentorPage() {
                 "Working professionals with genuine, recent experience in their field",
                 "People who can explain their thinking clearly, not just their results",
                 "A willingness to give direct, honest answers rather than general encouragement",
-                "Comfort speaking with students and early-career professionals",
+                "Comfort mentoring students and professionals at any stage of their career",
               ].map((item) => (
                 <li key={item} className="flex gap-2.5">
                   <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-forest" />

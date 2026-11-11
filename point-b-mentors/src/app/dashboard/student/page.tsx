@@ -74,7 +74,7 @@ function Dashboard() {
   return (
     <>
       <DashboardHero
-        eyebrow={<><span>Student dashboard</span><span aria-hidden>·</span><span>{user?.timezone}</span></>}
+        eyebrow={<><span>Student &amp; professional dashboard</span><span aria-hidden>·</span><span>{user?.timezone}</span></>}
         title={<>{greeting()}, <Mark>{user?.name.split(" ")[0]}</Mark></>}
         subtitle={next ? `Your next session is ${relative(next.startAt, now)}, with ${next.mentor.name}.` : "Find a mentor who has been where you're going, and book a 30-minute conversation."}
         actions={<><Button href="/mentors">Book a session</Button><Button variant="secondary" onClick={() => setAsking({})}>Get help</Button></>}
@@ -133,7 +133,7 @@ function Dashboard() {
             {needsFeedback.length > 0 && tab !== "Past" && (
               <div className="rounded-3xl bg-mint p-6">
                 <p className="font-display text-2xl text-ink">How did it go?</p>
-                <p className="mt-2 text-sm text-ink/70">You have {needsFeedback.length} session{needsFeedback.length > 1 ? "s" : ""} waiting for feedback. It takes a minute and helps other students choose.</p>
+                <p className="mt-2 text-sm text-ink/70">You have {needsFeedback.length} session{needsFeedback.length > 1 ? "s" : ""} waiting for feedback. It takes a minute and helps other students and professionals choose.</p>
                 <Button size="sm" className="mt-4" onClick={() => setTab("Past")}>Leave feedback</Button>
               </div>
             )}

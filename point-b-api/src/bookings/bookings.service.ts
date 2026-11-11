@@ -82,7 +82,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
       const facts = (who: [string, string]): [string, string][] => [who, ['Starts', emailDate(b.slot.startAt)], ['Reference', b.reference]];
       const cta = { label: 'Join your session', url: link };
       await this.notify.send(b.student.email, `Your session starts in ${mins} minutes`, `Hi ${b.student.name.split(' ')[0]},\n\nYour session with ${b.mentor.user.name} is about to begin. Use the button below to join. Your mentor will be in the room.`, b.student.id, { cta, facts: facts(['Mentor', b.mentor.user.name]), whatsapp: { alert: 'sessionReminder', params: [b.student.name.split(' ')[0], b.mentor.user.name, String(mins), link] } });
-      await this.notify.send(b.mentor.user.email, `Your session starts in ${mins} minutes`, `Hi ${b.mentor.user.name.split(' ')[0]},\n\nYour session with ${b.student.name} is about to begin. You are the host: open the room first and the student will be let in.`, mentor?.userId, { cta, facts: [...facts(['Student', b.student.name]), ['Agenda', b.agenda]] });
+      await this.notify.send(b.mentor.user.email, `Your session starts in ${mins} minutes`, `Hi ${b.mentor.user.name.split(' ')[0]},\n\nYour session with ${b.student.name} is about to begin. You are the host: open the room first and your mentee will be let in.`, mentor?.userId, { cta, facts: [...facts(['Student', b.student.name]), ['Agenda', b.agenda]] });
     }
   }
 
@@ -149,7 +149,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     if (student.dateOfBirth) {
       const age = (Date.now() - student.dateOfBirth.getTime()) / (365.25 * 86400_000);
       if (age < 18 && !student.guardianConsent) {
-        throw new ForbiddenException('A parent or guardian must give consent before students under 18 can book. We have emailed them.');
+        throw new ForbiddenException('A parent or guardian must give consent before anyone under 18 can book. We have emailed them.');
       }
     }
     const slot = await this.prisma.availabilitySlot.findUnique({ where: { id: dto.slotId }, include: { mentor: true } });
@@ -334,7 +334,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
    */
   async reschedule(user: AuthUser, reference: string, newSlotId: string) {
     const b = await this.load(user, reference);
-    if (b.studentId !== user.id) throw new ForbiddenException('Only the student who booked can reschedule');
+    if (b.studentId !== user.id) throw new ForbiddenException('Only the person who booked can reschedule');
     if (b.status !== 'CONFIRMED') throw new BadRequestException('Only confirmed sessions can be rescheduled');
     const hours = await this.noticeHours();
     if (b.slot.startAt.getTime() - Date.now() < hours * 3600_000) {
@@ -369,7 +369,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     const mentorUserId = (await this.prisma.mentorProfile.findUnique({ where: { id: b.mentorId }, select: { userId: true } }))?.userId;
     const facts = (who: [string, string]): [string, string][] => [who, ['New time', emailDate(slot.startAt)], ['Previously', emailDate(oldStart)], ['Reference', b.reference]];
     await this.notify.send(b.student.email, 'Your session has been rescheduled', `Hi ${b.student.name.split(' ')[0]},\n\nYour session with ${b.mentor.user.name} has been moved to a new time. Your payment carries over, so there is nothing more to pay.\n\nWe will email you a reminder 30 minutes before it starts.`, b.student.id, { cta: { label: 'View your session', url: sessionUrl(b.reference) }, facts: facts(['Mentor', b.mentor.user.name]), whatsapp: { alert: 'sessionRescheduled', params: [b.student.name.split(' ')[0], b.mentor.user.name, slot.startAt, oldStart, b.reference, sessionUrl(b.reference)] } });
-    await this.notify.send(b.mentor.user.email, 'A session has been rescheduled', `Hi ${b.mentor.user.name.split(' ')[0]},\n\n${b.student.name} has moved their session with you to a new time. The original time is open again for other students.`, mentorUserId, { cta: { label: 'Open your dashboard', url: `${webUrl()}/dashboard/mentor` }, facts: facts(['Student', b.student.name]) });
+    await this.notify.send(b.mentor.user.email, 'A session has been rescheduled', `Hi ${b.mentor.user.name.split(' ')[0]},\n\n${b.student.name} has moved their session with you to a new time. The original time is open again for other mentees.`, mentorUserId, { cta: { label: 'Open your dashboard', url: `${webUrl()}/dashboard/mentor` }, facts: facts(['Student', b.student.name]) });
     this.activity.record(user.id, 'rescheduled', { reference: b.reference });
     return this.get(user, reference);
   }
@@ -382,13 +382,13 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     const b = await this.load(user, reference);
     if (b.status !== 'CONFIRMED' && b.status !== 'PENDING_PAYMENT') throw new BadRequestException('This booking can no longer be cancelled');
     const isStudent = b.studentId === user.id && user.role === 'STUDENT';
-    if (user.role !== 'ADMIN' && !isStudent) throw new ForbiddenException('Only the student who booked can cancel this session');
+    if (user.role !== 'ADMIN' && !isStudent) throw new ForbiddenException('Only the person who booked can cancel this session');
     if (isStudent && b.status === 'CONFIRMED') {
       const hours = await this.noticeHours();
       if (b.slot.startAt.getTime() - Date.now() < hours * 3600_000) throw new BadRequestException(`Sessions can be cancelled for a full refund up to ${noticeLabel(hours)} before the start time, so this one can no longer be cancelled or refunded.`);
     }
     // Only the request that flips the status goes on, so a double click can never credit the balance twice.
-    const claimed = await this.prisma.booking.updateMany({ where: { id: b.id, status: b.status }, data: { status: 'CANCELLED', cancelledAt: new Date(), cancelReason: dto.reason ?? (isStudent ? 'Cancelled by student' : 'Cancelled by mentor/admin') } });
+    const claimed = await this.prisma.booking.updateMany({ where: { id: b.id, status: b.status }, data: { status: 'CANCELLED', cancelledAt: new Date(), cancelReason: dto.reason ?? (isStudent ? 'Cancelled by the person who booked' : 'Cancelled by mentor/admin') } });
     if (!claimed.count) throw new ConflictException('This booking has already been changed. Please refresh the page.');
     // A paid session is not refunded to the card or bank: the full price goes to the student's POINT B balance instead.
     for (const p of await this.prisma.payment.findMany({ where: { bookingId: b.id, status: 'PENDING', provider: 'stripe' } })) {
@@ -406,8 +406,8 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     const by = isStudent ? 'the student' : 'your mentor or our team';
     const cf = (who: [string, string]): [string, string][] => [who, ['Was scheduled for', emailDate(b.slot.startAt)], ['Reference', b.reference]];
     await this.notify.send(b.student.email, 'Your booking has been cancelled', `Hi ${b.student.name.split(' ')[0]},\n\nYour session with ${b.mentor.user.name} has been cancelled${isStudent ? '' : ` by ${by}`}.${refunded ? ` The full ${creditText} has been added to your POINT B balance, and you can use it at checkout for any future session.` : ' You were not charged.'}\n\nYou are welcome to book another time whenever suits you.`, b.student.id, { cta: { label: 'Find another time', url: `${webUrl()}/mentors/${b.mentor.slug}` }, facts: cf(['Mentor', b.mentor.user.name]), whatsapp: { alert: 'bookingCancelled', params: [b.student.name.split(' ')[0], b.mentor.user.name, b.slot.startAt, refunded ? `${creditText} has been added to your POINT B balance for your next session.` : 'You were not charged.', b.reference, `${webUrl()}/mentors/${b.mentor.slug}`] } });
-    await this.notify.send(b.mentor.user.email, 'A session has been cancelled', `Hi ${b.mentor.user.name.split(' ')[0]},\n\nThe session with ${b.student.name} has been cancelled${isStudent ? ' by the student' : ''}. The time slot is open again for other students.`, (await this.prisma.mentorProfile.findUnique({ where: { id: b.mentorId }, select: { userId: true } }))?.userId, { cta: { label: 'Open your dashboard', url: `${webUrl()}/dashboard/mentor` }, facts: cf(['Student', b.student.name]) });
-    this.activity.record(b.studentId, 'booking_cancelled', { reference: b.reference, label: isStudent ? 'By the student' : 'By the team' });
+    await this.notify.send(b.mentor.user.email, 'A session has been cancelled', `Hi ${b.mentor.user.name.split(' ')[0]},\n\nThe session with ${b.student.name} has been cancelled${isStudent ? ' by your mentee' : ''}. The time slot is open again for other mentees.`, (await this.prisma.mentorProfile.findUnique({ where: { id: b.mentorId }, select: { userId: true } }))?.userId, { cta: { label: 'Open your dashboard', url: `${webUrl()}/dashboard/mentor` }, facts: cf(['Student', b.student.name]) });
+    this.activity.record(b.studentId, 'booking_cancelled', { reference: b.reference, label: isStudent ? 'By the mentee' : 'By the team' });
     return this.get(user, reference);
   }
 
@@ -419,14 +419,14 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     // Allowed from the scheduled start, or earlier if the mentor has already opened the call room.
     if (b.slot.startAt.getTime() > Date.now() && !b.hostStartedAt) throw new BadRequestException('This session has not started yet');
     // A student can only have missed a session the mentor was actually in.
-    if (outcome === 'NO_SHOW' && user.role !== 'ADMIN' && !b.hostStartedAt) throw new BadRequestException('Please join the session room before marking the student as a no-show.');
+    if (outcome === 'NO_SHOW' && user.role !== 'ADMIN' && !b.hostStartedAt) throw new BadRequestException('Please join the session room before marking your mentee as a no-show.');
     await this.prisma.booking.update({ where: { id: b.id }, data: { status: outcome, completedAt: new Date() } });
     if (outcome === 'COMPLETED') await this.askForFeedback(b);
     return this.get(user, reference);
   }
 
   private async askForFeedback(b: FullBooking) {
-    await this.notify.send(b.student.email, `How was your session with ${b.mentor.user.name}?`, `Hi ${b.student.name.split(' ')[0]},\n\nThank you for your session with ${b.mentor.user.name}. Your feedback takes less than a minute and helps other students choose the right mentor, and it helps your mentor improve.\n\nPlease rate your session and share a few words about how it went.`, b.student.id, { cta: { label: 'Leave your feedback', url: `${webUrl()}/dashboard/student` }, whatsapp: { alert: 'feedbackRequest', params: [b.student.name.split(' ')[0], b.mentor.user.name, b.slot.startAt, `${webUrl()}/dashboard/student`] }, facts: [['Mentor', b.mentor.user.name], ['Session', emailDate(b.slot.startAt)], ['Reference', b.reference]] });
+    await this.notify.send(b.student.email, `How was your session with ${b.mentor.user.name}?`, `Hi ${b.student.name.split(' ')[0]},\n\nThank you for your session with ${b.mentor.user.name}. Your feedback takes less than a minute and helps other students and professionals choose the right mentor, and it helps your mentor improve.\n\nPlease rate your session and share a few words about how it went.`, b.student.id, { cta: { label: 'Leave your feedback', url: `${webUrl()}/dashboard/student` }, whatsapp: { alert: 'feedbackRequest', params: [b.student.name.split(' ')[0], b.mentor.user.name, b.slot.startAt, `${webUrl()}/dashboard/student`] }, facts: [['Mentor', b.mentor.user.name], ['Session', emailDate(b.slot.startAt)], ['Reference', b.reference]] });
   }
 
   /** The mentor never opened the room, the session should have started, and it's recent enough to report. */
@@ -440,14 +440,14 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
   /** The student reports that the mentor never joined. Nothing is refunded until an admin has checked it. */
   async reportMissingMentor(user: AuthUser, reference: string) {
     const b = await this.load(user, reference);
-    if (b.studentId !== user.id) throw new ForbiddenException('Only the student who booked can report this');
+    if (b.studentId !== user.id) throw new ForbiddenException('Only the person who booked can report this');
     if (!this.mentorMissing(b)) throw new BadRequestException('This can be reported from 10 minutes after the start, if your mentor has not joined the room.');
     const claimed = await this.prisma.booking.updateMany({ where: { id: b.id, status: b.status, OR: [{ mentorReportStatus: null }, { mentorReportStatus: { isSet: false } }] }, data: { mentorReportStatus: 'PENDING', mentorReportedAt: new Date() } });
     if (!claimed.count) throw new ConflictException('This session has already been reported.');
     const facts: [string, string][] = [['Session', emailDate(b.slot.startAt)], ['Reference', b.reference]];
     await this.notify.send(b.student.email, 'We\'ve received your report', `Hi ${b.student.name.split(' ')[0]},\n\nThanks for telling us that ${b.mentor.user.name} didn't join your session. The POINT B team will check what happened and email you with the outcome. If we confirm your mentor didn't attend, the full price will be added to your POINT B balance.`, b.student.id, { facts });
     const mentorUserId = (await this.prisma.mentorProfile.findUnique({ where: { id: b.mentorId }, select: { userId: true } }))?.userId;
-    await this.notify.send(b.mentor.user.email, 'A student reported that you didn\'t join', `Hi ${b.mentor.user.name.split(' ')[0]},\n\n${b.student.name} reported that you didn't join your session. The POINT B team is reviewing it. If you did attend, or something went wrong, please contact us as soon as you can.`, mentorUserId, { facts: [['Student', b.student.name], ...facts] });
+    await this.notify.send(b.mentor.user.email, 'A mentee reported that you didn\'t join', `Hi ${b.mentor.user.name.split(' ')[0]},\n\n${b.student.name} reported that you didn't join your session. The POINT B team is reviewing it. If you did attend, or something went wrong, please contact us as soon as you can.`, mentorUserId, { facts: [['Student', b.student.name], ...facts] });
     const inbox = process.env.SUPPORT_EMAIL ?? process.env.MAIL_FROM_ADDRESS ?? process.env.SMTP_USER;
     if (inbox) await this.notify.send(inbox, `Review needed: mentor did not join [${b.reference}]`, `${b.student.name} reported that ${b.mentor.user.name} did not join. Please review it and approve or decline the refund.`, undefined, { emailOnly: true, cta: { label: 'Review bookings', url: `${webUrl()}/admin?tab=bookings` }, facts: [['Mentor', b.mentor.user.name], ['Student', b.student.name], ...facts] });
     this.activity.record(b.studentId, 'mentor_reported', { reference: b.reference });
@@ -476,7 +476,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
       await this.prisma.payment.updateMany({ where: { bookingId: b.id, status: 'SUCCEEDED' }, data: { status: 'REFUNDED' } });
       await this.wallet.add(b.studentId, b.currency, b.priceMinor, 'CANCELLATION', { bookingId: b.id, reference: b.reference, note: 'Mentor did not join', createdBy: user.id });
       await this.notify.send(b.student.email, 'Your refund has been approved', `Hi ${first},\n\nWe've confirmed that ${b.mentor.user.name} didn't join your session, and we're sorry. The full ${amount} has been added to your POINT B balance, and you can use it for any future session.${why}`, b.student.id, { cta: { label: 'Find another time', url: `${webUrl()}/mentors/${b.mentor.slug}` }, facts });
-      await this.notify.send(b.mentor.user.email, 'Your session was refunded', `Hi ${mentorFirst},\n\nThe POINT B team confirmed that you didn't join your session with ${b.student.name}. The student has been refunded, so this session won't be paid out.${why}`, mentorUserId, { facts });
+      await this.notify.send(b.mentor.user.email, 'Your session was refunded', `Hi ${mentorFirst},\n\nThe POINT B team confirmed that you didn't join your session with ${b.student.name}. Your mentee has been refunded, so this session won't be paid out.${why}`, mentorUserId, { facts });
     } else {
       await this.notify.send(b.student.email, 'An update on your report', `Hi ${first},\n\nWe looked into your report about your session with ${b.mentor.user.name} and couldn't confirm that your mentor didn't join, so no refund has been issued.${why}\n\nIf you think we've got this wrong, please reply through support.`, b.student.id, { cta: { label: 'Contact support', url: `${webUrl()}/contact` }, facts });
       await this.notify.send(b.mentor.user.email, 'A report about your session was closed', `Hi ${mentorFirst},\n\nThe POINT B team reviewed the report about your session with ${b.student.name} and has closed it. No further action is needed.`, mentorUserId, { facts });
@@ -495,7 +495,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
 
   async review(user: AuthUser, reference: string, dto: CreateReviewDto) {
     const b = await this.load(user, reference);
-    if (b.studentId !== user.id) throw new ForbiddenException('Only the student can review this session');
+    if (b.studentId !== user.id) throw new ForbiddenException('Only the person who booked can review this session');
     if (b.review) throw new ConflictException('You have already reviewed this session');
     if (!this.reviewable(b)) throw new BadRequestException('You can leave feedback once the session has finished');
     // Private until the POINT B team approves it; mentors can read it but not change it.
@@ -509,7 +509,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
   /** Students can change their feedback once. The new text goes back to the POINT B team, so it can't skip approval. */
   async editReview(user: AuthUser, reference: string, dto: CreateReviewDto) {
     const b = await this.load(user, reference);
-    if (b.studentId !== user.id) throw new ForbiddenException('Only the student can edit this feedback');
+    if (b.studentId !== user.id) throw new ForbiddenException('Only the person who booked can edit this feedback');
     if (!b.review) throw new BadRequestException('You haven’t left feedback on this session yet');
     // A single conditional update, so two edits sent at once can't both succeed.
     const claimed = await this.prisma.review.updateMany({

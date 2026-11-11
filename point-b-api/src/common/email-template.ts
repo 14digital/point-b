@@ -1,3 +1,5 @@
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import type { WhatsAppAlert } from './whatsapp-templates';
 
 export interface EmailOptions {
@@ -25,14 +27,28 @@ export const emailDate = (d: Date, timeZone = 'UTC') => {
 
 const BRASS = '#456b0e', INK = '#17181c', SOFT = '#5c5f66', LINE = '#e6e2d8', PAPER = '#faf8f3';
 
+/** The POINT B logo, sent inside every email so it shows even before images from the website load. */
+export const LOGO_CID = 'pointb-logo';
+let logoFile: Buffer | null | undefined;
+export function emailLogo(): Buffer | null {
+  if (logoFile !== undefined) return logoFile;
+  // The API may run from its own folder (dist/) or from the project root (server.js).
+  for (const p of [join(__dirname, '..', '..', 'assets', 'email-logo.png'), join(process.cwd(), 'assets', 'email-logo.png'), join(process.cwd(), 'point-b-api', 'assets', 'email-logo.png')]) {
+    try { return (logoFile = readFileSync(p)); } catch { /* try the next place */ }
+  }
+  return (logoFile = null);
+}
+
 /** Branded HTML email. Inline styles and tables only, so it renders in Gmail, Outlook and Apple Mail. */
-export function renderEmail(subject: string, body: string, opts: EmailOptions = {}): { html: string; text: string } {
+export function renderEmail(subject: string, body: string, opts: EmailOptions = {}): { html: string; text: string; attachments: { filename: string; content: Buffer; cid: string; contentType: string }[] } {
   const site = webUrl();
-  // The logo image needs a public address, so local development keeps the text version.
-  const logoUrl = process.env.EMAIL_LOGO_URL ?? (site.startsWith("https://") ? `${site}/brand/pointb-logo-dark.png` : null);
-  const logo = logoUrl
-    ? `<img src="${esc(logoUrl)}" alt="POINT B Mentors" width="125" height="30" style="display:block;border:0;height:30px;width:auto;">`
-    : `<span style="font-family:Georgia,'Times New Roman',serif;font-size:22px;color:${INK};letter-spacing:-0.2px;">POINT B <span style="color:${BRASS};">Mentors</span></span>`;
+  // The logo travels with the email (an inline image), so it always shows. EMAIL_LOGO_URL can point to a hosted copy instead.
+  const embedded = process.env.EMAIL_LOGO_URL ? null : emailLogo();
+  const logoSrc = process.env.EMAIL_LOGO_URL ?? (embedded ? `cid:${LOGO_CID}` : null);
+  const logo = logoSrc
+    ? `<img src="${esc(logoSrc)}" alt="POINT B" width="125" height="30" style="display:block;border:0;outline:none;height:30px;width:125px;">`
+    : `<span style="font-family:Arial,Helvetica,sans-serif;font-size:22px;font-weight:700;color:${INK};letter-spacing:0.5px;">POINT B<span style="color:#b7de5b;">.</span></span>`;
+  const attachments = embedded ? [{ filename: 'pointb-logo.png', content: embedded, cid: LOGO_CID, contentType: 'image/png' }] : [];
 
   const paragraphs = body.trim().split(/\n{2,}/).map((p) =>
     `<p style="margin:0 0 16px;font-size:15px;line-height:1.6;color:${INK};">${esc(p).replace(/\n/g, '<br>')}</p>`).join('');
@@ -64,5 +80,5 @@ Questions? <a href="${esc(site)}/contact" style="color:${SOFT};">Contact support
 </table></td></tr></table></body></html>`;
 
   const text = [body.trim(), opts.facts?.map(([k, v]) => `${k}: ${v}`).join('\n'), opts.cta ? `${opts.cta.label}: ${opts.cta.url}` : '', `POINT B Mentors · ${site}`].filter(Boolean).join('\n\n');
-  return { html, text };
+  return { html, text, attachments };
 }

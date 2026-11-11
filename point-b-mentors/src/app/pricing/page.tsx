@@ -123,7 +123,7 @@ export default function PricingPage() {
             <p className="text-xs font-medium uppercase tracking-[0.14em] text-ink/60">Group sessions</p>
             <p className="mt-4 font-display text-4xl text-ink">Share the call, pay less</p>
             <p className="mt-3 flex-1 text-[0.95rem] leading-relaxed text-ink/70">
-              Some mentors also offer small group sessions. A seat costs {group ? <span className="font-medium text-ink">{group}% of that mentor&rsquo;s 1:1 price</span> : "less than a 1:1 session"}, and you still get the same attention and hear other students&rsquo; questions too.
+              Some mentors also offer small group sessions. A seat costs {group ? <span className="font-medium text-ink">{group}% of that mentor&rsquo;s 1:1 price</span> : "less than a 1:1 session"}, and you still get the same attention and hear other people&rsquo;s questions too.
             </p>
             {group && !data?.local && <p className="mt-6 rounded-2xl bg-white/60 px-5 py-4 text-sm text-ink">Example: a Rs 2,000 mentor&rsquo;s group seat is {formatMoney(Math.max(100, Math.round((200_000 * group) / 100 / 100) * 100), "PKR")}.</p>}
           </Reveal>

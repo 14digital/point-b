@@ -114,7 +114,7 @@ function TicketView({ id, meId, onChanged }: { id: string; meId: string; onChang
         <div className="min-w-0">
           <p className="flex flex-wrap items-center gap-2 text-xs"><span className="font-mono text-ink-soft">{t.number}</span>{t.urgent && <span className="rounded-full bg-rust px-2 py-0.5 font-medium text-white">Safeguarding</span>}</p>
           <h3 className="mt-1 font-display text-2xl leading-tight text-ink">{t.topic}</h3>
-          <p className="mt-1 text-sm text-ink-soft">{t.name} · <a href={`mailto:${t.email}`} className="underline-offset-4 hover:underline">{t.email}</a>{t.account ? <> · {t.account.role === "STUDENT" ? <a href={`/admin?tab=students`} className="underline-offset-4 hover:underline">Student account</a> : t.account.role === "MENTOR" ? "Mentor account" : "Team member"}</> : " · No account"}</p>
+          <p className="mt-1 text-sm text-ink-soft">{t.name} · <a href={`mailto:${t.email}`} className="underline-offset-4 hover:underline">{t.email}</a>{t.account ? <> · {t.account.role === "STUDENT" ? <a href={`/admin?tab=mentees`} className="underline-offset-4 hover:underline">Mentee account</a> : t.account.role === "MENTOR" ? "Mentor account" : "Team member"}</> : " · No account"}</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <select className="input py-2 text-sm" style={{ width: "auto" }} value={t.assignedTo ?? ""} onChange={(e) => run("assign", () => patch({ assignedTo: e.target.value || null }), "Owner updated.")} aria-label="Assigned to">

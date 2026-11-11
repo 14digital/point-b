@@ -191,7 +191,7 @@ export function ChatWidget() {
   const first = user?.name.split(" ")[0];
   const greeting = `Hi${first ? ` ${first}` : ""}! Welcome to POINT B. Ask us anything about finding a mentor, booking, payments or your sessions.`;
   const quick = user?.role === "MENTOR"
-    ? ["When is my next session?", "How do payouts work?", "How do I add availability?", "A student didn't join"]
+    ? ["When is my next session?", "How do payouts work?", "How do I add availability?", "A mentee didn't join"]
     : user
       ? ["When is my next session?", "Can I cancel or reschedule?", "My payment is pending", "Help me find a mentor"]
       : ["How does booking work?", "How much does a session cost?", "Help me find a mentor", "How do I become a mentor?"];

@@ -58,7 +58,7 @@ export function pageName(path: string | null) {
   if (!path) return "No page recorded yet";
   const fixed: Record<string, string> = {
     "/": "Home page", "/mentors": "Mentor directory", "/how-it-works": "How it works", "/pricing": "Pricing", "/contact": "Contact", "/about": "About", "/academy": "Academy", "/legal": "Policies",
-    "/sign-in": "Sign in", "/forgot-password": "Forgot password", "/reset-password": "Set password", "/dashboard/student": "Student dashboard", "/dashboard/mentor": "Mentor dashboard",
+    "/sign-in": "Sign in", "/forgot-password": "Forgot password", "/reset-password": "Set password", "/dashboard/student": "Mentee dashboard", "/dashboard/mentor": "Mentor dashboard",
     "/become-a-mentor": "Become a mentor", "/become-a-mentor/apply": "Mentor application",
   };
   if (fixed[path]) return fixed[path];
@@ -662,7 +662,7 @@ function JourneyView({ id, now }: { id: string; now: number }) {
             <p className="truncate text-sm text-ink-soft">{guest ? "Not signed up yet, so no contact details" : `${j.user.email}${j.user.phone ? ` · ${j.user.phone}` : ""}`}</p>
             {(j.device || j.referrer || j.country || j.ip) && <p className="mt-0.5 truncate text-xs text-ink-soft">{[j.country && `${flag(j.country)} ${j.city ? `${j.city}, ` : ""}${new Intl.DisplayNames(["en"], { type: "region" }).of(j.country)}`, j.ip && `IP ${j.ip}`, j.device, j.referrer && `Came from ${j.referrer}`].filter(Boolean).join(" · ")}</p>}
           </div>
-          <Badge tone={j.user.role === "MENTOR" ? "brass" : "neutral"}>{guest ? "Guest" : j.user.role === "MENTOR" ? "Mentor" : "Student"}</Badge>
+          <Badge tone={j.user.role === "MENTOR" ? "brass" : "neutral"}>{guest ? "Guest" : j.user.role === "MENTOR" ? "Mentor" : "Mentee"}</Badge>
         </div>
         <div className={`mt-6 grid gap-3 ${guest ? "" : "sm:grid-cols-3"}`}>
           <div className={`rounded-2xl bg-ink p-4 text-white ${guest ? "" : "sm:col-span-2"}`}>

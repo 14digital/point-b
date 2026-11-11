@@ -62,8 +62,8 @@ export function FinanceBreakdown({ f, period, query, repeatPercent, onChanged, h
       <dl className="mt-auto grid grid-cols-2 gap-x-6 gap-y-4 border-t border-line pt-5 text-sm">
         <Stat label="Promo discounts" value={money(f.discountsMinor)} />
         <Stat label="Returning-student sessions" value={String(f.repeatSessions)} />
-        <Stat label="Credited to student balances" value={money(f.refundedMinor)} note={`${plural(f.refundedCount, "cancelled booking")}`} />
-        <Stat label="Balances held, all students" value={money(heldMinor)} note="Owed as future sessions" />
+        <Stat label="Credited to mentee balances" value={money(f.refundedMinor)} note={`${plural(f.refundedCount, "cancelled booking")}`} />
+        <Stat label="Balances held, all mentees" value={money(heldMinor)} note="Owed as future sessions" />
         <Stat label="Cancelled before payment" value={money(f.unpaidCancelledMinor)} note={`${plural(f.unpaidCancelledCount, "booking")}, nothing received`} />
       </dl>
 
@@ -151,7 +151,7 @@ function RevenueDetail({ f, repeatPercent }: { f: FinanceSummary; repeatPercent:
               <ul className="mt-3 space-y-1.5 border-t border-line pt-3 text-xs text-ink-soft">
                 {t.rates.map((r) => (
                   <li key={`${r.returning}-${r.percent}`} className="flex justify-between gap-4">
-                    <span>{r.returning ? "Returning students" : "Standard rate"} at {r.percent == null ? "no set rate" : `${r.percent}%`}, on {money(r.grossMinor)}</span>
+                    <span>{r.returning ? "Returning mentees" : "Standard rate"} at {r.percent == null ? "no set rate" : `${r.percent}%`}, on {money(r.grossMinor)}</span>
                     <span className="whitespace-nowrap text-ink tabular-nums">{money(r.feeMinor)}</span>
                   </li>
                 ))}
@@ -160,7 +160,7 @@ function RevenueDetail({ f, repeatPercent }: { f: FinanceSummary; repeatPercent:
           </li>
         ))}
       </ul>
-      <p className="mt-4 text-xs leading-relaxed text-ink-soft">Returning students are charged {repeatPercent}% on 1:1 sessions, unless their mentor&apos;s tier is already lower. A booking keeps the rate it was made at; bookings from before rates were saved use today&apos;s tier rate.</p>
+      <p className="mt-4 text-xs leading-relaxed text-ink-soft">Returning mentees are charged {repeatPercent}% on 1:1 sessions, unless their mentor&apos;s tier is already lower. A booking keeps the rate it was made at; bookings from before rates were saved use today&apos;s tier rate.</p>
     </section>
   );
 }

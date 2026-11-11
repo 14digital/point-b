@@ -58,7 +58,7 @@ export function BookingPanel({ mentor, onSlotTaken }: { mentor: MentorDetail; on
           </button>
         ))}
       </div>
-      <p className="mt-2.5 text-xs leading-relaxed text-ink-soft">{mode === "GROUP" ? "Share the call with a few other students. Lower price, still the same attention" : "Just you and the mentor, the full 30 minutes."}</p>
+      <p className="mt-2.5 text-xs leading-relaxed text-ink-soft">{mode === "GROUP" ? "Share the call with a few other students and professionals. Lower price, still the same attention" : "Just you and the mentor, the full 30 minutes."}</p>
 
       <p className="mt-6 text-sm font-medium text-ink">Choose a day</p>
       <div className="no-scrollbar -mx-1 mt-3 flex snap-x gap-2 overflow-x-auto px-1 pb-1 [mask-image:linear-gradient(90deg,#000_85%,transparent)]">
@@ -254,8 +254,8 @@ function BookingModal({ mentor, slot, price, onClose: close, onSlotTaken }: { me
           <div className={BODY}>
             {needsAuth && <InlineAuth onDone={() => setStep("agenda")} />}
             {unconfirmed && <VerifyEmail />}
-            {wrongRole && <Alert tone="info">You&rsquo;re signed in as a {user!.role.toLowerCase()}. Booking sessions needs a student account — sign out and register as a student.</Alert>}
-            {minorBlocked && <Alert tone="info">Students under 18 need a parent or guardian to give consent before booking. We emailed your guardian when you registered; once they confirm, you can book. Contact support if you need help.</Alert>}
+            {wrongRole && <Alert tone="info">You&rsquo;re signed in as a {user!.role.toLowerCase()}. Booking sessions needs a student or professional account — sign out and create one to book.</Alert>}
+            {minorBlocked && <Alert tone="info">Anyone under 18 needs a parent or guardian to give consent before booking. We emailed your guardian when you registered; once they confirm, you can book. Contact support if you need help.</Alert>}
 
             {!blocked && step === "agenda" && (
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -283,7 +283,7 @@ function BookingModal({ mentor, slot, price, onClose: close, onSlotTaken }: { me
               <>
                 <div className="rounded-2xl bg-paper p-5 text-sm">
                   <Row l="Mentor" v={mentor.name} /><Row l="Date" v={fmtDay(slot.startAt)} />
-                  <Row l="Time" v={`${fmtTime(slot.startAt)}–${fmtTime(slot.endAt)} (30 minutes)`} /><Row l="Type" v={slot.kind === "GROUP" ? `Group session (up to ${slot.capacity} students)` : "1:1 session"} /><Row l="Focus" v={agenda} />
+                  <Row l="Time" v={`${fmtTime(slot.startAt)}–${fmtTime(slot.endAt)} (30 minutes)`} /><Row l="Type" v={slot.kind === "GROUP" ? `Group session (up to ${slot.capacity} people)` : "1:1 session"} /><Row l="Focus" v={agenda} />
                   <Row l={slot.kind === "GROUP" ? "Fee per seat" : "Session fee"} v={formatMoney(price, mentor.currency)} />
                   {promo && <Row l={`${promo.kind === "referral" ? "Referral" : "Promo"} ${promo.code} (${promo.percentOff}% off)`} v={`− ${formatMoney(promo.discountMinor, mentor.currency)}`} />}
                   <Row l="Taxes & processing fees" v={formatMoney(0, mentor.currency)} />
