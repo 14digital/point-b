@@ -9,7 +9,7 @@ import { fmtDay, initials } from "@/lib/format";
 import { useApi } from "@/lib/use-api";
 
 interface AdminReview {
-  id: string; rating: number; comment: string; status: "APPROVED" | "HIDDEN" | "PENDING"; moderatedAt: string | null; moderatedBy: "ADMIN" | "MENTOR" | null; createdAt: string;
+  id: string; rating: number; comment: string; status: "APPROVED" | "HIDDEN" | "PENDING"; moderatedAt: string | null; moderatedBy: "ADMIN" | "MENTOR" | null; editedAt: string | null; createdAt: string;
   reference: string; sessionAt: string; studentName: string; mentorName: string; mentorSlug: string;
 }
 
@@ -65,13 +65,13 @@ function ReviewCard({ r, onChanged }: { r: AdminReview; onChanged: (rows: AdminR
   }
 
   return (
-    <li className={`rounded-2xl p-4 ring-1 sm:p-5 ${r.status === "PENDING" ? "ring-brass/30" : "ring-line"}`}>
+    <li className={`rounded-2xl p-4 ring-1 sm:p-5 ${r.status === "PENDING" ? "ring-amber/30" : "ring-line"}`}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-medium text-ink" style={{ backgroundColor: pastelFor(r.studentName) }}>{initials(r.studentName)}</span>
           <div className="min-w-0">
             <p className="text-sm text-ink"><span className="font-medium">{r.studentName}</span> <span className="text-ink-soft">on</span> <a href={`/mentors/${r.mentorSlug}`} target="_blank" rel="noreferrer" className="font-medium underline-offset-4 hover:underline">{r.mentorName}</a></p>
-            <p className="text-xs text-ink-soft">Session {fmtDay(r.sessionAt).replace(/^\w+, /, "")} · <span className="whitespace-nowrap font-mono">{r.reference}</span> · sent {fmtDay(r.createdAt).replace(/^\w+, /, "")}</p>
+            <p className="text-xs text-ink-soft">Session {fmtDay(r.sessionAt).replace(/^\w+, /, "")} · <span className="whitespace-nowrap font-mono">{r.reference}</span> · sent {fmtDay(r.createdAt).replace(/^\w+, /, "")}{r.editedAt ? ` · edited by the student ${fmtDay(r.editedAt).replace(/^\w+, /, "")}` : ""}</p>
           </div>
         </div>
         <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${STATE[r.status][1]}`}>{STATE[r.status][0]}</span>

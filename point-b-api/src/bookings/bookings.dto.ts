@@ -13,6 +13,9 @@ export class CreateBookingDto {
   @IsString() @MinLength(10) @MaxLength(1000) usefulOutcome: string;
   @IsOptional() @IsString() @MaxLength(1000) materialsToReview?: string;
   @IsOptional() @IsString() @MaxLength(30) promoCode?: string;
+  /** The price on the student's screen, so they are never charged something different from what they saw. */
+  @IsOptional() @IsInt() @Min(0) expectedPriceMinor?: number;
+  @IsOptional() @IsString() @MaxLength(3) expectedCurrency?: string;
 }
 
 export class PromoCheckDto {

@@ -6,7 +6,8 @@ import { NotificationsService } from '../common/notifications.service';
 import { PasswordLinksService } from '../common/password-links.service';
 import { emailDate, webUrl } from '../common/email-template';
 import { STAFF_ROLES, StaffRole } from '../common/auth';
-import { commissionRules, feeOf } from '../common/pricing';
+import { commissionRules, feeForBooking } from '../common/pricing';
+import { money } from '../common/currency';
 import { WalletService } from '../common/wallet.service';
 import { saveMentorPhoto } from '../mentors/mentor-photo';
 import { Currency } from '@prisma/client';
@@ -44,7 +45,7 @@ export class AdminOpsService {
         guardianEmail: u.guardianEmail, guardianConsent: u.guardianConsent, needsConsent: minor && !u.guardianConsent && !u.anonymizedAt,
         isActive: u.isActive, suspendedReason: u.suspendedReason, anonymized: !!u.anonymizedAt, joinedAt: u.createdAt,
         bookings: mine.length, paidSessions: paid.length,
-        spent: { PKR: paid.filter((b) => b.currency === 'PKR').reduce((n, b) => n + b.priceMinor, 0), GBP: paid.filter((b) => b.currency === 'GBP').reduce((n, b) => n + b.priceMinor, 0) },
+        spent: paid.reduce<Record<string, number>>((o, b) => ({ ...o, [b.currency]: (o[b.currency] ?? 0) + b.priceMinor }), {}),
         lastBookingAt: mine.reduce<Date | null>((d, b) => (!d || b.createdAt > d ? b.createdAt : d), null),
       };
     });
@@ -76,7 +77,7 @@ export class AdminOpsService {
     await this.wallet.add(id, currency, amountMinor, 'ADJUSTMENT', { note: note.trim(), createdBy: adminId });
     await this.audit(adminId, 'BALANCE_ADJUSTED', 'User', id, `${amountMinor > 0 ? '+' : ''}${amountMinor / 100} ${currency}: ${note.trim()}`);
     if (amountMinor > 0) {
-      const amount = currency === 'PKR' ? `Rs ${(amountMinor / 100).toLocaleString('en-PK')}` : `£${(amountMinor / 100).toFixed(2)}`;
+      const amount = money(amountMinor, currency);
       await this.notify.send(u.email, `${amount} added to your POINT B balance`, `Hi ${u.name.split(' ')[0]},\n\nWe've added ${amount} to your POINT B balance. ${note.trim()}\n\nYou can use it at checkout for any future session.`, u.id, { emailOnly: true, cta: { label: 'Find a mentor', url: `${webUrl()}/mentors` } });
     }
     return this.student(id);
@@ -133,7 +134,7 @@ export class AdminOpsService {
       include: { booking: { select: { reference: true, slot: { select: { startAt: true } }, student: { select: { name: true } }, mentor: { select: { id: true, slug: true, user: { select: { name: true } } } } } } },
     });
     return rows.map((r) => ({
-      id: r.id, rating: r.rating, comment: r.comment, status: r.status ?? 'APPROVED', moderatedAt: r.moderatedAt, moderatedBy: r.moderatedBy ?? (r.moderatedAt ? 'MENTOR' : null), createdAt: r.createdAt, // MENTOR only on decisions made before admins took this over
+      id: r.id, rating: r.rating, comment: r.comment, status: r.status ?? 'APPROVED', moderatedAt: r.moderatedAt, moderatedBy: r.moderatedBy ?? (r.moderatedAt ? 'MENTOR' : null), editedAt: r.editedAt, createdAt: r.createdAt, // MENTOR only on decisions made before admins took this over
       reference: r.booking.reference, sessionAt: r.booking.slot.startAt, studentName: r.booking.student.name, mentorName: r.booking.mentor.user.name, mentorSlug: r.booking.mentor.slug,
     }));
   }
@@ -292,14 +293,14 @@ export class AdminOpsService {
     const in14 = new Date(now.getTime() + 14 * 86_400_000);
     const [slots, bookings, reviews, payouts, rules] = await Promise.all([
       this.prisma.availabilitySlot.findMany({ where: { mentorId: id, startAt: { gte: now, lt: in14 } }, orderBy: { startAt: 'asc' }, select: { startAt: true, kind: true, isBooked: true, capacity: true, seatsTaken: true } }),
-      this.prisma.booking.findMany({ where: { mentorId: id }, orderBy: { createdAt: 'desc' }, select: { reference: true, status: true, mentorNoShowAt: true, priceMinor: true, currency: true, platformFeeMinor: true, commissionPercent: true, payoutId: true, createdAt: true, slot: { select: { startAt: true } }, student: { select: { name: true } } } }),
+      this.prisma.booking.findMany({ where: { mentorId: id }, orderBy: { createdAt: 'desc' }, select: { reference: true, status: true, mentorNoShowAt: true, priceMinor: true, currency: true, platformFeeMinor: true, listPriceMinor: true, mentorPaidInFull: true, commissionPercent: true, payoutId: true, createdAt: true, slot: { select: { startAt: true } }, student: { select: { name: true } } } }),
       this.prisma.review.findMany({ where: { booking: { mentorId: id } }, select: { rating: true, status: true } }),
       this.prisma.mentorPayout.findMany({ where: { mentorId: id }, orderBy: { createdAt: 'desc' }, select: { id: true, createdAt: true, amountMinor: true, currency: true, sessions: true, reference: true } }),
       commissionRules(this.prisma),
     ]);
     const count = (s: string) => bookings.filter((b) => b.status === s).length;
     const paid = bookings.filter((b) => (PAID as readonly string[]).includes(b.status));
-    const earn = (b: (typeof bookings)[number]) => { const pct = b.commissionPercent ?? rules.tier[m.level]; const fee = b.platformFeeMinor ?? (pct == null ? null : feeOf(b.priceMinor, pct)); return fee == null ? 0 : b.priceMinor - fee; };
+    const earn = (b: (typeof bookings)[number]) => { const pct = b.commissionPercent ?? rules.tier[m.level]; const fee = feeForBooking(b, pct); return fee == null ? 0 : b.priceMinor - fee; };
     const publicReviews = reviews.filter((r) => (r.status ?? 'APPROVED') === 'APPROVED');
     return {
       ...m,

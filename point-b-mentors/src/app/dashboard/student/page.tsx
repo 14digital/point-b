@@ -20,9 +20,10 @@ import { isValidPhone, type CountryCode } from "@/components/phone-input";
 import { fmtDay, fmtDayShort, fmtTime, formatMoney } from "@/lib/format";
 import { useUrlTab } from "@/lib/use-url-tab";
 import { useApi, useNow } from "@/lib/use-api";
-import type { Booking } from "@/lib/types";
+import type { Booking, Currency } from "@/lib/types";
 import { NoticeText } from "@/lib/policy";
-import { MySupport } from "@/components/my-support";
+import { MySupport, type SupportPreset } from "@/components/my-support";
+import { SessionButton } from "@/components/session-button";
 
 const TABS = ["Upcoming", "Awaiting payment", "Past"] as const;
 
@@ -49,7 +50,15 @@ function Dashboard() {
   const completed = past.filter((b) => b.status === "COMPLETED");
   const needsFeedback = past.filter((b) => b.canReview);
   const [tab, setTab] = useUrlTab(TABS, "Upcoming");
-  const [asking, setAsking] = useState(false);
+  const [asking, setAsking] = useState<SupportPreset | null>(null);
+  // Opened from the chat's "Talk to the team": start a support request, then tidy the URL.
+  const wantsSupport = params.get("support");
+  useEffect(() => {
+    if (!wantsSupport) return;
+    router.replace("/dashboard/student");
+    const t = setTimeout(() => { setAsking({}); document.getElementById("support")?.scrollIntoView({ behavior: "smooth", block: "start" }); }, 250);
+    return () => clearTimeout(t);
+  }, [wantsSupport, router]);
   const tabs = TABS.filter((t) => t !== "Awaiting payment" || pending.length > 0);
   const next = upcoming[0];
   const show = (t: (typeof TABS)[number]) => { setTab(t); setTimeout(() => document.getElementById("sessions")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50); };
@@ -68,7 +77,7 @@ function Dashboard() {
         eyebrow={<><span>Student dashboard</span><span aria-hidden>·</span><span>{user?.timezone}</span></>}
         title={<>{greeting()}, <Mark>{user?.name.split(" ")[0]}</Mark></>}
         subtitle={next ? `Your next session is ${relative(next.startAt, now)}, with ${next.mentor.name}.` : "Find a mentor who has been where you're going, and book a 30-minute conversation."}
-        actions={<><Button href="/mentors">Book a session</Button><Button variant="secondary" onClick={() => setAsking(true)}>Get help</Button></>}
+        actions={<><Button href="/mentors">Book a session</Button><Button variant="secondary" onClick={() => setAsking({})}>Get help</Button></>}
       >
         <div className="mt-10 hidden lg:block">{stats}</div>
       </DashboardHero>
@@ -113,7 +122,7 @@ function Dashboard() {
                   {tab === "Awaiting payment" && pending.map((b) => <PendingCard key={b.id} b={b} onChange={reload} />)}
                   {tab === "Past" && (past.length === 0
                     ? <EmptyState title="No past sessions yet" description="Your completed sessions will appear here." />
-                    : past.map((b, i) => <Reveal key={b.id} delay={i * 50}><PastCard b={b} onChange={reload} /></Reveal>))}
+                    : past.map((b, i) => <Reveal key={b.id} delay={i * 50}><PastCard b={b} onChange={reload} onSupport={() => setAsking({ topic: "Reviews", reference: b.reference })} /></Reveal>))}
                 </>
               )}
             </div>
@@ -128,7 +137,7 @@ function Dashboard() {
                 <Button size="sm" className="mt-4" onClick={() => setTab("Past")}>Leave feedback</Button>
               </div>
             )}
-            <div id="support"><MySupport compact newRequest={asking} onNewRequestClose={() => setAsking(false)} /></div>
+            <div id="support"><MySupport compact newRequest={!!asking} preset={asking ?? undefined} onNewRequestClose={() => setAsking(null)} /></div>
           </aside>
         </div>
       </Container>
@@ -150,9 +159,9 @@ function NextSession({ b, now }: { b: Booking; now: number }) {
           <p className="text-sm text-white/70">{fmtTime(b.startAt)}–{fmtTime(b.endAt)} · {b.sessionKind === "GROUP" ? "Group" : "1:1"} · {b.agenda}</p>
         </div>
         {b.meetingLink && (
-          <a href={b.meetingLink} target="_blank" rel="noreferrer" className={`col-span-2 whitespace-nowrap rounded-full px-6 py-3 text-center text-sm font-medium transition-colors ${open ? "bg-mint text-ink hover:bg-white" : "bg-white text-ink hover:bg-white/90"}`}>
-            {open ? "Join now" : "Open session page"}
-          </a>
+          <SessionButton link={b.meetingLink} startAt={b.startAt} endAt={b.endAt} withName={b.mentor.name} detail={`${b.sessionKind === "GROUP" ? "Group" : "1:1"} · ${b.agenda}`}
+            joinClass="col-span-2 whitespace-nowrap rounded-full bg-mint px-6 py-3 text-center text-sm font-medium text-ink transition-colors hover:bg-white"
+            waitClass="col-span-2 whitespace-nowrap rounded-full bg-white px-6 py-3 text-center text-sm font-medium text-ink transition-colors hover:bg-white/90" />
         )}
       </div>
       {!open && <p className="mt-5 border-t border-white/10 pt-4 text-xs text-white/55">The call room opens 10 minutes before the start. You&rsquo;ll get an email reminder 30 minutes ahead.</p>}
@@ -189,7 +198,6 @@ function UpcomingCard({ b, onChange }: { b: Booking; onChange: () => void }) {
   const [cancelling, setCancelling] = useState(false);
   const { busy, error, run } = useAction(onChange);
   const now = useNow();
-  const soon = new Date(b.startAt).getTime() - now <= 10 * 60_000;
   const canMove = !!b.rescheduleBy && new Date(b.rescheduleBy).getTime() > now;
   const moved = useCallback(() => { setMoving(false); onChange(); }, [onChange]);
   return (
@@ -197,7 +205,7 @@ function UpcomingCard({ b, onChange }: { b: Booking; onChange: () => void }) {
       <div className="flex flex-wrap items-center justify-between gap-4">
         <Who b={b} />
         <div className="flex flex-wrap items-center gap-2">
-          {b.meetingLink && <a href={b.meetingLink} target="_blank" rel="noreferrer" className={`rounded-full px-5 py-2.5 text-sm font-medium ${soon ? "bg-forest text-white" : "bg-ink text-white"}`}>{soon ? "Join now" : "Session page"}</a>}
+          {b.meetingLink && <SessionButton link={b.meetingLink} startAt={b.startAt} endAt={b.endAt} withName={b.mentor.name} detail={`${b.sessionKind === "GROUP" ? "Group" : "1:1"} · ${b.agenda}`} joinClass="rounded-full bg-forest px-5 py-2.5 text-sm font-medium text-white" waitClass="rounded-full bg-ink px-5 py-2.5 text-sm font-medium text-white" />}
           {canMove && <Button size="sm" variant="secondary" onClick={() => setMoving(true)}>Reschedule</Button>}
           {canMove && <Button size="sm" variant="ghost" onClick={() => setCancelling(true)}>Cancel</Button>}
           <a href={`/receipt/${b.reference}`} className="px-2 text-xs font-medium text-ink-soft underline-offset-4 hover:text-ink hover:underline">Receipt</a>
@@ -232,7 +240,7 @@ function PendingCard({ b, onChange }: { b: Booking; onChange: () => void }) {
   const [paying, setPaying] = useState(false);
   const paid = useCallback(() => { setPaying(false); onChange(); }, [onChange]);
   return (
-    <div className="rounded-3xl border-l-4 border-brass bg-white p-5 ring-1 ring-line sm:p-6">
+    <div className="rounded-3xl border-l-4 border-amber bg-white p-5 ring-1 ring-line sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <Who b={b} />
         {b.awaitingVerification ? <Badge tone="brass">Checking your payment</Badge> : (
@@ -251,8 +259,9 @@ function PendingCard({ b, onChange }: { b: Booking; onChange: () => void }) {
   );
 }
 
-function PastCard({ b, onChange }: { b: Booking; onChange: () => void }) {
+function PastCard({ b, onChange, onSupport }: { b: Booking; onChange: () => void; onSupport: () => void }) {
   const [reviewing, setReviewing] = useState(false);
+  const [editing, setEditing] = useState(false);
   const tone = b.status === "COMPLETED" ? "forest" : b.status === "CANCELLED" || b.status === "NO_SHOW" ? "rust" : "neutral";
   const status = b.status === "CONFIRMED" ? "Finished" : STATUS_LABEL[b.status];
   return (
@@ -261,7 +270,7 @@ function PastCard({ b, onChange }: { b: Booking; onChange: () => void }) {
         <Who b={b} />
         <div className="flex flex-wrap items-center gap-2">
           <Badge tone={tone}>{status}</Badge>
-          {b.canReview && !reviewing && <Button size="sm" onClick={() => setReviewing(true)}>Leave feedback</Button>}
+          {b.canReview && !reviewing && <><Button size="sm" onClick={() => setReviewing(true)}>Leave feedback</Button><Button size="sm" variant="secondary" onClick={onSupport}>Support</Button></>}
           <Button href={`/mentors/${b.mentor.slug}`} size="sm" variant="secondary">Book again</Button>
           {b.canReportMissing && <ReportMissing reference={b.reference} mentorName={b.mentor.name} onDone={onChange} />}
           {(b.status === "COMPLETED" || b.status === "CONFIRMED" || b.status === "NO_SHOW" || b.payment?.status === "REFUNDED") && <a href={`/receipt/${b.reference}`} className="px-2 text-xs font-medium text-ink-soft underline-offset-4 hover:text-ink hover:underline">Receipt</a>}
@@ -269,7 +278,8 @@ function PastCard({ b, onChange }: { b: Booking; onChange: () => void }) {
       </div>
       {b.cancelReason && <p className="mt-3 text-xs text-ink-soft">{b.cancelReason}</p>}
       <ReportStatus status={b.mentorReport} note={b.mentorReportNote} mentorName={b.mentor.name} />
-      {b.review && <div className="mt-4"><SubmittedFeedback review={b.review} /></div>}
+      {b.review && !editing && <div className="mt-4"><SubmittedFeedback review={b.review} onEdit={() => setEditing(true)} onSupport={onSupport} /></div>}
+      {b.review && editing && <div className="mt-4"><FeedbackForm b={b} existing={b.review} onDone={() => { setEditing(false); onChange(); }} onCancel={() => setEditing(false)} /></div>}
       {reviewing && <div className="mt-4"><FeedbackForm b={b} onDone={() => { setReviewing(false); onChange(); }} onCancel={() => setReviewing(false)} /></div>}
     </div>
   );
@@ -304,21 +314,21 @@ function AddMobile() {
   );
 }
 
-interface WalletEntry { id: string; currency: "PKR" | "GBP"; amountMinor: number; kind: string; reference: string | null; note: string | null; createdAt: string }
+interface WalletEntry { id: string; currency: Currency; amountMinor: number; kind: string; reference: string | null; note: string | null; createdAt: string }
 const WALLET_LABEL: Record<string, string> = { CANCELLATION: "Session cancelled", LATE_PAYMENT: "Payment arrived late", SPEND: "Used for a session", RETURN: "Booking not completed", ADJUSTMENT: "From the POINT B team" };
 
 /** The student's POINT B balance: credit from cancelled sessions, used automatically at checkout. */
 function BalanceCard() {
-  const w = useApi<{ balances: Record<"PKR" | "GBP", number>; entries: WalletEntry[] }>("/wallet");
+  const w = useApi<{ balances: Record<string, number>; entries: WalletEntry[] }>("/wallet");
   const [open, setOpen] = useState(false);
-  if (!w.data || (!w.data.entries.length && !w.data.balances.PKR && !w.data.balances.GBP)) return null;
-  const held = (["PKR", "GBP"] as const).filter((c) => w.data!.balances[c] > 0);
+  if (!w.data || (!w.data.entries.length && !Object.values(w.data.balances).some(Boolean))) return null;
+  const held = (Object.keys(w.data.balances) as Currency[]).filter((c) => w.data!.balances[c] > 0);
   return (
     <div className="overflow-hidden rounded-3xl bg-ink text-white">
       <div className="p-5">
         <p className="text-xs font-medium uppercase tracking-[0.12em] text-white/60">POINT B balance</p>
         {held.length ? held.map((c) => <p key={c} className="mt-1 font-display text-4xl leading-tight tabular-nums">{formatMoney(w.data!.balances[c], c)}</p>) : <p className="mt-1 font-display text-4xl leading-tight">{formatMoney(0, "PKR")}</p>}
-        <p className="mt-2 text-xs leading-relaxed text-white/60">{held.length ? "Choose “Pay with balance” at checkout for any session in the same currency." : "Credit from cancelled sessions appears here."}</p>
+        <p className="mt-2 text-xs leading-relaxed text-white/60">{held.length ? "Switch on “Use my POINT B balance” at checkout. It pays all or part of any session in the same currency." : "Credit from cancelled sessions appears here."}</p>
         <div className="mt-4 flex gap-2">
           {held.length > 0 && <Link href="/mentors" className="rounded-full bg-white px-4 py-2 text-xs font-medium text-ink">Book a session</Link>}
           <button type="button" onClick={() => setOpen(!open)} aria-expanded={open} className="rounded-full px-3 py-2 text-xs font-medium text-white/80 ring-1 ring-white/20 hover:text-white">{open ? "Hide history" : "History"}</button>

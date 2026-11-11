@@ -7,6 +7,7 @@ import { MentorCard } from "@/components/mentor-card";
 import { MatchTeaser } from "@/components/match-teaser";
 import { track } from "@/lib/track";
 import { useApi } from "@/lib/use-api";
+import { PriceNote } from "@/components/price-note";
 import { LEVEL_LABEL } from "@/lib/constants";
 import type { Category, Level, MentorSummary } from "@/lib/types";
 
@@ -59,8 +60,9 @@ export function MentorsDirectory() {
         <p className="text-sm font-medium text-brass-dark">Explore mentors</p>
         <h1 className="mt-3 font-display text-5xl leading-[1.04] text-ink sm:text-6xl">Find the right conversation</h1>
         <p className="mt-3 text-ink-soft">
-          Every mentor has been screened, interviewed and approved. Local mentors are priced in PKR, international mentors in GBP.
+          Every mentor has been screened, interviewed and approved. Prices are shown in your own currency.
         </p>
+        {(() => { const m = res.data?.items.find((x) => x.convertedFrom); return <PriceNote currency={m?.currency} from={m?.convertedFrom} className="mt-2" />; })()}
       </div>
 
       <MatchTeaser compact className="mt-8" />
@@ -74,7 +76,7 @@ export function MentorsDirectory() {
           <div>
             <p className="mb-1.5 text-sm font-medium text-ink">Location</p>
             <div className="grid gap-2">
-              {([["", "All mentors"], ["LOCAL", "Local (Pakistan) · PKR"], ["INTERNATIONAL", "International · GBP"]] as const).map(([v, l]) => (
+              {([["", "All mentors"], ["LOCAL", "Local (Pakistan)"], ["INTERNATIONAL", "International"]] as const).map(([v, l]) => (
                 <label key={v} className="flex cursor-pointer items-center gap-2 rounded-xl border border-line px-3.5 py-2 text-sm has-[:checked]:border-ink has-[:checked]:bg-paper-dim">
                   <input type="radio" name="category" className="accent-ink" checked={category === v} onChange={() => setCategory(v)} />
                   {l}

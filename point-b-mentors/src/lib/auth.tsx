@@ -10,6 +10,7 @@ interface AuthCtx {
   loading: boolean;
   login: (email: string, password: string) => Promise<SessionUser>;
   register: (input: Record<string, unknown>) => Promise<SessionUser>;
+  loginWithGoogle: (credential: string) => Promise<SessionUser>;
   /** Second step for admins with two-step sign-in, after login threw TwoStepRequired. */
   loginWithCode: (mfaToken: string, code: string) => Promise<SessionUser>;
   logout: () => void;
@@ -61,6 +62,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     user, loading, refresh,
     login: (email, password) => start("/auth/login", { email, password }),
     register: (input) => start("/auth/register", input),
+    loginWithGoogle: (credential) => start("/auth/google", { credential, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }),
     loginWithCode: (mfaToken, code) => start("/auth/login/code", { mfaToken, code }),
     logout: () => { track("signed_out"); flushActivity(); setToken(null); setUser(null); resetVisitor(); },
   }), [user, loading, refresh, start]);

@@ -1,4 +1,4 @@
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsMongoId, IsDateString, IsBoolean, IsEnum, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsMongoId, IsDateString, IsBoolean, IsEnum, IsIn, IsInt, IsObject, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
 import { ApplicationStatus, Currency, MentorCategory, MentorLevel, MentorStatus } from '@prisma/client';
 
 export class ScorecardDto {
@@ -50,9 +50,10 @@ export class UpdateMentorAdminDto {
   @IsOptional() @IsBoolean() verified?: boolean;
 }
 
+
 export class PricingRuleDto {
   @IsEnum(MentorLevel) level: MentorLevel;
-  @IsEnum(Currency) currency: Currency;
+  @IsIn(['PKR', 'GBP']) currency: 'PKR' | 'GBP';
   @IsInt() @Min(100) minMinor: number;
   @IsInt() @Min(100) maxMinor: number;
   /** The standard price inside the range, used for mentors without their own price. */

@@ -23,13 +23,15 @@ export const emailDate = (d: Date, timeZone = 'UTC') => {
   return `${new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true, timeZone }).format(d).replace(/\bam\b/, 'am').replace(/\bpm\b/, 'pm')} ${label}`;
 };
 
-const BRASS = '#8a6a2f', INK = '#17181c', SOFT = '#5c5f66', LINE = '#e6e2d8', PAPER = '#faf8f3';
+const BRASS = '#456b0e', INK = '#17181c', SOFT = '#5c5f66', LINE = '#e6e2d8', PAPER = '#faf8f3';
 
 /** Branded HTML email. Inline styles and tables only, so it renders in Gmail, Outlook and Apple Mail. */
 export function renderEmail(subject: string, body: string, opts: EmailOptions = {}): { html: string; text: string } {
   const site = webUrl();
-  const logo = process.env.EMAIL_LOGO_URL
-    ? `<img src="${esc(process.env.EMAIL_LOGO_URL)}" alt="POINT B Mentors" height="34" style="display:block;border:0;height:34px;">`
+  // The logo image needs a public address, so local development keeps the text version.
+  const logoUrl = process.env.EMAIL_LOGO_URL ?? (site.startsWith("https://") ? `${site}/brand/pointb-logo-dark.png` : null);
+  const logo = logoUrl
+    ? `<img src="${esc(logoUrl)}" alt="POINT B Mentors" width="125" height="30" style="display:block;border:0;height:30px;width:auto;">`
     : `<span style="font-family:Georgia,'Times New Roman',serif;font-size:22px;color:${INK};letter-spacing:-0.2px;">POINT B <span style="color:${BRASS};">Mentors</span></span>`;
 
   const paragraphs = body.trim().split(/\n{2,}/).map((p) =>

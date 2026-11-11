@@ -1,3 +1,4 @@
+import { VisitorCountry } from '../common/geo';
 import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Res } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
@@ -11,7 +12,7 @@ import { PayoutDetailsDto } from '../admin/admin-ops.controller';
 export class MentorsController {
   constructor(private mentors: MentorsService) {}
 
-  @Public() @Get() list(@Query() q: ListMentorsQuery) { return this.mentors.list(q); }
+  @Public() @Get() list(@Query() q: ListMentorsQuery, @VisitorCountry() country: string | null) { return this.mentors.list(q, country); }
   @Public() @Get('facets') facets() { return this.mentors.facets(); }
 
   // Mentor self-service. Declared before :slug so "me" is not captured as a slug.
@@ -42,5 +43,5 @@ export class MentorsController {
     res.send(data);
   }
 
-  @Public() @Get(':slug') get(@Param('slug') slug: string) { return this.mentors.getBySlug(slug); }
+  @Public() @Get(':slug') get(@Param('slug') slug: string, @VisitorCountry() country: string | null) { return this.mentors.getBySlug(slug, country); }
 }

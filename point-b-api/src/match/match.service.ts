@@ -67,11 +67,11 @@ export class MatchService {
     throw last;
   }
 
-  async match(turns: MatchTurnDto[]) {
+  async match(turns: MatchTurnDto[], country?: string | null) {
     const ai = this.ai();
     if (turns[turns.length - 1].role !== 'user') throw new BadRequestException('The last message must be yours.');
 
-    const { items } = await this.mentors.list({ limit: 200 } as never);
+    const { items } = await this.mentors.list({ limit: 200 } as never, country);
     const catalogue = items.map((m) => ({
       slug: m.slug, name: m.name, title: m.title, organization: m.organization, country: m.country,
       type: m.category === 'LOCAL' ? 'Local (PKR)' : 'International (GBP)', level: m.level,

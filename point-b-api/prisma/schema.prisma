@@ -39,6 +39,38 @@ enum MentorStatus {
 enum Currency {
   PKR
   GBP
+  USD
+  EUR
+  AED
+  SAR
+  QAR
+  CAD
+  AUD
+  NZD
+  INR
+  BDT
+  KES
+  NGN
+  ZAR
+  SGD
+  MYR
+  TRY
+  OMR
+  KWD
+  BHD
+  JOD
+  EGP
+  LKR
+  NPR
+  HKD
+  CNY
+  PHP
+  THB
+  IDR
+  CHF
+  SEK
+  NOK
+  DKK
 }
 
 enum ApplicationStatus {
@@ -272,6 +304,9 @@ model Booking {
   listPriceMinor       Int? // price before any promo discount
   discountMinor        Int?
   promoCodeId          String?       @db.ObjectId
+  // Booked with a company referral code: the discount is POINT B's, and the mentor is paid on the full price.
+  referralCodeId       String?       @db.ObjectId
+  mentorPaidInFull     Boolean?
   repeatStudent        Boolean? // the student had already had a paid session with this mentor
   commissionPercent    Int? // platform fee rate applied; null while no commission is configured
   platformFeeMinor     Int?
@@ -327,6 +362,26 @@ model PromoCode {
 
   @@index([mentorId])
   @@index([studentId])
+}
+
+/**
+ * A company referral code: made by the POINT B team for one mentor, who shares it with students. Any student can use it
+ * once for a discount, and the mentor is still paid their full fee: POINT B covers the discount out of its own fee.
+ */
+model ReferralCode {
+  id         String    @id @default(auto()) @map("_id") @db.ObjectId
+  code       String    @unique
+  mentorId   String    @db.ObjectId
+  percentOff Int
+  note       String    @default("") // for the team, e.g. the campaign or partner
+  maxUses    Int? // null: no limit
+  expiresAt  DateTime? // null: no end date
+  pausedAt   DateTime?
+  createdBy  String    @db.ObjectId
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([mentorId])
 }
 
 /**
@@ -399,6 +454,8 @@ model Review {
   moderatedAt DateTime?
   // "ADMIN" for admin decisions; "MENTOR" only on older reviews from when mentors could moderate.
   moderatedBy String?
+  // Set when the student uses their one edit. The edited text goes back to PENDING for the POINT B team.
+  editedAt    DateTime?
   createdAt   DateTime      @default(now())
 
   booking Booking @relation(fields: [bookingId], references: [id])
@@ -415,6 +472,8 @@ model SavedMentor {
 
   @@unique([userId, mentorId])
 }
+
+/// The price list for visitors from one country. Anything not set here falls back to the default PKR or GBP price.
 
 model PricingRule {
   id         String      @id @default(auto()) @map("_id") @db.ObjectId
@@ -457,6 +516,10 @@ model ActivityEvent {
   reference String?
   device    String?
   referrer  String? // the other site they arrived from: host only
+  // Public IP address and the location estimated from it. Deleted with the event after 90 days.
+  ip        String?
+  country   String? // two-letter code, e.g. PK
+  city      String?
   createdAt DateTime @default(now())
 
   @@index([userId, createdAt])
@@ -578,4 +641,45 @@ model WalletEntry {
   createdAt   DateTime @default(now())
 
   @@index([userId, createdAt])
+}
+
+/**
+ * A conversation in the website chat bubble. The browser holds a random key; the AI replies unless a team member
+ * has joined in the last 15 minutes (agentUntil), so a person can step in and the AI resumes if they leave.
+ */
+model ChatConversation {
+  id            String    @id @default(auto()) @map("_id") @db.ObjectId
+  key           String    @unique // random, from the browser; whoever holds it can read this chat
+  userId        String?   @db.ObjectId // set when a signed-in person chats
+  name          String?
+  email         String?
+  role          String? // STUDENT, MENTOR or null for a visitor
+  page          String? // where they last chatted from
+  country       String?
+  city          String?
+  agentUntil    DateTime? // a team member is replying; the AI stays quiet until then
+  agentId       String?   @db.ObjectId
+  agentName     String?
+  unreadByTeam  Int       @default(0)
+  lastMessage   String?
+  lastMessageAt DateTime  @default(now())
+  createdAt     DateTime  @default(now())
+
+  messages ChatMessage[]
+
+  @@index([lastMessageAt])
+  @@index([userId])
+}
+
+model ChatMessage {
+  id             String   @id @default(auto()) @map("_id") @db.ObjectId
+  conversationId String   @db.ObjectId
+  role           String // user, assistant (AI) or agent (a team member)
+  content        String
+  agentName      String? // shown to the team only; the visitor sees every reply as POINT B
+  createdAt      DateTime @default(now())
+
+  conversation ChatConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
 }

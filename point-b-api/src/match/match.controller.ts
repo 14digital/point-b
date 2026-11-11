@@ -1,3 +1,4 @@
+import { VisitorCountry } from '../common/geo';
 import { Body, Controller, HttpCode, Post } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
@@ -12,5 +13,5 @@ export class MatchController {
 
   // Open to visitors, so it is rate-limited per IP: each call is a paid model request.
   @Public() @Throttle({ default: { limit: 30, ttl: 3_600_000 } }) @HttpCode(200)
-  @Post() find(@Body() dto: MatchDto) { return this.match.match(dto.messages); }
+  @Post() find(@Body() dto: MatchDto, @VisitorCountry() country: string | null) { return this.match.match(dto.messages, country); }
 }

@@ -5,8 +5,9 @@ import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../common/notifications.service';
 import { webUrl } from '../common/email-template';
 import { PasswordLinksService } from '../common/password-links.service';
-import { createHash, randomInt, timingSafeEqual } from 'crypto';
-import { ChangePasswordDto, DisableTwoFactorDto, LoginCodeDto, LoginDto, RegisterDto, ResetPasswordDto, UpdateAccountDto, UpdateContactDto } from './auth.dto';
+import { createHash, randomBytes, randomInt, timingSafeEqual } from 'crypto';
+import { OAuth2Client } from 'google-auth-library';
+import { ChangePasswordDto, DisableTwoFactorDto, GoogleLoginDto, LoginCodeDto, LoginDto, RegisterDto, ResetPasswordDto, UpdateAccountDto, UpdateContactDto } from './auth.dto';
 import { hashRecovery, newRecoveryCodes, newTotpSecret, otpauthUrl, verifyTotp } from '../common/totp';
 import { normalisePhone } from '../common/phone';
 import { ActivityService } from '../activity/activity.service';
@@ -102,6 +103,59 @@ export class AuthService {
     }
     this.activity.record(user.id, 'registered');
     return this.session(user);
+  }
+
+  private google = new OAuth2Client();
+  private googleClientId = () => process.env.GOOGLE_CLIENT_ID?.trim() || null;
+  private unguessablePassword = async () => bcrypt.hash(randomBytes(32).toString('hex'), 12);
+
+  googleConfig() { return { clientId: this.googleClientId() }; }
+
+  /** Signs in with a Google account, creating a student account the first time. Google has already confirmed the email. */
+  async loginWithGoogle(dto: GoogleLoginDto) {
+    const audience = this.googleClientId();
+    if (!audience) throw new BadRequestException('Google sign-in isn’t available right now. Please use your email and password.');
+    let google;
+    try {
+      google = (await this.google.verifyIdToken({ idToken: dto.credential, audience })).getPayload();
+    } catch {
+      throw new UnauthorizedException('We couldn’t confirm your Google account. Please try again.');
+    }
+    if (!google?.email || !google.email_verified) throw new UnauthorizedException('Your Google account’s email isn’t confirmed yet. Please use your email and password.');
+    const email = google.email.toLowerCase();
+    const existing = await this.prisma.user.findUnique({ where: { email } });
+    if (existing) {
+      // Team accounts keep their password and two-step sign-in, so Google can never be a way around them.
+      if (existing.role === 'ADMIN') throw new UnauthorizedException('Team accounts sign in with a password.');
+      if (!existing.isActive) throw new UnauthorizedException('This account isn’t active. Please contact support.');
+      if (existing.emailVerified !== false) {
+        this.activity.record(existing.id, 'signed_in');
+        return this.session(existing);
+      }
+      // Nobody had proved they own this email until now, so a password set at sign-up can't be trusted: it stops working.
+      const confirmed = await this.prisma.user.update({ where: { id: existing.id }, data: { emailVerified: true, emailCodeHash: null, emailCodeExpiresAt: null, emailCodeAttempts: null, passwordHash: await this.unguessablePassword() } });
+      await this.sendWelcome(confirmed);
+      this.activity.record(confirmed.id, 'signed_in');
+      return this.session(confirmed);
+    }
+    const created = await this.prisma.user.create({
+      data: {
+        email,
+        name: google.name?.trim() || email.split('@')[0],
+        passwordHash: await this.unguessablePassword(),
+        role: 'STUDENT',
+        timezone: dto.timezone ?? 'Asia/Karachi',
+        whatsappAlerts: false,
+        emailVerified: true,
+      },
+    });
+    await this.sendWelcome(created);
+    this.activity.record(created.id, 'registered');
+    return this.session(created);
+  }
+
+  private sendWelcome(user: { id: string; email: string; name: string }) {
+    return this.notify.send(user.email, 'Welcome to POINT B Mentors', `Hi ${user.name.split(' ')[0]},\n\nWelcome to POINT B Mentors. Your account is ready.\n\nBrowse mentors who have been where you want to go, pick a time that suits you, and book a private 30-minute conversation. Choose a 1:1 session, or a group session at a lower price per person.`, user.id, { cta: { label: 'Find a mentor', url: `${webUrl()}/mentors` }, whatsapp: false });
   }
 
   async login(dto: LoginDto) {
@@ -246,7 +300,7 @@ export class AuthService {
       throw new BadRequestException('That code is not right. Please check your email and try again.');
     }
     await this.prisma.user.update({ where: { id }, data: { emailVerified: true, emailCodeHash: null, emailCodeExpiresAt: null, emailCodeAttempts: null } });
-    await this.notify.send(user.email, 'Welcome to POINT B Mentors', `Hi ${user.name.split(' ')[0]},\n\nWelcome to POINT B Mentors. Your account is ready.\n\nBrowse mentors who have been where you want to go, pick a time that suits you, and book a private 30-minute conversation. Choose a 1:1 session, or a group session at a lower price per person.`, user.id, { cta: { label: 'Find a mentor', url: `${webUrl()}/mentors` }, whatsapp: false });
+    await this.sendWelcome(user);
     return this.me(id);
   }
 }

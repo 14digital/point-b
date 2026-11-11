@@ -2,7 +2,7 @@ import { Body, Controller, Get, HttpCode, Param, Patch, Post } from '@nestjs/com
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { AuthUser, CurrentUser, Public, Roles, Staff } from '../common/auth';
-import { ChangePasswordDto, DisableTwoFactorDto, ForgotPasswordDto, LoginCodeDto, LoginDto, RegisterDto, ResendEmailCodeDto, ResetPasswordDto, UpdateAccountDto, VerifyEmailDto, TwoFactorCodeDto, UpdateContactDto } from './auth.dto';
+import { ChangePasswordDto, DisableTwoFactorDto, ForgotPasswordDto, GoogleLoginDto, LoginCodeDto, LoginDto, RegisterDto, ResendEmailCodeDto, ResetPasswordDto, UpdateAccountDto, VerifyEmailDto, TwoFactorCodeDto, UpdateContactDto } from './auth.dto';
 import { AuthService } from './auth.service';
 
 @ApiTags('auth')
@@ -15,6 +15,11 @@ export class AuthController {
 
   @Public() @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('login') login(@Body() dto: LoginDto) { return this.auth.login(dto); }
+
+  // The site shows "Continue with Google" only when GOOGLE_CLIENT_ID is set on the server.
+  @Public() @Get('google/config') googleConfig() { return this.auth.googleConfig(); }
+  @Public() @Throttle({ default: { limit: 10, ttl: 60_000 } }) @HttpCode(200)
+  @Post('google') google(@Body() dto: GoogleLoginDto) { return this.auth.loginWithGoogle(dto); }
 
   @Public() @Throttle({ default: { limit: 8, ttl: 300_000 } }) @HttpCode(200)
   @Post('login/code') loginCode(@Body() dto: LoginCodeDto) { return this.auth.loginWithCode(dto); }

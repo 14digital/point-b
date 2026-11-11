@@ -47,7 +47,7 @@ export function Footer() {
     <footer className="px-3 pb-3 pt-16 sm:px-4 sm:pb-4">
       <div className="relative overflow-hidden rounded-[2rem] bg-ink text-white sm:rounded-[2.5rem]">
         {/* Soft glow in the corner so the dark panel doesn't feel flat */}
-        <div aria-hidden className="pointer-events-none absolute -right-40 -top-40 h-[420px] w-[420px] rounded-full bg-brass/25 blur-[120px]" />
+        <div aria-hidden className="pointer-events-none absolute -right-40 -top-40 h-[420px] w-[420px] rounded-full bg-lime/20 blur-[120px]" />
 
         <Container className="relative pt-16 sm:pt-20">
           <div className="grid gap-12 lg:grid-cols-[300px_1fr] lg:gap-20">
@@ -60,7 +60,7 @@ export function Footer() {
                 {PROMISES.map((p) => (
                   <li key={p} className="flex items-center gap-3 text-sm text-white/80">
                     <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-white/10">
-                      <svg width="10" height="10" viewBox="0 0 20 20" fill="none" aria-hidden><path d="M4 10.5l4 4 8-9" stroke="#e9c880" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                      <svg width="10" height="10" viewBox="0 0 20 20" fill="none" aria-hidden><path d="M4 10.5l4 4 8-9" stroke="#b7de5b" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
                     </span>
                     <NoticeText text={p} />
                   </li>
@@ -95,7 +95,6 @@ export function Footer() {
 
           <div className="mt-16 flex flex-col gap-4 border-t border-white/10 py-6 text-xs text-white/45 sm:flex-row sm:items-center sm:justify-between">
             <p>© {new Date().getFullYear()} POINT B. All rights reserved.</p>
-            <p className="sm:text-center">Prices shown in PKR for local mentors and GBP for international mentors.</p>
             <a href="#" className="inline-flex items-center gap-2 self-start text-white/60 transition-colors hover:text-white sm:self-auto">
               Back to top
               <span className="flex h-7 w-7 items-center justify-center rounded-full ring-1 ring-white/20">

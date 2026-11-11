@@ -89,7 +89,7 @@ export function PaymentDueBar() {
           <MentorPhoto name={b.mentor.name} photoUrl={b.mentor.photoUrl} className="hidden h-10 w-10 shrink-0 rounded-full sm:block" initialsClass="text-sm" />
           <div className="min-w-0 flex-1">
             <p className="flex items-center gap-2 whitespace-nowrap text-sm font-medium text-ink">
-              <span className={`h-2 w-2 shrink-0 rounded-full ${urgent ? "bg-rust" : "bg-brass"} animate-pulse`} aria-hidden />
+              <span className={`h-2 w-2 shrink-0 rounded-full ${urgent ? "bg-rust" : "bg-amber"} animate-pulse`} aria-hidden />
               Payment due · {formatMoney(b.priceMinor, b.currency)}
             </p>
             <p className="truncate text-xs text-ink-soft">

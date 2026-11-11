@@ -15,6 +15,7 @@ import { track } from "@/lib/track";
 import { MobileField } from "@/components/mobile-field";
 import { isValidPhone, type CountryCode } from "@/components/phone-input";
 import { fmtDay, fmtDayShort, fmtTime, formatMoney, groupByDay, localTz } from "@/lib/format";
+import { PriceNote } from "@/components/price-note";
 import type { Booking, MentorDetail, SessionKind, Slot } from "@/lib/types";
 import { useNoticeLabel } from "@/lib/policy";
 
@@ -46,6 +47,7 @@ export function BookingPanel({ mentor, onSlotTaken }: { mentor: MentorDetail; on
         <span className="font-display text-4xl leading-none text-ink">{formatMoney(price, mentor.currency)}</span>
         <span className="text-sm text-ink-soft">{mode === "GROUP" ? "per seat · 30 min" : "30 min · private"}</span>
       </div>
+      <PriceNote currency={mentor.currency} from={mentor.convertedFrom} className="mt-1.5" />
 
       <div className="mt-5 grid grid-cols-2 gap-1 rounded-2xl bg-paper p-1" role="group" aria-label="Session type">
         {([["ONE_TO_ONE", "1:1 session", mentor.priceMinor, hasSolo], ["GROUP", "Group", mentor.groupPriceMinor, hasGroup]] as const).map(([k, label, amt, avail]) => (
@@ -120,7 +122,7 @@ function BookingModal({ mentor, slot, price, onClose: close, onSlotTaken }: { me
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [promoInput, setPromoInput] = useState("");
-  const [promo, setPromo] = useState<{ code: string; percentOff: number; discountMinor: number; priceMinor: number } | null>(null);
+  const [promo, setPromo] = useState<{ code: string; kind?: "promo" | "referral"; percentOff: number; discountMinor: number; priceMinor: number } | null>(null);
   const [promoErr, setPromoErr] = useState<string | null>(null);
   const [promoBusy, setPromoBusy] = useState(false);
   const [offer, setOffer] = useState<{ code: string; percentOff: number } | null>(null);
@@ -128,14 +130,21 @@ function BookingModal({ mentor, slot, price, onClose: close, onSlotTaken }: { me
   const canPromo = slot.kind === "ONE_TO_ONE" && user?.role === "STUDENT";
 
   // A code this mentor sent the student is offered automatically, so they don't have to dig it out of their email.
+  // A referral code from a share link (?code=...) is applied straight away.
   useEffect(() => {
     if (!canPromo) return;
     let alive = true;
+    const shared = new URLSearchParams(window.location.search).get("code")?.trim();
+    if (shared) {
+      api<{ code: string; kind?: "promo" | "referral"; percentOff: number; discountMinor: number; priceMinor: number }>("/bookings/promo-check", { body: { slotId: slot.id, code: shared } })
+        .then((p) => { if (alive) { setPromo(p); setPromoInput(p.code); } })
+        .catch((e) => { if (alive) { setPromoInput(shared.toUpperCase()); setPromoErr(errMsg(e)); } });
+    }
     api<{ code: string; percentOff: number; mentorId: string }[]>("/bookings/promos")
       .then((list) => { const mine = list.find((c) => c.mentorId === mentor.id); if (alive && mine) setOffer({ code: mine.code, percentOff: mine.percentOff }); })
       .catch(() => undefined);
     return () => { alive = false; };
-  }, [canPromo, mentor.id]);
+  }, [canPromo, mentor.id, slot.id]);
 
   async function applyPromo(code: string) {
     setPromoBusy(true); setPromoErr(null);
@@ -163,7 +172,7 @@ function BookingModal({ mentor, slot, price, onClose: close, onSlotTaken }: { me
   async function hold() {
     setBusy(true); setError(null);
     try {
-      const b = await api<Booking>("/bookings", { body: { slotId: slot.id, agenda, currentSituation: situation, usefulOutcome: outcome, materialsToReview: materials || undefined, promoCode: promo?.code } });
+      const b = await api<Booking>("/bookings", { body: { slotId: slot.id, agenda, currentSituation: situation, usefulOutcome: outcome, materialsToReview: materials || undefined, promoCode: promo?.code, expectedPriceMinor: price, expectedCurrency: mentor.currency } });
       setBooking(b); setStep("payment");
       paymentChanged();
     } catch (e) {
@@ -276,7 +285,7 @@ function BookingModal({ mentor, slot, price, onClose: close, onSlotTaken }: { me
                   <Row l="Mentor" v={mentor.name} /><Row l="Date" v={fmtDay(slot.startAt)} />
                   <Row l="Time" v={`${fmtTime(slot.startAt)}–${fmtTime(slot.endAt)} (30 minutes)`} /><Row l="Type" v={slot.kind === "GROUP" ? `Group session (up to ${slot.capacity} students)` : "1:1 session"} /><Row l="Focus" v={agenda} />
                   <Row l={slot.kind === "GROUP" ? "Fee per seat" : "Session fee"} v={formatMoney(price, mentor.currency)} />
-                  {promo && <Row l={`Promo ${promo.code} (${promo.percentOff}% off)`} v={`− ${formatMoney(promo.discountMinor, mentor.currency)}`} />}
+                  {promo && <Row l={`${promo.kind === "referral" ? "Referral" : "Promo"} ${promo.code} (${promo.percentOff}% off)`} v={`− ${formatMoney(promo.discountMinor, mentor.currency)}`} />}
                   <Row l="Taxes & processing fees" v={formatMoney(0, mentor.currency)} />
                   <div className="mt-3 flex justify-between border-t border-line pt-3 font-medium text-ink"><span>Total due</span><span>{formatMoney(total, mentor.currency)}</span></div>
                 </div>
@@ -295,7 +304,7 @@ function BookingModal({ mentor, slot, price, onClose: close, onSlotTaken }: { me
                             <Button size="sm" disabled={promoBusy} onClick={() => applyPromo(offer.code)}>{promoBusy ? <Spinner /> : "Apply"}</Button>
                           </div>
                         )}
-                        <p className="text-xs font-medium text-ink-soft">Have a promo code from {first}?</p>
+                        <p className="text-xs font-medium text-ink-soft">Have a promo or referral code?</p>
                         <div className="mt-2 flex gap-2">
                           <input className="input flex-1 uppercase tracking-wide" placeholder="PB-XXXXXX" maxLength={30} value={promoInput} onChange={(e) => setPromoInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && promoInput.trim() && applyPromo(promoInput)} />
                           <Button size="sm" variant="secondary" disabled={!promoInput.trim() || promoBusy} onClick={() => applyPromo(promoInput)}>{promoBusy ? <Spinner /> : "Apply"}</Button>

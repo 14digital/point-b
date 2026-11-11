@@ -1,6 +1,9 @@
 "use client";
 
-import { useCallback, useState, type ReactNode } from "react";
+import { LiveChats } from "@/components/admin-chats";
+import { ReferralCodes } from "@/components/admin-referrals";
+import { playChime } from "@/lib/sound";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { RequireRole } from "@/components/require-role";
 import { Alert, Badge, Button, Container, EmptyState, Field, FilterChips, Mark, Skeleton, Spinner, pastelFor } from "@/components/ui";
 import { DashboardHero, DateTile, Panel, StatTile, Tabs, greeting } from "@/components/dashboard";
@@ -28,13 +31,13 @@ import { Flag, countryIn } from "@/components/flag";
 import { formatPhone } from "@/components/phone-input";
 import type { AdminInterview, AppStatus, Application, Booking, Currency, Level } from "@/lib/types";
 
-const TABS = ["Overview", "Applications", "Mentors", "Bookings", "Students", "Reviews", "Support", "User tracking", "Activity", "Settings"] as const;
+const TABS = ["Overview", "Applications", "Mentors", "Bookings", "Students", "Reviews", "Support", "Live chat", "Referrals", "User tracking", "Activity", "Settings"] as const;
 type Tab = (typeof TABS)[number];
 /** What each team role sees. Owners see everything. */
 const TABS_FOR: Record<"OWNER" | "OPERATIONS" | "FINANCE", readonly Tab[]> = {
   OWNER: TABS,
-  OPERATIONS: ["Overview", "Applications", "Mentors", "Bookings", "Students", "Reviews", "Support", "User tracking", "Settings"],
-  FINANCE: ["Overview", "Mentors", "Bookings", "Students", "Settings"],
+  OPERATIONS: ["Overview", "Applications", "Mentors", "Bookings", "Students", "Reviews", "Support", "Live chat", "Referrals", "User tracking", "Settings"],
+  FINANCE: ["Overview", "Mentors", "Bookings", "Students", "Referrals", "Settings"],
 };
 
 const TONE: Record<string, "neutral" | "brass" | "forest" | "rust"> = {
@@ -60,6 +63,17 @@ function Console() {
   const reviewsWaiting = reviews.data?.filter((r) => r.status === "PENDING").length ?? 0;
   const consentWaiting = students.data?.filter((x) => x.needsConsent).length ?? 0;
   const openTickets = tickets.data?.filter((t) => t.status !== "RESOLVED").length ?? 0;
+  const chats = useApi<{ chats: number }>(ops ? "/admin/chats/unread" : null);
+  const chatsReload = chats.reload;
+  useEffect(() => { if (!ops) return; const t = setInterval(chatsReload, 15000); return () => clearInterval(t); }, [ops, chatsReload]);
+  const unreadChats = chats.data?.chats ?? 0;
+  // On other tabs, a chime when a new chat message comes in (the Live chat tab chimes on its own).
+  const lastUnread = useRef<number | null>(null);
+  useEffect(() => {
+    if (chats.data === null) return;
+    if (lastUnread.current !== null && unreadChats > lastUnread.current && chosen !== "Live chat") playChime();
+    lastUnread.current = unreadChats;
+  }, [chats.data, unreadChats, chosen]);
   const [focusId, setFocusId] = useState<string | null>(null);
   const stats = useApi<Stats>("/admin/stats");
   const s = stats.data;
@@ -72,7 +86,7 @@ function Console() {
         subtitle={toReview ? `${toReview} application${toReview === 1 ? "" : "s"} waiting for review, and ${s?.bookings.CONFIRMED ?? 0} upcoming confirmed session${s?.bookings.CONFIRMED === 1 ? "" : "s"}.` : "Everything is up to date. Here's how the platform is doing."}
         actions={<><Button variant="secondary" href="/mentors">View live site</Button>{!!toReview && ops && <Button onClick={() => setTab("Applications")}>Review applications</Button>}</>}
       >
-        <div className="mt-10"><Tabs tabs={tabs} value={tab} onChange={setTab} counts={{ ...(toReview && ops ? { Applications: toReview } : {}), ...(consentWaiting ? { Students: consentWaiting } : {}), ...(openTickets ? { Support: openTickets } : {}), ...(reviewsWaiting ? { Reviews: reviewsWaiting } : {}) }} /></div>
+        <div className="mt-10"><Tabs tabs={tabs} value={tab} onChange={setTab} counts={{ ...(toReview && ops ? { Applications: toReview } : {}), ...(consentWaiting ? { Students: consentWaiting } : {}), ...(openTickets ? { Support: openTickets } : {}), ...(unreadChats ? { "Live chat": unreadChats } : {}), ...(reviewsWaiting ? { Reviews: reviewsWaiting } : {}) }} /></div>
       </DashboardHero>
       <Container className="py-10 sm:py-12">
         {tab === "Overview" && <Overview role={role} onReview={() => setTab("Applications")} onOpenApp={(id) => { setFocusId(id); setTab("Applications"); }} onGo={setTab}
@@ -83,6 +97,8 @@ function Console() {
         {tab === "Students" && <Students onChanged={students.reload} />}
         {tab === "Reviews" && <Reviews onChanged={reviews.reload} />}
         {tab === "Support" && <Support meId={user?.id ?? ""} onChanged={tickets.reload} />}
+        {tab === "Live chat" && <LiveChats onChanged={chatsReload} />}
+        {tab === "Referrals" && <ReferralCodes />}
         {tab === "Settings" && <SettingsTab role={role} />}
         {tab === "User tracking" && <UserTracking />}
         {tab === "Activity" && <Activity />}
@@ -113,7 +129,7 @@ function Overview({ role, onReview, onOpenApp, onGo, urgentTickets, consentWaiti
   const money = role !== "OPERATIONS";
   const alerts = [
     urgentTickets > 0 && { tone: "bg-rust-pale ring-rust/20", text: `${urgentTickets} safeguarding report${urgentTickets === 1 ? "" : "s"} waiting`, action: "Open support", go: "Support" as Tab },
-    consentWaiting > 0 && { tone: "bg-lemon/70 ring-brass/20", text: `${consentWaiting} under-18 student${consentWaiting === 1 ? "" : "s"} waiting for guardian consent`, action: "Review", go: "Students" as Tab },
+    consentWaiting > 0 && { tone: "bg-lemon/70 ring-amber/20", text: `${consentWaiting} under-18 student${consentWaiting === 1 ? "" : "s"} waiting for guardian consent`, action: "Review", go: "Students" as Tab },
     twoStepOff && { tone: "bg-white ring-line", text: "Protect your admin account with two-step sign-in", action: "Set up", go: "Settings" as Tab },
   ].filter(Boolean) as { tone: string; text: string; action: string; go: Tab }[];
   const head = (
@@ -216,7 +232,7 @@ function Overview({ role, onReview, onOpenApp, onGo, urgentTickets, consentWaiti
   );
 }
 /** Green below 60% of the video allowance, amber from 60%, red from 85%. */
-const ZONES = [{ to: 60, label: "Healthy", bar: "bg-forest", soft: "bg-mint", text: "text-forest" }, { to: 85, label: "Getting high", bar: "bg-brass", soft: "bg-lemon", text: "text-brass-dark" }, { to: 100, label: "Near the limit", bar: "bg-rust", soft: "bg-peach", text: "text-rust" }] as const;
+const ZONES = [{ to: 60, label: "Healthy", bar: "bg-forest", soft: "bg-mint", text: "text-forest" }, { to: 85, label: "Getting high", bar: "bg-amber", soft: "bg-lemon", text: "text-amber-dark" }, { to: 100, label: "Near the limit", bar: "bg-rust", soft: "bg-peach", text: "text-rust" }] as const;
 
 function VideoUsage({ v, period }: { v: Stats["video"]; period: string | null }) {
   const pct = Math.min(100, (v.usedMinutes / v.limitMinutes) * 100);
@@ -241,7 +257,7 @@ function VideoUsage({ v, period }: { v: Stats["video"]; period: string | null })
           </div>
           <div className="relative">
             <div className="flex h-3 overflow-hidden rounded-full" aria-hidden>
-              <span className="h-full w-[60%] bg-forest/15" /><span className="h-full w-[25%] bg-brass/20" /><span className="h-full w-[15%] bg-rust/20" />
+              <span className="h-full w-[60%] bg-forest/15" /><span className="h-full w-[25%] bg-amber/20" /><span className="h-full w-[15%] bg-rust/20" />
             </div>
             <span className={`absolute inset-y-0 left-0 rounded-full ${zone.bar} transition-all duration-700`} style={{ width: `max(${pct}%, 0.75rem)` }} role="progressbar" aria-valuemin={0} aria-valuemax={v.limitMinutes} aria-valuenow={v.usedMinutes} aria-label="Video minutes used" />
             <span className="pointer-events-none absolute -inset-y-1 left-[60%] w-px bg-white" aria-hidden /><span className="pointer-events-none absolute -inset-y-1 left-[85%] w-px bg-white" aria-hidden />
@@ -257,7 +273,7 @@ function VideoUsage({ v, period }: { v: Stats["video"]; period: string | null })
       <div className="mt-6 flex flex-wrap items-center justify-between gap-x-6 gap-y-2 border-t border-line pt-4 text-xs text-ink-soft">
         <ul className="flex flex-wrap gap-x-5 gap-y-1">
           <li className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-forest" />Under 60%</li>
-          <li className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-brass" />60% to 85%</li>
+          <li className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-amber" />60% to 85%</li>
           <li className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-rust" />Over 85%</li>
         </ul>
         <p>{v.source === "daily" ? "Live from the video provider: every participant\u2019s time, rounded up to whole minutes." : "Estimate: the provider\u2019s records couldn\u2019t be reached."}</p>
@@ -302,7 +318,7 @@ function Applications({ initialId }: { initialId: string | null }) {
                 const on = selected === a.id;
                 return (
                   <button key={a.id} onClick={() => setOpenId(a.id)}
-                    className={`flex w-full gap-3 rounded-2xl p-4 text-left transition-all ${on ? "bg-white shadow-[0_12px_32px_-20px_rgba(17,17,17,0.35)] ring-2 ring-ink" : "bg-white ring-1 ring-line hover:ring-ink/30"}`}>
+                    className={`flex w-full gap-3 rounded-2xl p-4 text-left transition-all ${on ? "bg-brass-pale/60 shadow-[0_12px_32px_-22px_rgba(17,17,17,0.3)] ring-1 ring-brass/40" : "bg-white ring-1 ring-line hover:ring-ink/20 hover:shadow-[0_10px_28px_-22px_rgba(17,17,17,0.3)]"}`}>
                     <Avatar name={a.fullName} />
                     <span className="min-w-0 flex-1">
                       <span className="flex items-center justify-between gap-2">
@@ -479,7 +495,7 @@ function ApplicationDetail({ id, onChanged }: { id: string; onChanged: () => voi
         {msg && <div className="mb-3"><Alert tone={msg.tone}>{msg.text}</Alert></div>}
 
         {a.changesRequested && !requesting && (
-          <div className="mb-4 rounded-2xl border-l-4 border-brass bg-white p-4 ring-1 ring-line">
+          <div className="mb-4 rounded-2xl border-l-4 border-amber bg-white p-4 ring-1 ring-line">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="text-xs font-medium uppercase tracking-[0.12em] text-brass-dark">Changes requested{a.changesRequestedAt ? ` · ${fmtDay(a.changesRequestedAt)}` : ""}</p>
               {a.status === "CHANGES_REQUESTED" && <button type="button" onClick={() => { setReqText(a.changesRequested ?? ""); setRequesting(true); }} className="text-xs font-medium text-ink underline underline-offset-2">Edit and resend</button>}
@@ -594,10 +610,10 @@ function Mentors() {
   return (
     <div className="space-y-5">
       {noSlots > 0 && (
-        <button type="button" onClick={() => setFilter("noslots")} className="flex w-full items-center gap-4 rounded-3xl bg-lemon/70 px-5 py-4 text-left ring-1 ring-brass/20 hover:bg-lemon">
+        <button type="button" onClick={() => setFilter("noslots")} className="flex w-full items-center gap-4 group rounded-3xl bg-lemon/60 px-5 py-4 text-left ring-1 ring-amber/15 transition-colors hover:bg-lemon/90">
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white text-ink"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden><rect x="3" y="4.5" width="14" height="12.5" rx="2.5" stroke="currentColor" strokeWidth="1.5" /><path d="M3 8.5h14M7 2.5v3.5M13 2.5v3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg></span>
           <span className="min-w-0 flex-1"><span className="block font-medium text-ink">{noSlots} active mentor{noSlots === 1 ? " has" : "s have"} no open times in the next 14 days</span><span className="block text-sm text-ink-soft">Students can&rsquo;t book them. A nudge to add availability usually helps.</span></span>
-          <span className="text-sm font-medium text-ink">Show</span>
+          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-white px-3.5 py-1.5 text-sm font-medium text-ink shadow-sm">Show<svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden className="transition-transform group-hover:translate-x-0.5"><path d="M7.5 5l5 5-5 5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg></span>
         </button>
       )}
       <div className="flex flex-wrap items-center gap-3">
@@ -683,7 +699,7 @@ function MentorRow({ m, tiers, onSaved, onOpen }: { m: AdminMentor; tiers: TierR
         <div>
           <span className="mb-1.5 block text-sm font-medium text-ink">Country</span>
           <CountrySelect value={country} onChange={setCountry} />
-          <p className={`mt-1.5 text-xs ${country && local !== (m.category === "LOCAL") ? "text-brass-dark" : "text-ink-soft"}`}>
+          <p className={`mt-1.5 text-xs ${country && local !== (m.category === "LOCAL") ? "text-amber-dark" : "text-ink-soft"}`}>
             {!country ? `Not recognised: "${m.country}". Choose a country.` : local !== (m.category === "LOCAL") ? `Will become ${local ? "Local · PKR" : "International · GBP"}. Check the price after saving.` : local ? "Local mentor, priced in PKR" : "International mentor, priced in GBP"}
           </p>
         </div>
@@ -717,7 +733,7 @@ function MentorRow({ m, tiers, onSaved, onOpen }: { m: AdminMentor; tiers: TierR
         <button type="button" onClick={onOpen} className="inline-flex items-center gap-1 text-sm font-medium text-ink underline-offset-4 hover:underline">Details, availability &amp; payouts<svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden><path d="M7.5 4.5 13 10l-5.5 5.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg></button>
         <div className="flex flex-wrap items-center justify-end gap-3">
           {dirty
-            ? <span className="inline-flex items-center gap-2 text-xs text-brass-dark"><span className="h-1.5 w-1.5 rounded-full bg-brass" />Unsaved changes</span>
+            ? <span className="inline-flex items-center gap-2 text-xs text-amber-dark"><span className="h-1.5 w-1.5 rounded-full bg-amber" />Unsaved changes</span>
             : <span className="inline-flex items-center gap-1.5 text-xs text-ink-soft"><svg width="13" height="13" viewBox="0 0 20 20" fill="none" aria-hidden className="text-forest"><path d="M4 10.5l4 4 8-9" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /></svg>All changes saved</span>}
           <div className="flex gap-2">
             {dirty && <Button size="sm" variant="ghost" disabled={busy} onClick={reset}>Discard</Button>}

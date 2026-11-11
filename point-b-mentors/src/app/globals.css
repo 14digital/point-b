@@ -6,9 +6,17 @@
   --color-paper: #f5f4f0;
   --color-paper-dim: #ebe9e3;
   --color-line: #e2e0d9;
-  --color-brass: #b07d2a;
-  --color-brass-dark: #8f651f;
-  --color-brass-pale: #f4e8d0;
+  /* Brand green, from the POINT B logo. Lime is the logo colour itself, for marks and dark backgrounds; the
+     "brass" names are kept from the old gold so every heading and accent picks up the green. Brass-dark is the
+     deeper shade used for small text, so it stays readable on light backgrounds. */
+  --color-lime: #b7de5b;
+  --color-brass: #5f8f14;
+  --color-brass-dark: #456b0e;
+  --color-brass-pale: #eaf5d3;
+  /* Amber is for things that need attention: pending, warnings, notices. */
+  --color-amber: #b07d2a;
+  --color-amber-dark: #8f651f;
+  --color-amber-pale: #f4e8d0;
   --color-forest: #1d5a3c;
   --color-forest-pale: #dcefe2;
   --color-rust: #9a3324;
@@ -22,12 +30,20 @@
 }
 
 
+/* No black browser outline after a mouse click; a soft green ring for keyboard users. */
+:where(a, button, summary, [role="button"], [tabindex]):focus:not(:focus-visible) { outline: none; }
+:where(a, button, summary, [role="button"], [tabindex]):focus-visible { outline: 2px solid color-mix(in srgb, var(--color-brass) 55%, transparent); outline-offset: 2px; }
+
 @theme inline {
   --color-ink: var(--color-ink);
   --color-ink-soft: var(--color-ink-soft);
   --color-paper: var(--color-paper);
   --color-paper-dim: var(--color-paper-dim);
   --color-line: var(--color-line);
+  --color-lime: var(--color-lime);
+  --color-amber: var(--color-amber);
+  --color-amber-dark: var(--color-amber-dark);
+  --color-amber-pale: var(--color-amber-pale);
   --color-brass: var(--color-brass);
   --color-brass-dark: var(--color-brass-dark);
   --color-brass-pale: var(--color-brass-pale);
@@ -128,3 +144,21 @@ details[open] .faq-plus { transform: rotate(45deg); }
 @media (prefers-reduced-motion: reduce) {
   [class*="animate-[pop"] { animation: none !important; }
 }
+
+/* Chat widget: messaging-app wallpaper, bubble tails and motion. */
+.chat-wallpaper {
+  background-color: #efeae2;
+  background-image:
+    radial-gradient(circle at 20% 20%, rgba(17, 17, 17, 0.035) 1.2px, transparent 1.6px),
+    radial-gradient(circle at 70% 60%, rgba(17, 17, 17, 0.03) 1px, transparent 1.4px),
+    radial-gradient(circle at 40% 85%, rgba(0, 128, 105, 0.035) 1.4px, transparent 1.8px);
+  background-size: 28px 28px, 34px 34px, 46px 46px;
+}
+.chat-tail-in::before, .chat-tail-out::before { content: ""; position: absolute; top: 0; width: 8px; height: 13px; }
+.chat-tail-in::before { left: -8px; background: inherit; clip-path: polygon(100% 0, 0 0, 100% 100%); }
+.chat-tail-out::before { right: -8px; background: inherit; clip-path: polygon(0 0, 100% 0, 0 100%); }
+@keyframes chat-in { from { opacity: 0; transform: translateY(6px) scale(0.98); } to { opacity: 1; transform: none; } }
+@keyframes chat-pop { from { opacity: 0; transform: translateY(10px) scale(0.92); } to { opacity: 1; transform: none; } }
+@keyframes chat-dot { 0%, 60%, 100% { transform: translateY(0); opacity: 0.45; } 30% { transform: translateY(-3px); opacity: 1; } }
+@keyframes chat-ring { 0% { transform: scale(1); opacity: 0.45; } 80%, 100% { transform: scale(1.55); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .chat-widget * { animation: none !important; transition: none !important; } }

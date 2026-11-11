@@ -1,7 +1,8 @@
-import { Body, Controller, DefaultValuePipe, Get, HttpCode, Param, ParseIntPipe, Post, Query } from '@nestjs/common';
+import { Body, Controller, DefaultValuePipe, Get, HttpCode, Param, ParseIntPipe, Post, Query, Req } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { AuthUser, CurrentUser, Public, Roles, Staff } from '../common/auth';
+import { clientIp, type IpSource } from '../common/geo';
 import { TrackDto } from './activity.dto';
 import { ActivityService } from './activity.service';
 
@@ -13,9 +14,10 @@ export class ActivityController {
 
   /** Open to guests, who are identified only by a random browser ID. Signed-in users are recognised from their token. */
   @Public() @Throttle({ default: { limit: 60, ttl: 60_000 } }) @HttpCode(200) @Post('activity/track')
-  track(@CurrentUser() u: AuthUser | undefined, @Body() dto: TrackDto) { return this.activity.track(u, dto); }
+  track(@CurrentUser() u: AuthUser | undefined, @Body() dto: TrackDto, @Req() req: IpSource) { return this.activity.track(u, dto, clientIp(req)); }
 
   @Staff('OPERATIONS') @Roles('ADMIN') @Get('admin/activity/overview') overview(@Query('days', new DefaultValuePipe(30), ParseIntPipe) days: number) { return this.activity.overview(days); }
+  @Staff('OPERATIONS') @Roles('ADMIN') @Get('admin/activity/audience') audience(@Query('days', new DefaultValuePipe(30), ParseIntPipe) days: number) { return this.activity.audience(days); }
   @Staff('OPERATIONS') @Roles('ADMIN') @Get('admin/activity/people') people() { return this.activity.people(); }
   @Staff('OPERATIONS') @Roles('ADMIN') @Get('admin/activity/people/:id') journey(@Param('id') id: string) { return this.activity.journey(id); }
   @Staff('OPERATIONS') @Roles('ADMIN') @HttpCode(200) @Post('admin/activity/triggers/:id/handled') handled(@CurrentUser() u: AuthUser, @Param('id') id: string) { return this.activity.markHandled(u.id, id); }

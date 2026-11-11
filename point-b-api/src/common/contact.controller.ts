@@ -8,7 +8,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { webUrl } from './email-template';
 import { NotificationsService } from './notifications.service';
 
-export const CONTACT_TOPICS = ['A booking I’ve made', 'Payments and refunds', 'Becoming a mentor', 'A safeguarding concern', 'Something else'] as const;
+export const CONTACT_TOPICS = ['A booking I’ve made', 'Payments and refunds', 'Reviews', 'Becoming a mentor', 'A safeguarding concern', 'Something else'] as const;
 
 class ContactDto {
   @IsString() @Length(2, 100) name!: string;

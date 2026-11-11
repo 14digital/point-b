@@ -14,11 +14,12 @@ import { STATUS_LABEL } from "@/lib/constants";
 import { fmtDay, fmtDayShort, fmtTime, formatMoney, initials } from "@/lib/format";
 import { useUrlTab } from "@/lib/use-url-tab";
 import { MySupport } from "@/components/my-support";
+import { SessionButton } from "@/components/session-button";
 import { useApi, useNow } from "@/lib/use-api";
-import type { Booking, Interview, MentorSummary, MyReview } from "@/lib/types";
+import type { Booking, Currency, Interview, MentorSummary, MyReview } from "@/lib/types";
 import { PayoutDetailsForm, PayoutDetailsView, type PayoutDetails } from "@/components/admin-mentor-detail";
 
-interface Earnings { totals: { currency: "PKR" | "GBP"; grossMinor: number; feeMinor: number; payoutMinor: number; sessions: number; repeatSessions: number }[]; tierPercent: number | null; repeatPercent: number; commissionConfigured: boolean }
+interface Earnings { totals: { currency: Currency; grossMinor: number; feeMinor: number; payoutMinor: number; sessions: number; repeatSessions: number }[]; tierPercent: number | null; repeatPercent: number; commissionConfigured: boolean }
 interface MyStudent { id: string; name: string; email: string; lastSessionAt: string; sessions: number }
 interface MyPromo { id: string; studentId: string; code: string; percentOff: number; note: string; createdAt: string; expiresAt: string; usedAt: string | null; studentName: string; state: "ACTIVE" | "USED" | "EXPIRED" | "REVOKED" }
 type MyBooking = Booking & { studentName: string; hostStartedAt?: string | null };
@@ -49,7 +50,7 @@ function Dashboard() {
   const upcoming = all.filter((b) => b.status === "CONFIRMED" && !started(b)).sort((a, b) => +new Date(a.startAt) - +new Date(b.startAt));
   const toClose = all.filter((b) => b.status === "CONFIRMED" && started(b));
   const history = all.filter((b) => b.status !== "CONFIRMED").sort((a, b) => +new Date(b.startAt) - +new Date(a.startAt));
-  const currency = (earnings.data?.totals[0]?.currency ?? (p?.currency ?? "PKR")) as "PKR" | "GBP";
+  const currency = (earnings.data?.totals[0]?.currency ?? (p?.currency ?? "PKR")) as Currency;
   const totals = earnings.data?.totals.find((t) => t.currency === currency);
   const openSlots = (slots.data ?? []).filter((s) => !s.isBooked).length;
   const reload = async () => { await Promise.all([bookings.reload(), earnings.reload(), slots.reload()]); };
@@ -169,6 +170,7 @@ function PromoCodes({ live, repeatPercent }: { live: boolean; repeatPercent: num
   const list = students.data ?? [];
   return (
     <div className="space-y-10">
+      <MyReferralCodes />
       <div className="grid gap-3 sm:grid-cols-3">
         {[["Invite them back", "Ask a student to book again at the end of a session, and send them a code here."], ["Up to 50% off", "You choose the discount, from 5% to 50%. It comes off the session price."], [`${repeatPercent}% platform fee`, "Every 1:1 with a returning student has a lower platform fee, so more of the price is yours."]].map(([t, d], i) => (
           <div key={t} className={`rounded-3xl p-5 ${["bg-mint/60", "bg-lemon/60", "bg-sky/60"][i]}`}><p className="font-display text-2xl text-ink">{t}</p><p className="mt-1 text-sm leading-relaxed text-ink/70">{d}</p></div>
@@ -282,14 +284,14 @@ function Sessions({ loading, upcoming, toClose, history, now, reload }: { loadin
           <p className="mt-1 text-sm text-ink-soft">Marking a session completed emails the student a feedback request.</p>
           <div className="mt-5 space-y-3">
             {closing.map((b) => (
-              <div key={b.id} className="flex flex-wrap items-center justify-between gap-4 rounded-3xl border-l-4 border-brass bg-white p-5 ring-1 ring-line sm:p-6">
+              <div key={b.id} className="flex flex-wrap items-center justify-between gap-4 rounded-3xl border-l-4 border-amber bg-white p-5 ring-1 ring-line sm:p-6">
                 <div className="flex items-center gap-4">
                   <DateTile iso={b.startAt} />
                   <span className="hidden sm:block"><StudentChip name={b.studentName} /></span>
                   <div>
                     <p className="font-display text-xl text-ink">{b.studentName}</p>
                     <p className="text-sm text-ink-soft">{fmtTime(b.startAt)}–{fmtTime(b.endAt)} · {b.agenda}</p>
-                    <span className="mt-1.5 inline-block rounded-full bg-brass-pale px-2.5 py-0.5 text-xs font-medium text-brass-dark">Needs outcome</span>
+                    <span className="mt-1.5 inline-block rounded-full bg-amber-pale px-2.5 py-0.5 text-xs font-medium text-amber-dark">Needs outcome</span>
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -332,7 +334,7 @@ function Sessions({ loading, upcoming, toClose, history, now, reload }: { loadin
                     </div>
                   </div>
                   <div className="flex gap-2">
-                    {b.meetingLink && <a href={b.meetingLink} target="_blank" rel="noreferrer" className="rounded-full bg-ink px-5 py-2.5 text-sm font-medium text-white">Session page</a>}
+                    {b.meetingLink && <SessionButton link={b.meetingLink} startAt={b.startAt} endAt={b.endAt} withName={b.studentName} detail={`${b.sessionKind === "GROUP" ? "Group" : "1:1"} · ${b.agenda}`} joinClass="rounded-full bg-forest px-5 py-2.5 text-sm font-medium text-white" waitClass="rounded-full bg-ink px-5 py-2.5 text-sm font-medium text-white" />}
                   </div>
                 </div>
                 <details className="group mt-4 rounded-2xl bg-paper-dim px-4 py-3">
@@ -441,9 +443,9 @@ function ProfileEditor({ p, onSaved }: { p: Profile; onSaved: () => unknown }) {
 }
 
 interface MyPayouts {
-  totals: { currency: "PKR" | "GBP"; earnedMinor: number; paidMinor: number; dueMinor: number; forCancelledMinor: number; sessions: number }[];
-  payouts: { id: string; createdAt: string; currency: "PKR" | "GBP"; amountMinor: number; sessions: number; reference: string | null; note: string | null }[];
-  sessions: { reference: string; status: string; currency: "PKR" | "GBP"; startAt: string; studentName: string; priceMinor: number; percent: number | null; earnMinor: number | null; paidOn: string | null }[];
+  totals: { currency: Currency; earnedMinor: number; paidMinor: number; dueMinor: number; forCancelledMinor: number; sessions: number }[];
+  payouts: { id: string; createdAt: string; currency: Currency; amountMinor: number; sessions: number; reference: string | null; note: string | null }[];
+  sessions: { reference: string; status: string; currency: Currency; startAt: string; studentName: string; priceMinor: number; percent: number | null; earnMinor: number | null; paidOn: string | null }[];
   hasPayoutDetails: boolean;
 }
 
@@ -474,7 +476,7 @@ function PayoutSettings() {
   const payments = (d?.payouts ?? []).filter((p) => month === "all" || monthKey(p.createdAt) === month);
   const earned = (l: typeof monthSessions) => l.reduce((n, s) => n + (s.earnMinor ?? 0), 0);
   // All time uses the statement totals; a single month is added up from its sessions.
-  const totals: MyPayouts["totals"] = month === "all" ? d?.totals ?? [] : (["PKR", "GBP"] as const).flatMap((currency) => {
+  const totals: MyPayouts["totals"] = month === "all" ? d?.totals ?? [] : [...new Set((d?.sessions ?? []).map((s) => s.currency))].flatMap((currency) => {
     const mine = monthSessions.filter((s) => s.currency === currency);
     if (!mine.length) return [];
     const unpaid = earned(mine.filter((s) => !s.paidOn));
@@ -536,5 +538,54 @@ function PayoutSettings() {
         {msg && <Alert tone={msg.tone}>{msg.text}</Alert>}
       </aside>
     </div>
+  );
+}
+
+interface MyReferral { id: string; code: string; percentOff: number; state: "ACTIVE" | "EXPIRED" | "USED_UP"; expiresAt: string | null; maxUses: number | null; uses: number; bookings: number }
+
+/** Company referral codes made for this mentor: they share them, students save, and they're still paid in full. */
+function MyReferralCodes() {
+  const { data } = useApi<MyReferral[]>("/mentors/me/referral-codes");
+  const [copied, setCopied] = useState<string | null>(null);
+  const profile = useApi<{ slug: string; user?: { name: string }; name?: string }>(data?.length ? "/mentors/me/profile" : null).data;
+  const slug = profile?.slug;
+  const first = (profile?.name ?? profile?.user?.name)?.split(" ")[0];
+  if (!data?.length) return null;
+  const copy = (key: string, text: string) => navigator.clipboard?.writeText(text).then(() => { setCopied(key); setTimeout(() => setCopied(null), 1500); }).catch(() => undefined);
+  return (
+    <section className="overflow-hidden rounded-3xl bg-ink text-white">
+      <div className="grid gap-6 p-6 sm:p-8 lg:grid-cols-[1fr_auto] lg:items-center">
+        <div>
+          <p className="text-xs font-medium uppercase tracking-[0.14em] text-lime">Your POINT B referral code</p>
+          <h2 className="mt-3 font-display text-3xl leading-tight sm:text-4xl">Share it. Students save, you&rsquo;re paid in full.</h2>
+          <p className="mt-3 max-w-xl text-sm leading-relaxed text-white/70">
+            Anyone who books a 1:1 with you using this code gets a discount, and POINT B covers it. Your pay is worked out on your full session price{first ? `, ${first}` : ""}.
+          </p>
+        </div>
+        <div className="space-y-3">
+          {data.map((c) => {
+            const link = slug ? `${window.location.origin}/mentors/${slug}?code=${c.code}` : "";
+            return (
+              <div key={c.id} className="rounded-2xl bg-white/[0.07] p-4 ring-1 ring-white/10 lg:min-w-[22rem]">
+                <div className="flex items-center justify-between gap-4">
+                  <button type="button" onClick={() => copy(c.id, c.code)} className="text-left" title="Copy code">
+                    <span className="block font-mono text-2xl font-semibold tracking-[0.14em]">{c.code}</span>
+                    <span className="text-xs text-white/60">{copied === c.id ? "Copied" : `${c.percentOff}% off for students · tap to copy`}</span>
+                  </button>
+                  <span className="rounded-full bg-lime px-3 py-1 text-xs font-semibold text-ink">{c.state === "ACTIVE" ? `${c.bookings} booked` : c.state === "EXPIRED" ? "Ended" : "Limit reached"}</span>
+                </div>
+                {link && c.state === "ACTIVE" && (
+                  <button type="button" onClick={() => copy(`${c.id}-link`, link)} className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-medium text-ink transition-transform hover:-translate-y-0.5">
+                    <svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden><path d="M8.5 11.5a3.5 3.5 0 005 0l2.5-2.5a3.5 3.5 0 00-5-5l-1 1M11.5 8.5a3.5 3.5 0 00-5 0L4 11a3.5 3.5 0 005 5l1-1" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
+                    {copied === `${c.id}-link` ? "Link copied" : "Copy your booking link"}
+                  </button>
+                )}
+                {(c.expiresAt || c.maxUses) && <p className="mt-2 text-center text-[11px] text-white/50">{[c.expiresAt && `Ends ${new Date(c.expiresAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}`, c.maxUses && `${c.uses} of ${c.maxUses} used`].filter(Boolean).join(" · ")}</p>}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </section>
   );
 }

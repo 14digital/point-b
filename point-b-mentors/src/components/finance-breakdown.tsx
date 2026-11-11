@@ -5,7 +5,7 @@ import { Panel } from "@/components/dashboard";
 import { Empty, FinanceModal, SectionTitle, Sum, plural } from "@/components/finance-modal";
 import { MentorPayoutsModal, type MentorDue } from "@/components/mentor-payouts";
 import { LEVEL_LABEL } from "@/lib/constants";
-import { formatMoney } from "@/lib/format";
+import { formatMoney, currencyLabel } from "@/lib/format";
 import type { Currency, Level } from "@/lib/types";
 
 interface Tally { sessions: number; grossMinor: number; feeMinor: number | null; payoutMinor: number | null }
@@ -23,7 +23,6 @@ export interface FinanceSummary {
 type Section = "gross" | "revenue" | "payouts";
 
 const METHOD_LABEL: Record<string, string> = { stripe: "Card", bank: "Bank app / QR", mock: "Demo checkout", wallet: "POINT B balance", unknown: "Not recorded" };
-const CURRENCY_LABEL: Record<Currency, string> = { PKR: "Local · PKR", GBP: "International · GBP" };
 const NOT_SET = "Not configured";
 const percentOf = (part: number, whole: number) => (whole > 0 ? (part / whole) * 100 : 0);
 const shortPercent = (n: number) => `${n.toFixed(1).replace(/\.0$/, "")}%`;
@@ -35,7 +34,7 @@ export function FinanceBreakdown({ f, period, query, repeatPercent, onChanged, h
   const share = f.platformRevenueMinor == null ? 0 : percentOf(f.platformRevenueMinor, f.grossMinor);
   return (
     <Panel className="flex flex-col">
-      <span className={`self-start rounded-full px-3 py-1.5 text-xs font-medium text-ink ${f.currency === "PKR" ? "bg-mint" : "bg-sky"}`}>{CURRENCY_LABEL[f.currency]}</span>
+      <span className={`self-start rounded-full px-3 py-1.5 text-xs font-medium text-ink ${f.currency === "PKR" ? "bg-mint" : f.currency === "GBP" ? "bg-sky" : "bg-lilac"}`}>{currencyLabel(f.currency)}</span>
 
       <button type="button" onClick={() => setOpen("gross")} className="group mt-6 flex items-end justify-between gap-4 rounded-2xl text-left">
         <span className="min-w-0">
@@ -68,8 +67,8 @@ export function FinanceBreakdown({ f, period, query, repeatPercent, onChanged, h
         <Stat label="Cancelled before payment" value={money(f.unpaidCancelledMinor)} note={`${plural(f.unpaidCancelledCount, "booking")}, nothing received`} />
       </dl>
 
-      {open === "gross" && <FinanceModal label="Gross booking value" eyebrow={`${CURRENCY_LABEL[f.currency]} · ${period}`} title="Gross booking value" total={money(f.grossMinor)} totalNote={plural(f.sessions, "paid session")} onClose={() => setOpen(null)}><GrossDetail f={f} /></FinanceModal>}
-      {open === "revenue" && <FinanceModal label="Company revenue" eyebrow={`${CURRENCY_LABEL[f.currency]} · ${period}`} title="Company revenue" total={money(f.platformRevenueMinor)} totalNote={f.grossMinor > 0 && f.platformRevenueMinor != null ? `${shortPercent(share)} of ${money(f.grossMinor)} gross` : undefined} onClose={() => setOpen(null)}><RevenueDetail f={f} repeatPercent={repeatPercent} /></FinanceModal>}
+      {open === "gross" && <FinanceModal label="Gross booking value" eyebrow={`${currencyLabel(f.currency)} · ${period}`} title="Gross booking value" total={money(f.grossMinor)} totalNote={plural(f.sessions, "paid session")} onClose={() => setOpen(null)}><GrossDetail f={f} /></FinanceModal>}
+      {open === "revenue" && <FinanceModal label="Company revenue" eyebrow={`${currencyLabel(f.currency)} · ${period}`} title="Company revenue" total={money(f.platformRevenueMinor)} totalNote={f.grossMinor > 0 && f.platformRevenueMinor != null ? `${shortPercent(share)} of ${money(f.grossMinor)} gross` : undefined} onClose={() => setOpen(null)}><RevenueDetail f={f} repeatPercent={repeatPercent} /></FinanceModal>}
       {open === "payouts" && <MentorPayoutsModal currency={f.currency} period={period} query={query} mentors={f.mentors} grossMinor={f.grossMinor} revenueMinor={f.platformRevenueMinor} payoutMinor={f.mentorPayoutsMinor} paidMinor={f.payoutsPaidMinor} dueMinor={f.payoutsDueMinor} onChanged={onChanged} onClose={() => setOpen(null)} />}
     </Panel>
   );

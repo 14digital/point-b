@@ -9,13 +9,13 @@ import { useToast } from "@/components/toast";
 import { useAuth } from "@/lib/auth";
 import { api, errMsg } from "@/lib/api";
 import { STATUS_LABEL } from "@/lib/constants";
-import { fmtDay, fmtTime, formatMoney, initials } from "@/lib/format";
+import { fmtDay, fmtTime, formatMoney, initials, currencyLabel, currencySymbol } from "@/lib/format";
 import { useApi } from "@/lib/use-api";
 import type { Currency } from "@/lib/types";
 
 interface StudentRow {
   id: string; name: string; email: string; phone: string | null; age: number | null; minor: boolean; guardianEmail: string | null; guardianConsent: boolean; needsConsent: boolean;
-  isActive: boolean; suspendedReason: string | null; anonymized: boolean; joinedAt: string; bookings: number; paidSessions: number; spent: Record<Currency, number>; lastBookingAt: string | null;
+  isActive: boolean; suspendedReason: string | null; anonymized: boolean; joinedAt: string; bookings: number; paidSessions: number; spent: Partial<Record<Currency, number>>; lastBookingAt: string | null;
 }
 interface StudentDetail {
   id: string; name: string; email: string; phone: string | null; timezone: string; age: number | null; minor: boolean; guardianEmail: string | null; guardianConsent: boolean; whatsappAlerts: boolean;
@@ -29,7 +29,7 @@ interface StudentDetail {
 const FILTERS = [["all", "All"], ["consent", "Needs guardian consent"], ["minors", "Under 18"], ["suspended", "Suspended"], ["active", "Have booked"]] as const;
 type Filter = (typeof FILTERS)[number][0];
 const TONE: Record<string, "neutral" | "brass" | "forest" | "rust"> = { PENDING_PAYMENT: "brass", CONFIRMED: "forest", COMPLETED: "forest", CANCELLED: "rust", NO_SHOW: "rust" };
-const spentLabel = (s: Record<Currency, number>) => [s.PKR ? formatMoney(s.PKR, "PKR") : null, s.GBP ? formatMoney(s.GBP, "GBP") : null].filter(Boolean).join(" + ") || "—";
+const spentLabel = (s: Partial<Record<Currency, number>>) => (Object.entries(s) as [Currency, number][]).filter(([, n]) => n).map(([c, n]) => formatMoney(n, c)).join(" + ") || "—";
 
 function StudentStatus({ s }: { s: StudentRow }) {
   return s.anonymized ? <Badge>Erased</Badge> : !s.isActive ? <Badge tone="rust">Suspended</Badge> : s.needsConsent ? <Badge tone="brass">Needs consent</Badge> : s.minor ? <Badge tone="forest">Under 18 · consent given</Badge> : <Badge tone="forest">Active</Badge>;
@@ -61,7 +61,7 @@ export function Students({ onChanged }: { onChanged?: () => void }) {
   return (
     <div className="space-y-6">
       {waiting > 0 && (
-        <button type="button" onClick={() => setFilter("consent")} className="flex w-full items-center gap-4 rounded-3xl bg-lemon/70 px-5 py-4 text-left ring-1 ring-brass/20 transition-colors hover:bg-lemon">
+        <button type="button" onClick={() => setFilter("consent")} className="flex w-full items-center gap-4 rounded-3xl bg-lemon/70 px-5 py-4 text-left ring-1 ring-amber/20 transition-colors hover:bg-lemon">
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white text-ink"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden><path d="M10 2.5l6 2.5v4.5c0 4-2.6 6.8-6 8-3.4-1.2-6-4-6-8V5l6-2.5z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" /><path d="M10 7v4M10 13.5v.3" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" /></svg></span>
           <span className="min-w-0 flex-1"><span className="block font-medium text-ink">{waiting} under-18 student{waiting === 1 ? " is" : "s are"} waiting for guardian consent</span><span className="block text-sm text-ink-soft">They can&rsquo;t book until you record consent from their parent or guardian.</span></span>
           <span className="text-sm font-medium text-ink">Review</span>
@@ -172,7 +172,7 @@ function StudentModal({ id, onClose, onChanged }: { id: string; onClose: () => v
           {!s.isActive && !s.anonymizedAt && <div className="rounded-2xl bg-rust-pale px-4 py-3 text-sm"><p className="font-medium text-rust">Suspended</p><p className="mt-0.5 text-ink">{s.suspendedReason}</p></div>}
 
           {s.minor && !s.anonymizedAt && (
-            <section className={`rounded-2xl p-4 ring-1 ${s.guardianConsent ? "bg-mint/40 ring-forest/15" : "bg-lemon/50 ring-brass/20"}`}>
+            <section className={`rounded-2xl p-4 ring-1 ${s.guardianConsent ? "bg-mint/40 ring-forest/15" : "bg-lemon/50 ring-amber/20"}`}>
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="font-medium text-ink">{s.guardianConsent ? "Guardian consent recorded" : "Waiting for guardian consent"}</p>
@@ -241,6 +241,7 @@ function BalanceSection({ s, canAdjust, onSaved }: { s: StudentDetail; canAdjust
   const [form, setForm] = useState<{ currency: Currency; sign: 1 | -1; amount: string; note: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const { balances, entries } = s.wallet;
+  const shownCurrencies = (Object.keys(balances) as Currency[]).filter((c) => c === "PKR" || c === "GBP" || balances[c]);
   async function save() {
     if (!form) return;
     setBusy(true);
@@ -254,14 +255,14 @@ function BalanceSection({ s, canAdjust, onSaved }: { s: StudentDetail; canAdjust
     <section>
       <SectionTitle aside={canAdjust && !form && !s.anonymizedAt ? <button type="button" onClick={() => setForm({ currency: "PKR", sign: 1, amount: "", note: "" })} className="text-xs font-medium text-ink underline-offset-4 hover:underline">Adjust balance</button> : undefined}>POINT B balance</SectionTitle>
       <div className="grid grid-cols-2 gap-2">
-        {(["PKR", "GBP"] as const).map((c) => <div key={c} className={`rounded-2xl px-4 py-3 ${balances[c] > 0 ? "bg-mint/50" : "bg-paper"}`}><p className="text-[11px] text-ink-soft">{c === "PKR" ? "Local · PKR" : "International · GBP"}</p><p className="mt-0.5 font-display text-2xl text-ink tabular-nums">{formatMoney(balances[c], c)}</p></div>)}
+        {shownCurrencies.map((c) => <div key={c} className={`rounded-2xl px-4 py-3 ${balances[c] > 0 ? "bg-mint/50" : "bg-paper"}`}><p className="text-[11px] text-ink-soft">{currencyLabel(c)}</p><p className="mt-0.5 font-display text-2xl text-ink tabular-nums">{formatMoney(balances[c], c)}</p></div>)}
       </div>
       {form && (
         <div className="mt-3 space-y-2 rounded-2xl bg-paper p-4">
           <div className="flex flex-wrap gap-2">
             <div className="flex rounded-full bg-white p-1 text-xs ring-1 ring-line">{([[1, "Add credit"], [-1, "Remove"]] as const).map(([v, l]) => <button key={v} type="button" onClick={() => setForm({ ...form, sign: v })} className={`rounded-full px-3 py-1.5 font-medium ${form.sign === v ? "bg-ink text-white" : "text-ink-soft"}`}>{l}</button>)}</div>
-            <div className="flex rounded-full bg-white p-1 text-xs ring-1 ring-line">{(["PKR", "GBP"] as const).map((c) => <button key={c} type="button" onClick={() => setForm({ ...form, currency: c })} className={`rounded-full px-3 py-1.5 font-medium ${form.currency === c ? "bg-ink text-white" : "text-ink-soft"}`}>{c}</button>)}</div>
-            <input className="input w-32 bg-white" style={{ width: "8rem" }} inputMode="decimal" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value.replace(/[^\d.]/g, "") })} placeholder={form.currency === "PKR" ? "Rs" : "£"} aria-label="Amount" />
+            <div className="flex rounded-full bg-white p-1 text-xs ring-1 ring-line">{shownCurrencies.map((c) => <button key={c} type="button" onClick={() => setForm({ ...form, currency: c })} className={`rounded-full px-3 py-1.5 font-medium ${form.currency === c ? "bg-ink text-white" : "text-ink-soft"}`}>{c}</button>)}</div>
+            <input className="input w-32 bg-white" style={{ width: "8rem" }} inputMode="decimal" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value.replace(/[^\d.]/g, "") })} placeholder={currencySymbol(form.currency).trim()} aria-label="Amount" />
           </div>
           <input className="input bg-white" value={form.note} maxLength={300} onChange={(e) => setForm({ ...form, note: e.target.value })} placeholder={form.sign > 0 ? "Reason, shown to the student, e.g. Goodwill credit for the late start" : "Reason, for the record"} aria-label="Reason" />
           <div className="flex justify-end gap-2">

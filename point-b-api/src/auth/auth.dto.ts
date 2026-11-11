@@ -22,6 +22,12 @@ export class LoginDto {
   @IsString() password: string;
 }
 
+/** The signed token Google's sign-in button hands to the page. */
+export class GoogleLoginDto {
+  @IsString() @MaxLength(4096) credential: string;
+  @IsOptional() @IsString() @MaxLength(64) timezone?: string;
+}
+
 /** Second step of an admin sign-in: the 6-digit authenticator code, or one of the backup codes. */
 export class LoginCodeDto {
   @IsString() @MaxLength(2000) mfaToken: string;

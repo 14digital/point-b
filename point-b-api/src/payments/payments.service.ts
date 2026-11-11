@@ -1,3 +1,4 @@
+import { money } from '../common/currency';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
@@ -49,7 +50,7 @@ export class PaymentsService {
       const b = await this.prisma.booking.findUniqueOrThrow({ where: { id: payment.bookingId }, include: { student: { select: { name: true, email: true } } } });
       await this.prisma.payment.update({ where: { id: payment.id }, data: { status: 'REFUNDED' } });
       await this.wallet.add(b.studentId, payment.currency, payment.amountMinor + (b.walletAppliedMinor ?? 0), 'LATE_PAYMENT', { bookingId: b.id, reference: b.reference, note: 'Paid after the time hold ended' });
-      const amount = payment.currency === 'PKR' ? `Rs ${((payment.amountMinor + (b.walletAppliedMinor ?? 0)) / 100).toLocaleString('en-PK')}` : `£${((payment.amountMinor + (b.walletAppliedMinor ?? 0)) / 100).toFixed(2)}`;
+      const amount = money(payment.amountMinor + (b.walletAppliedMinor ?? 0), payment.currency);
       await this.notify.send(b.student.email, 'Your payment is in your POINT B balance', `Hi ${b.student.name.split(' ')[0]},\n\nYour payment arrived after the time we were holding for you had ended, so the booking couldn't be confirmed. We've added ${amount} to your POINT B balance, and you can use it at checkout for any future session.`, b.studentId, { emailOnly: true, cta: { label: 'Book a session', url: `${process.env.WEB_URL ?? ''}/mentors` } });
       this.log.warn(`Late payment ${providerRef} credited to balance`);
     }
@@ -131,6 +132,35 @@ export class PaymentsService {
       await this.applyResult(providerRef, 'succeeded');
       return { state: 'paid' as const, reference };
     }
+    return this.checkout(user, reference);
+  }
+
+  /**
+   * Takes the balance back off a held booking at checkout, so the student can pay the full price another way.
+   * The amount goes straight back to their balance.
+   */
+  async removeBalance(user: AuthUser, reference: string) {
+    await this.bookings.releaseExpiredHolds();
+    const { booking, payment } = await this.pendingPayment(user, reference);
+    if (booking.status !== 'PENDING_PAYMENT' || payment.status !== 'PENDING') throw new BadRequestException('This booking is no longer waiting for payment.');
+    if (booking.awaitingVerification) throw new BadRequestException('We are already checking a bank payment for this booking.');
+    const applied = booking.walletAppliedMinor ?? 0;
+    if (!applied) return this.checkout(user, reference);
+    // Release the claim first, so two clicks can never return the balance twice.
+    const released = await this.prisma.booking.updateMany({ where: { id: booking.id, status: 'PENDING_PAYMENT', walletAppliedMinor: applied }, data: { walletAppliedMinor: null } });
+    if (!released.count) throw new ConflictException('This booking just changed. Please refresh and try again.');
+    // A card payment for the smaller amount may already be open: cancel it, and checkout starts a new one for the full price.
+    if (payment.providerRef.startsWith('pi_')) {
+      const intent = await this.stripe.retrieveIntent(payment.providerRef);
+      if (intent && ['succeeded', 'processing'].includes(intent.status)) {
+        await this.prisma.booking.update({ where: { id: booking.id }, data: { walletAppliedMinor: applied } });
+        throw new ConflictException('Your card payment is already going through, so the balance stays applied.');
+      }
+      await this.stripe.cancelIntent(payment.providerRef);
+    }
+    await this.prisma.payment.update({ where: { id: payment.id }, data: { amountMinor: payment.amountMinor + applied, ...(payment.providerRef.startsWith('pi_') ? { providerRef: 'pay_' + randomBytes(10).toString('hex') } : {}) } });
+    await this.wallet.add(user.id, payment.currency, applied, 'RETURN', { bookingId: booking.id, reference, note: 'Removed at checkout' });
+    this.activity.record(user.id, 'balance_removed', { reference });
     return this.checkout(user, reference);
   }
 

@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth';
+import { locate } from '../common/geo';
 import { TrackDto } from './activity.dto';
 
 /** Events older than this are deleted: enough to follow up on people, without keeping browsing history forever. */
@@ -17,6 +18,10 @@ const cleanPage = (p?: string) => (p ? p.split(/[?#]/)[0].slice(0, 200) : undefi
 const guestName = (visitorId: string) => `Guest ${visitorId.slice(0, 4).toUpperCase()}`;
 /** One person across their events: their account if they have one, otherwise their browser. */
 const who = (e: { userId: string | null; visitorId: string | null }) => e.userId ?? `guest:${e.visitorId}`;
+
+/** Can happen with nobody on the site (a hold lapsing, an admin approving a payment), so they never count as someone visiting. */
+const SYSTEM_EVENTS = ['hold_expired', 'payment_succeeded', 'booking_cancelled', 'bank_transfer_rejected'];
+const isVisit = (e: { type: string }) => !SYSTEM_EVENTS.includes(e.type);
 
 const FUNNEL = ['Visited the site', 'Viewed a mentor', 'Started booking', 'Signed in', 'Reached payment', 'Tried to pay', 'Paid'];
 
@@ -44,17 +49,19 @@ export class ActivityService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** Events sent by the browser. Admins aren't tracked: their actions are already in the audit log. */
-  async track(user: AuthUser | undefined, dto: TrackDto) {
+  async track(user: AuthUser | undefined, dto: TrackDto, ip: string | null = null) {
     if (user?.role === 'ADMIN' || (!user && !dto.visitorId)) return { ok: true };
     // Signing in links everything this browser did as a guest to the account.
     if (user && dto.visitorId) await this.prisma.activityEvent.updateMany({ where: { visitorId: dto.visitorId, userId: null }, data: { userId: user.id } });
     if (!dto.events.length) return { ok: true };
     const now = Date.now();
+    const place = locate(ip);
     await this.prisma.activityEvent.createMany({
       // Spaced by a millisecond so a batch keeps its order.
       data: dto.events.map((e, i) => ({
         userId: user?.id ?? null, visitorId: dto.visitorId ?? null, type: e.type, page: cleanPage(e.page), label: e.label?.slice(0, 140), reference: e.reference,
         device: e.type === 'page_view' ? dto.device : undefined, referrer: e.type === 'page_view' ? dto.referrer : undefined,
+        ...(ip ? { ip, ...place } : {}),
         createdAt: new Date(now - (dto.events.length - i)),
       })),
     });
@@ -65,7 +72,8 @@ export class ActivityService implements OnModuleInit, OnModuleDestroy {
     const days = [7, 30, 90].includes(daysRaw) ? daysRaw : 30;
     const now = Date.now();
     const day = new Date(now - DAY);
-    const rows = await this.prisma.activityEvent.findMany({ where: { createdAt: { gte: new Date(now - days * DAY) } }, orderBy: { createdAt: 'asc' }, take: 100_000, select: { userId: true, visitorId: true, type: true, page: true, createdAt: true } });
+    // Newest first, so if the cap is ever reached it's the oldest events that are left out.
+    const rows = (await this.prisma.activityEvent.findMany({ where: { createdAt: { gte: new Date(now - days * DAY) } }, orderBy: { createdAt: 'desc' }, take: 100_000, select: { userId: true, visitorId: true, type: true, page: true, createdAt: true } })).reverse();
 
     const byPerson = new Map<string, typeof rows>();
     for (const r of rows) (byPerson.get(who(r)) ?? byPerson.set(who(r), []).get(who(r))!).push(r);
@@ -90,6 +98,7 @@ export class ActivityService implements OnModuleInit, OnModuleDestroy {
     // Each person counts once, at every stage up to the furthest they reached.
     const stages = FUNNEL.map((label) => ({ label, count: 0, members: 0, guests: 0 }));
     for (const [key, list] of byPerson) {
+      if (!list.some(isVisit)) continue;
       const has = (t: string) => list.some((e) => e.type === t);
       const member = !key.startsWith('guest:');
       const reached = has('payment_succeeded') ? 6 : has('payment_attempted') || has('bank_transfer_submitted') ? 5 : has('booking_held') ? 4
@@ -97,7 +106,7 @@ export class ActivityService implements OnModuleInit, OnModuleDestroy {
       for (let i = 0; i <= reached; i++) { stages[i].count++; stages[i][member ? 'members' : 'guests']++; }
     }
 
-    const today = await this.prisma.activityEvent.findMany({ where: { createdAt: { gte: day } }, select: { userId: true, visitorId: true, type: true, createdAt: true } });
+    const today = await this.prisma.activityEvent.findMany({ where: { createdAt: { gte: day }, type: { notIn: SYSTEM_EVENTS } }, select: { userId: true, visitorId: true, type: true, createdAt: true } });
     const live = new Set(today.filter((e) => now - e.createdAt.getTime() < 5 * 60_000).map(who));
     const active = new Set(today.map(who));
     return {
@@ -109,6 +118,131 @@ export class ActivityService implements OnModuleInit, OnModuleDestroy {
       triggers: await this.triggers(),
       dropOffs: [...drop.entries()].map(([page, count]) => ({ page, count })).sort((a, b) => b.count - a.count).slice(0, 8),
       funnel: stages,
+    };
+  }
+
+  /** Who visits and from where: every visitor, and traffic, bookings and revenue by country. */
+  async audience(daysRaw = 30) {
+    const days = [7, 30, 90].includes(daysRaw) ? daysRaw : 30;
+    const now = Date.now();
+    const since = new Date(now - days * DAY);
+    const rows = (await this.prisma.activityEvent.findMany({ where: { createdAt: { gte: since } }, orderBy: { createdAt: 'desc' }, take: 100_000, select: { userId: true, visitorId: true, type: true, page: true, device: true, referrer: true, ip: true, country: true, city: true, createdAt: true } })).reverse();
+    const byPerson = new Map<string, typeof rows>();
+    for (const r of rows) (byPerson.get(who(r)) ?? byPerson.set(who(r), []).get(who(r))!).push(r);
+
+    const [accounts, paid] = await Promise.all([
+      this.prisma.user.findMany({ where: { id: { in: [...byPerson.keys()].filter((k) => !k.startsWith('guest:')) } }, select: { id: true, name: true, email: true, role: true } }),
+      this.prisma.booking.findMany({ where: { createdAt: { gte: since }, status: { in: ['CONFIRMED', 'COMPLETED'] } }, select: { studentId: true, priceMinor: true, currency: true, createdAt: true } }),
+    ]);
+    const account = new Map(accounts.map((a) => [a.id, a]));
+
+    // A booking belongs to wherever the student was when they made it, or their nearest known location if that visit predates tracking.
+    const students = [...new Set(paid.map((b) => b.studentId))];
+    const located = students.length ? (await this.prisma.activityEvent.findMany({ where: { userId: { in: students } }, orderBy: { createdAt: 'asc' }, select: { userId: true, country: true, city: true, createdAt: true } })).filter((e) => e.country) : [];
+    const placeAt = (studentId: string, at: Date) => {
+      const mine = located.filter((e) => e.userId === studentId);
+      return [...mine].reverse().find((e) => e.createdAt <= at) ?? mine[0] ?? null;
+    };
+
+    const regions = new Intl.DisplayNames(['en'], { type: 'region' });
+    const countryName = (code: string) => { if (!code) return 'Not recorded'; try { return regions.of(code) ?? code; } catch { return code; } };
+    type Bucket = { code: string; name: string; visitors: number; members: number; guests: number; visits: number; pageViews: number; bookings: number; payers: Set<string>; revenue: Map<string, number>; cities: Map<string, number> };
+    const buckets = new Map<string, Bucket>();
+    const bucket = (code: string) => {
+      let b = buckets.get(code);
+      if (!b) buckets.set(code, (b = { code, name: countryName(code), visitors: 0, members: 0, guests: 0, visits: 0, pageViews: 0, bookings: 0, payers: new Set(), revenue: new Map(), cities: new Map() }));
+      return b;
+    };
+    const tally = (map: Map<string, number>, key: string, by = 1) => map.set(key, (map.get(key) ?? 0) + by);
+
+    const paidByStudent = new Map<string, number>();
+    const revenue = new Map<string, number>();
+    const allPayers = new Set<string>();
+    for (const b of paid) {
+      tally(paidByStudent, b.studentId);
+      tally(revenue, b.currency, b.priceMinor);
+      const c = bucket(placeAt(b.studentId, b.createdAt)?.country ?? '');
+      c.bookings++;
+      // "Visitors who paid" only counts people we saw visit before booking, so older bookings can't inflate the rate.
+      if (byPerson.get(b.studentId)?.some((e) => e.createdAt <= b.createdAt)) { c.payers.add(b.studentId); allPayers.add(b.studentId); }
+      tally(c.revenue, b.currency, b.priceMinor);
+    }
+
+    const dayKey = (d: Date) => d.toLocaleDateString('en-CA', { timeZone: 'Asia/Karachi' });
+    const daily = new Map<string, { visitors: Set<string>; pageViews: number }>();
+    // One more than the period: a rolling window touches days + 1 calendar days, and every visit needs a bar.
+    for (let i = days; i >= 0; i--) daily.set(dayKey(new Date(now - i * DAY)), { visitors: new Set(), pageViews: 0 });
+    const devices = new Map<string, number>(), browsers = new Map<string, number>(), sources = new Map<string, number>(), cities = new Map<string, number>();
+    const pages = new Map<string, { views: number; people: Set<string> }>();
+    let visits = 0, pageViews = 0, seconds = 0;
+
+    const visitors = [...byPerson].flatMap(([key, list]) => {
+      const guest = key.startsWith('guest:');
+      const user = guest ? null : account.get(key);
+      const seen = list.filter(isVisit);
+      if (!seen.length || (!guest && (!user || user.role === 'ADMIN'))) return [];
+      let personVisits = 0, start = 0, previous = 0, views = 0;
+      for (const e of seen) {
+        const t = e.createdAt.getTime();
+        if (!previous || t - previous > VISIT_GAP) { if (previous) seconds += (previous - start) / 1000; personVisits++; start = t; }
+        previous = t;
+        const today = daily.get(dayKey(e.createdAt));
+        today?.visitors.add(key);
+        if (e.type === 'page_view') {
+          views++;
+          if (today) today.pageViews++;
+          if (e.page) { const p = pages.get(e.page) ?? { views: 0, people: new Set<string>() }; p.views++; p.people.add(key); pages.set(e.page, p); }
+        }
+      }
+      seconds += (previous - start) / 1000;
+      visits += personVisits;
+      pageViews += views;
+
+      const latest = <T>(pick: (e: (typeof list)[number]) => T | null | undefined) => { for (let i = list.length - 1; i >= 0; i--) { const v = pick(list[i]); if (v) return v; } return null; };
+      const country = latest((e) => e.country);
+      const city = latest((e) => (e.country === country ? e.city : null));
+      const device = latest((e) => e.device);
+      const source = list.find((e) => e.referrer)?.referrer ?? null;
+      const [kind, browser] = (device ?? '').split(' · ');
+      tally(devices, kind || 'Unknown');
+      tally(browsers, browser || 'Unknown');
+      tally(sources, source ?? 'Direct');
+
+      const c = bucket(country ?? '');
+      c.visitors++;
+      c[guest ? 'guests' : 'members']++;
+      c.visits += personVisits;
+      c.pageViews += views;
+      if (city) { tally(c.cities, city); tally(cities, `${city}|${c.code}`); }
+
+      return [{
+        id: key, name: user?.name ?? guestName(key.slice(6)), email: user?.email ?? '', role: user?.role ?? 'GUEST',
+        ip: latest((e) => e.ip), country: country ?? '', countryName: countryName(country ?? ''), city, device, source,
+        visits: personVisits, pageViews: views, bookings: paidByStudent.get(key) ?? 0, firstSeen: seen[0].createdAt, lastSeen: seen[seen.length - 1].createdAt, lastPage: latest((e) => e.page),
+      }];
+    }).sort((a, b) => b.lastSeen.getTime() - a.lastSeen.getTime());
+
+    const ranked = (map: Map<string, number>) => [...map].map(([label, count]) => ({ label, count })).sort((a, b) => b.count - a.count);
+    const money = (map: Map<string, number>) => [...map].map(([currency, amountMinor]) => ({ currency, amountMinor }));
+    const countries = [...buckets.values()]
+      .map(({ payers, revenue: earned, cities: places, ...b }) => ({ ...b, payers: payers.size, conversion: b.visitors ? Math.min(100, (payers.size / b.visitors) * 100) : 0, revenue: money(earned), cities: ranked(places).slice(0, 8) }))
+      .sort((a, b) => Number(!a.code) - Number(!b.code) || b.visitors - a.visitors || b.bookings - a.bookings);
+    const members = visitors.filter((v) => v.role !== 'GUEST').length;
+
+    return {
+      days,
+      totals: {
+        visitors: visitors.length, members, guests: visitors.length - members, returning: visitors.filter((v) => v.visits > 1).length,
+        visits, pageViews, pagesPerVisit: visits ? pageViews / visits : 0, avgVisitSeconds: visits ? seconds / visits : 0,
+        countries: countries.filter((c) => c.code && c.visitors).length, located: visitors.filter((v) => v.country).length,
+        bookings: paid.length, conversion: visitors.length ? Math.min(100, (allPayers.size / visitors.length) * 100) : 0, revenue: money(revenue),
+      },
+      countries,
+      cities: ranked(cities).slice(0, 10).map(({ label, count }) => { const [city, code] = label.split('|'); return { city, code, country: countryName(code), count }; }),
+      devices: ranked(devices), browsers: ranked(browsers), sources: ranked(sources).slice(0, 8),
+      pages: [...pages].map(([page, p]) => ({ page, views: p.views, people: p.people.size })).sort((a, b) => b.views - a.views).slice(0, 8),
+      daily: [...daily].map(([date, d]) => ({ date, visitors: d.visitors.size, pageViews: d.pageViews })),
+      visitors: visitors.slice(0, 1000),
     };
   }
 
@@ -202,8 +336,8 @@ export class ActivityService implements OnModuleInit, OnModuleDestroy {
   /** Everyone with recent activity, most recent first, with where they last were. */
   async people() {
     const [members, guests] = await Promise.all([
-      this.prisma.activityEvent.groupBy({ by: ['userId'], where: { userId: { not: null } }, _max: { createdAt: true }, _count: true, orderBy: { _max: { createdAt: 'desc' } }, take: 200 }),
-      this.prisma.activityEvent.groupBy({ by: ['visitorId'], where: { userId: null, visitorId: { not: null } }, _max: { createdAt: true }, _count: true, orderBy: { _max: { createdAt: 'desc' } }, take: 200 }),
+      this.prisma.activityEvent.groupBy({ by: ['userId'], where: { userId: { not: null }, type: { notIn: SYSTEM_EVENTS } }, _max: { createdAt: true }, _count: true, orderBy: { _max: { createdAt: 'desc' } }, take: 200 }),
+      this.prisma.activityEvent.groupBy({ by: ['visitorId'], where: { userId: null, visitorId: { not: null }, type: { notIn: SYSTEM_EVENTS } }, _max: { createdAt: true }, _count: true, orderBy: { _max: { createdAt: 'desc' } }, take: 200 }),
     ]);
     const users = await this.prisma.user.findMany({ where: { id: { in: members.map((g) => g.userId!) } }, select: { id: true, name: true, email: true, role: true } });
     const lastPage = async (where: { userId?: string; visitorId?: string }) => (await this.prisma.activityEvent.findFirst({ where: { ...where, page: { not: null } }, orderBy: { createdAt: 'desc' }, select: { page: true } }))?.page ?? null;
@@ -218,9 +352,12 @@ export class ActivityService implements OnModuleInit, OnModuleDestroy {
   }
 
   async journey(id: string) {
-    const select = { id: true, type: true, page: true, label: true, reference: true, device: true, referrer: true, createdAt: true };
+    const select = { id: true, type: true, page: true, label: true, reference: true, device: true, referrer: true, ip: true, country: true, city: true, createdAt: true };
     const triggers = async () => (await this.triggers()).filter((t) => t.userId === id);
-    const context = (events: { device: string | null; referrer: string | null }[]) => ({ device: events.find((e) => e.device)?.device ?? null, referrer: events.find((e) => e.referrer)?.referrer ?? null });
+    const context = (events: { device: string | null; referrer: string | null; ip: string | null; country: string | null; city: string | null }[]) => {
+      const placed = events.find((e) => e.country);
+      return { device: events.find((e) => e.device)?.device ?? null, referrer: events.find((e) => e.referrer)?.referrer ?? null, ip: events.find((e) => e.ip)?.ip ?? null, country: placed?.country ?? null, city: placed?.city ?? null };
+    };
 
     if (id.startsWith('guest:')) {
       const visitorId = id.slice(6);

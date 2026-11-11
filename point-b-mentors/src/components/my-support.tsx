@@ -26,11 +26,14 @@ function StatusBadge({ row }: { row: Pick<Row, "status" | "replied"> }) {
   return <span className={`inline-flex shrink-0 items-center rounded-full px-2.5 py-1 text-[11px] font-medium leading-none ${tone}`}>{label}</span>;
 }
 
+/** Opens a new request already about something: a topic chosen and, optionally, the session it concerns. */
+export interface SupportPreset { topic?: string; reference?: string }
+
 /**
  * The signed-in student's or mentor's support requests: start a new one, follow each conversation with the POINT B
  * team and write back. `compact` is the sidebar card on the student dashboard; otherwise it fills a dashboard tab.
  */
-export function MySupport({ compact = false, newRequest, onNewRequestClose }: { compact?: boolean; newRequest?: boolean; onNewRequestClose?: () => void }) {
+export function MySupport({ compact = false, newRequest, preset, onNewRequestClose }: { compact?: boolean; newRequest?: boolean; preset?: SupportPreset; onNewRequestClose?: () => void }) {
   const list = useApi<Row[]>("/support/mine");
   const rows = list.data ?? [];
   const [open, setOpen] = useState<string | null>(() => (typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("request")));
@@ -86,7 +89,7 @@ export function MySupport({ compact = false, newRequest, onNewRequestClose }: { 
       </div>
 
       {open && <ThreadModal id={open} onClose={() => openThread(null)} onChanged={list.reload} />}
-      {writing && <NewRequestModal onClose={closeNew} onSent={(id) => { closeNew(); list.reload(); if (id) openThread(id); }} />}
+      {writing && <NewRequestModal preset={newRequest ? preset : undefined} onClose={closeNew} onSent={(id) => { closeNew(); list.reload(); if (id) openThread(id); }} />}
     </section>
   );
 }
@@ -150,11 +153,12 @@ function Message({ who, at, mine, children }: { who: string; at: string; mine?: 
   );
 }
 
-function NewRequestModal({ onClose, onSent }: { onClose: () => void; onSent: (id: string | null) => void }) {
+function NewRequestModal({ preset, onClose, onSent }: { preset?: SupportPreset; onClose: () => void; onSent: (id: string | null) => void }) {
   const { user } = useAuth();
   const toast = useToast();
   const topics = SUPPORT_TOPICS.filter((t) => user?.role !== "MENTOR" || t.value !== "Becoming a mentor");
-  const [topic, setTopic] = useState(topics[0].value);
+  const [topic, setTopic] = useState(topics.find((t) => t.value === preset?.topic)?.value ?? topics[0].value);
+  const reference = preset?.reference;
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -163,7 +167,7 @@ function NewRequestModal({ onClose, onSent }: { onClose: () => void; onSent: (id
     if (!user) return;
     setBusy(true);
     try {
-      const res = await api<{ reference: string | null }>("/contact", { body: { name: user.name, email: user.email, topic, message: message.trim() } });
+      const res = await api<{ reference: string | null }>("/contact", { body: { name: user.name, email: user.email, topic, message: reference ? `Session ${reference}\n\n${message.trim()}` : message.trim() } });
       toast(res.reference ? `Request ${res.reference} sent.` : "Request sent.");
       const mine = res.reference ? (await api<Row[]>("/support/mine")).find((r) => r.number === res.reference) : null;
       onSent(mine?.id ?? null);
@@ -185,9 +189,10 @@ function NewRequestModal({ onClose, onSent }: { onClose: () => void; onSent: (id
       </div>
       <div>
         <label htmlFor="support-message" className="mb-2 block text-sm font-medium text-ink">Your message</label>
-        <textarea id="support-message" className="input min-h-36" value={message} maxLength={3000} onChange={(e) => { setMessage(e.target.value); setError(null); }}
-          placeholder="Tell us what happened. Include a booking reference (PBM-…) if it’s about a session." />
-        <p className="mt-1 text-right text-xs text-ink-soft tabular-nums">{message.trim().length < 10 ? `${10 - message.trim().length} more characters` : `${message.length} / 3000`}</p>
+        {reference && <p className="mb-2 text-xs text-ink-soft">About session <span className="font-mono">{reference}</span></p>}
+        <textarea id="support-message" className="input min-h-36" value={message} maxLength={reference ? 2950 : 3000} onChange={(e) => { setMessage(e.target.value); setError(null); }}
+          placeholder={reference ? "Tell us what happened." : "Tell us what happened. Include a booking reference (PBM-…) if it’s about a session."} />
+        <p className="mt-1 text-right text-xs text-ink-soft tabular-nums">{message.trim().length < 10 ? `${10 - message.trim().length} more characters` : `${message.length} / ${reference ? 2950 : 3000}`}</p>
       </div>
       {error && <Alert>{error}</Alert>}
     </FinanceModal>

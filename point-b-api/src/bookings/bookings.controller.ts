@@ -1,8 +1,9 @@
-import { Body, Controller, Get, HttpCode, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, Patch, Post } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AuthUser, CurrentUser, Public, Roles, Staff } from '../common/auth';
 import { CancelBookingDto, DecideMentorReportDto, CreateBookingDto, CreateReviewDto, PromoCheckDto, RescheduleBookingDto } from './bookings.dto';
 import { BookingsService } from './bookings.service';
+import { VisitorCountry } from '../common/geo';
 
 @ApiTags('bookings')
 @ApiBearerAuth()
@@ -10,11 +11,11 @@ import { BookingsService } from './bookings.service';
 export class BookingsController {
   constructor(private bookings: BookingsService) {}
 
-  @Roles('STUDENT') @Post() create(@CurrentUser() u: AuthUser, @Body() dto: CreateBookingDto) { return this.bookings.create(u, dto); }
+  @Roles('STUDENT') @Post() create(@CurrentUser() u: AuthUser, @Body() dto: CreateBookingDto, @VisitorCountry() country: string | null) { return this.bookings.create(u, dto, country); }
   /** Public booking rules the website shows, such as how long before a session it can still be moved. */
   @Public() @Get('policy') async policy() { return { rescheduleNoticeHours: await this.bookings.noticeHours() }; }
   @Roles('STUDENT') @Get('promos') promos(@CurrentUser() u: AuthUser) { return this.bookings.myPromos(u); }
-  @Roles('STUDENT') @Post('promo-check') promoCheck(@CurrentUser() u: AuthUser, @Body() dto: PromoCheckDto) { return this.bookings.promoCheck(u, dto); }
+  @Roles('STUDENT') @Post('promo-check') promoCheck(@CurrentUser() u: AuthUser, @Body() dto: PromoCheckDto, @VisitorCountry() country: string | null) { return this.bookings.promoCheck(u, dto, country); }
   @Roles('STUDENT') @Get() list(@CurrentUser() u: AuthUser) { return this.bookings.listMine(u); }
   @Get(':reference/call') call(@CurrentUser() u: AuthUser, @Param('reference') ref: string) { return this.bookings.call(u, ref); }
   @Get(':reference') get(@CurrentUser() u: AuthUser, @Param('reference') ref: string) { return this.bookings.get(u, ref); }
@@ -26,4 +27,5 @@ export class BookingsController {
   @Staff('OPERATIONS') @Roles('MENTOR', 'ADMIN') @Post(':reference/complete') complete(@CurrentUser() u: AuthUser, @Param('reference') ref: string) { return this.bookings.markCompleted(u, ref); }
   @Staff('OPERATIONS') @Roles('MENTOR', 'ADMIN') @Post(':reference/no-show') noShow(@CurrentUser() u: AuthUser, @Param('reference') ref: string) { return this.bookings.markCompleted(u, ref, 'NO_SHOW'); }
   @Roles('STUDENT') @Post(':reference/review') review(@CurrentUser() u: AuthUser, @Param('reference') ref: string, @Body() dto: CreateReviewDto) { return this.bookings.review(u, ref, dto); }
+  @Roles('STUDENT') @Patch(':reference/review') editReview(@CurrentUser() u: AuthUser, @Param('reference') ref: string, @Body() dto: CreateReviewDto) { return this.bookings.editReview(u, ref, dto); }
 }

@@ -1,3 +1,5 @@
+import { AdminReferralsController, MentorReferralsController } from './referrals.controller';
+import { ReferralsService } from './referrals.service';
 import { Module } from '@nestjs/common';
 import { DailyService } from '../calls/daily.service';
 import { AdminController } from './admin.controller';
@@ -9,5 +11,5 @@ import { AdminOpsController } from './admin-ops.controller';
 import { AdminOpsService } from './admin-ops.service';
 import { ExportsService } from './exports.service';
 
-@Module({ controllers: [AdminController, AdminOpsController, PublicController], providers: [AdminService, DailyService, InterviewSlotsService, PayoutsService, AdminOpsService, ExportsService], exports: [AdminOpsService] })
+@Module({ controllers: [AdminController, AdminOpsController, PublicController, AdminReferralsController, MentorReferralsController], providers: [AdminService, DailyService, InterviewSlotsService, PayoutsService, AdminOpsService, ExportsService, ReferralsService], exports: [AdminOpsService] })
 export class AdminModule {}

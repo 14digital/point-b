@@ -1,3 +1,5 @@
+import { Currency } from '@prisma/client';
+import { THREE_DECIMAL } from '../common/fx';
 import { Injectable, Logger } from '@nestjs/common';
 import Stripe from 'stripe';
 
@@ -24,7 +26,8 @@ export class StripeService {
   createIntent(opts: { amountMinor: number; currency: string; bookingId: string; reference: string; email: string; description: string }) {
     return this.stripe.paymentIntents.create(
       {
-        amount: opts.amountMinor,
+        // Prices are kept in hundredths; Stripe takes three-decimal currencies (OMR, KWD, BHD, JOD) in thousandths.
+        amount: THREE_DECIMAL.has(opts.currency as Currency) ? opts.amountMinor * 10 : opts.amountMinor,
         currency: opts.currency.toLowerCase(),
         automatic_payment_methods: { enabled: true },
         receipt_email: opts.email,

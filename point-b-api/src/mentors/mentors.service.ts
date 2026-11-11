@@ -1,7 +1,9 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { MAX_PROMO_PERCENT, commissionRules, feeOf, groupPercent, groupPriceOf, priceFor } from '../common/pricing';
+import { MAX_PROMO_PERCENT, commissionRules, priceFor, visitorPricing, feeForBooking } from '../common/pricing';
+import type { Pricing } from '../common/fx';
+import { reportCurrencies } from '../common/currency';
 import { NotificationsService } from '../common/notifications.service';
 import { emailDate, webUrl } from '../common/email-template';
 import { randomBytes } from 'crypto';
@@ -18,9 +20,10 @@ const HORIZON_DAYS = 45;
 export class MentorsService {
   constructor(private prisma: PrismaService, private bookings: BookingsService, private notify: NotificationsService) {}
 
-  private async decorate(m: Prisma.MentorProfileGetPayload<{ include: { user: { select: { name: true } } } }>) {
-    const [{ priceMinor, currency }, agg, completed, next] = await Promise.all([
-      priceFor(this.prisma, m),
+  private async decorate(m: Prisma.MentorProfileGetPayload<{ include: { user: { select: { name: true } } } }>, visitor: Pricing | null = null) {
+    const [{ priceMinor, currency, convertedFrom }, group, agg, completed, next] = await Promise.all([
+      priceFor(this.prisma, m, 'ONE_TO_ONE', visitor),
+      priceFor(this.prisma, m, 'GROUP', visitor),
       this.prisma.review.aggregate({ where: { booking: { mentorId: m.id }, ...PUBLIC_REVIEW }, _avg: { rating: true }, _count: true }),
       this.prisma.booking.count({ where: { mentorId: m.id, status: 'COMPLETED' } }),
       this.prisma.availabilitySlot.findFirst({ where: { mentorId: m.id, isBooked: false, startAt: { gt: new Date() } }, orderBy: { startAt: 'asc' }, select: { startAt: true } }),
@@ -30,8 +33,9 @@ export class MentorsService {
       ...rest,
       name: user.name,
       priceMinor,
-      groupPriceMinor: groupPriceOf(priceMinor, await groupPercent(this.prisma)),
+      groupPriceMinor: group.priceMinor,
       currency,
+      convertedFrom,
       rating: agg._avg.rating ? Math.round(agg._avg.rating * 10) / 10 : null,
       reviewCount: agg._count,
       sessionsCompleted: completed,
@@ -39,7 +43,8 @@ export class MentorsService {
     };
   }
 
-  async list(q: ListMentorsQuery) {
+  async list(q: ListMentorsQuery, country?: string | null) {
+    const region = await visitorPricing(this.prisma, country);
     await this.bookings.releaseExpiredHolds();
     const where: Prisma.MentorProfileWhereInput = { status: 'ACTIVE' };
     if (q.category) where.category = q.category;
@@ -56,7 +61,7 @@ export class MentorsService {
       ];
     }
     const rows = await this.prisma.mentorProfile.findMany({ where, include: { user: { select: { name: true } } } });
-    let items = await Promise.all(rows.map((r) => this.decorate(r)));
+    let items = await Promise.all(rows.map((r) => this.decorate(r, region)));
     const sort = q.sort ?? 'soonest';
     items.sort((a, b) => {
       if (sort === 'price_asc') return a.priceMinor - b.priceMinor;
@@ -74,13 +79,14 @@ export class MentorsService {
     return { expertise: uniq('expertise'), industries: uniq('industries'), languages: uniq('languages') };
   }
 
-  async getBySlug(slug: string) {
+  async getBySlug(slug: string, country?: string | null) {
+    const region = await visitorPricing(this.prisma, country);
     await this.bookings.releaseExpiredHolds();
     const m = await this.prisma.mentorProfile.findFirst({ where: { slug, status: 'ACTIVE' }, include: { user: { select: { name: true } } } });
     if (!m) throw new NotFoundException('Mentor not found');
     const horizon = new Date(Date.now() + HORIZON_DAYS * 86400_000);
     const [base, slots, reviews] = await Promise.all([
-      this.decorate(m),
+      this.decorate(m, region),
       this.prisma.availabilitySlot.findMany({ where: { mentorId: m.id, isBooked: false, startAt: { gt: new Date(), lt: horizon } }, orderBy: { startAt: 'asc' }, select: { id: true, startAt: true, endAt: true, kind: true, capacity: true, seatsTaken: true } }),
       this.prisma.review.findMany({ where: { booking: { mentorId: m.id }, ...PUBLIC_REVIEW }, orderBy: { createdAt: 'desc' }, take: 10, select: { id: true, rating: true, comment: true, createdAt: true, booking: { select: { agenda: true, student: { select: { name: true } } } } } }),
     ]);
@@ -213,13 +219,13 @@ export class MentorsService {
   async myEarnings(userId: string) {
     const p = await this.mine(userId);
     const rules = await commissionRules(this.prisma);
-    const rows = await this.prisma.booking.findMany({ where: { mentorId: p.id, status: { in: ['CONFIRMED', 'COMPLETED'] } }, select: { currency: true, priceMinor: true, platformFeeMinor: true, repeatStudent: true } });
+    const rows = await this.prisma.booking.findMany({ where: { mentorId: p.id, status: { in: ['CONFIRMED', 'COMPLETED'] } }, select: { currency: true, priceMinor: true, platformFeeMinor: true, listPriceMinor: true, mentorPaidInFull: true, repeatStudent: true } });
     const out: Record<string, { currency: string; grossMinor: number; feeMinor: number; payoutMinor: number; sessions: number; repeatSessions: number }> = {};
     let unknown = false;
     for (const b of rows) {
       const o = (out[b.currency] ??= { currency: b.currency, grossMinor: 0, feeMinor: 0, payoutMinor: 0, sessions: 0, repeatSessions: 0 });
       const rate = rules.tier[p.level];
-      const fee = b.platformFeeMinor ?? (rate == null ? null : feeOf(b.priceMinor, rate));
+      const fee = feeForBooking(b, rate);
       if (fee == null) unknown = true;
       o.grossMinor += b.priceMinor; o.feeMinor += fee ?? 0; o.payoutMinor += b.priceMinor - (fee ?? 0); o.sessions++; if (b.repeatStudent) o.repeatSessions++;
     }
@@ -236,19 +242,19 @@ export class MentorsService {
     const [rows, payouts] = await Promise.all([
       this.prisma.booking.findMany({
         where: { mentorId: p.id, status: { in: ['CONFIRMED', 'COMPLETED'] } }, orderBy: { slot: { startAt: 'desc' } },
-        select: { reference: true, status: true, currency: true, priceMinor: true, platformFeeMinor: true, commissionPercent: true, payoutId: true, slot: { select: { startAt: true } }, student: { select: { name: true } } },
+        select: { reference: true, status: true, currency: true, priceMinor: true, platformFeeMinor: true, listPriceMinor: true, mentorPaidInFull: true, commissionPercent: true, payoutId: true, slot: { select: { startAt: true } }, student: { select: { name: true } } },
       }),
       this.prisma.mentorPayout.findMany({ where: { mentorId: p.id }, orderBy: { createdAt: 'desc' }, select: { id: true, createdAt: true, currency: true, amountMinor: true, sessions: true, reference: true, note: true } }),
     ]);
     const sessions = rows.map((b) => {
       const pct = b.commissionPercent ?? rules.tier[p.level];
-      const fee = b.platformFeeMinor ?? (pct == null ? null : feeOf(b.priceMinor, pct));
+      const fee = feeForBooking(b, pct);
       const paidOut = payouts.find((x) => x.id === b.payoutId);
       return { reference: b.reference, status: b.status, currency: b.currency, startAt: b.slot.startAt, studentName: b.student.name, priceMinor: b.priceMinor, percent: pct, earnMinor: fee == null ? null : b.priceMinor - fee, paidOn: paidOut?.createdAt ?? null };
     });
     // Sessions paid out and later cancelled: the money was sent, so it counts as paid, and the mentor can see why.
-    const cancelledPaid = await this.prisma.booking.findMany({ where: { mentorId: p.id, payoutId: { not: null }, status: { notIn: ['CONFIRMED', 'COMPLETED'] } }, select: { currency: true, priceMinor: true, platformFeeMinor: true } });
-    const totals = (['PKR', 'GBP'] as const).map((currency) => {
+    const cancelledPaid = await this.prisma.booking.findMany({ where: { mentorId: p.id, payoutId: { not: null }, status: { notIn: ['CONFIRMED', 'COMPLETED'] } }, select: { currency: true, priceMinor: true, platformFeeMinor: true, listPriceMinor: true, mentorPaidInFull: true } });
+    const totals = reportCurrencies([...sessions, ...payouts]).map((currency) => {
       const mine = sessions.filter((s) => s.currency === currency);
       const sum = (l: typeof mine) => l.reduce((n, s) => n + (s.earnMinor ?? 0), 0);
       const paidMinor = payouts.filter((x) => x.currency === currency).reduce((n, x) => n + x.amountMinor, 0);

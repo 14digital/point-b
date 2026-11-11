@@ -56,7 +56,7 @@ export function MentorProfile() {
           </Link>
           {m.isDemo && (
             <span className="inline-flex items-center gap-2 rounded-full bg-white/70 px-3.5 py-1.5 text-xs text-ink-soft ring-1 ring-ink/10 backdrop-blur" title="This mentor is sample content used to preview the product, not a real person available to book.">
-              <span className="h-1.5 w-1.5 rounded-full bg-brass" />Demonstration profile · sample content
+              <span className="h-1.5 w-1.5 rounded-full bg-amber" />Demonstration profile · sample content
             </span>
           )}
         </div>

@@ -1,3 +1,5 @@
+import { Currency } from '@prisma/client';
+import { CURRENCIES } from '../common/currency';
 import { BadRequestException, Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
@@ -9,7 +11,7 @@ import { ExportsService } from './exports.service';
 
 class ReasonDto { @IsOptional() @IsString() @MaxLength(500) reason?: string }
 class ConsentDto { @IsBoolean() consent: boolean }
-class WalletAdjustDto { @IsIn(['PKR', 'GBP']) currency: 'PKR' | 'GBP'; @IsInt() @Min(-100_000_000) @Max(100_000_000) amountMinor: number; @IsString() @MinLength(3) @MaxLength(300) note: string }
+class WalletAdjustDto { @IsIn(CURRENCIES) currency: Currency; @IsInt() @Min(-100_000_000) @Max(100_000_000) amountMinor: number; @IsString() @MinLength(3) @MaxLength(300) note: string }
 class SuspendDto { @IsBoolean() suspend: boolean; @IsOptional() @IsString() @MaxLength(500) reason?: string }
 class ModerateDto { @IsIn(['APPROVED', 'HIDDEN']) status: 'APPROVED' | 'HIDDEN'; @IsOptional() @IsString() @MaxLength(500) note?: string }
 class TicketUpdateDto { @IsOptional() @IsIn(SUPPORT_STATUSES as unknown as string[]) status?: string; @IsOptional() @IsString() assignedTo?: string | null }

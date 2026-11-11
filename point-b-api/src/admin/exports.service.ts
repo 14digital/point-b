@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { commissionRules, feeOf } from '../common/pricing';
+import { commissionRules, feeForBooking } from '../common/pricing';
 
 const KINDS = ['bookings', 'payouts', 'refunds'] as const;
 export type ExportKind = (typeof KINDS)[number];
@@ -48,7 +48,7 @@ export class ExportsService {
       rows.map((b) => {
         const paid = b.status === 'CONFIRMED' || b.status === 'COMPLETED';
         const pct = b.commissionPercent ?? rules.tier[b.mentor.level];
-        const fee = paid ? (b.platformFeeMinor ?? (pct == null ? null : feeOf(b.priceMinor, pct))) : null;
+        const fee = paid ? feeForBooking(b, pct) : null;
         const p = b.payments.find((x) => x.status !== 'FAILED') ?? b.payments[0];
         return [b.createdAt, b.reference, b.slot.startAt, b.status, b.student.name, b.student.email, b.mentor.user.name, b.mentor.level, b.sessionKind === 'GROUP' ? 'Group' : '1:1', b.currency,
           major(b.listPriceMinor ?? b.priceMinor), major(b.discountMinor ?? 0), major(b.priceMinor), paid ? pct : null, major(fee), fee == null ? null : major(b.priceMinor - fee),

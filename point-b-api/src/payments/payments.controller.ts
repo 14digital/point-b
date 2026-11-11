@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Headers, HttpCode, NotFoundException, Param, Post, Put, Req, Res } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Headers, HttpCode, NotFoundException, Param, Post, Put, Req, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AuthUser, CurrentUser, Public, Roles, Staff } from '../common/auth';
@@ -55,6 +55,9 @@ export class PaymentsController {
 
   @ApiBearerAuth() @Roles('STUDENT') @HttpCode(200) @Post(':reference/use-balance')
   useBalance(@CurrentUser() u: AuthUser, @Param('reference') reference: string) { return this.payments.useBalance(u, reference); }
+
+  @ApiBearerAuth() @Roles('STUDENT') @HttpCode(200) @Delete(':reference/use-balance')
+  removeBalance(@CurrentUser() u: AuthUser, @Param('reference') reference: string) { return this.payments.removeBalance(u, reference); }
 
   @ApiBearerAuth() @Roles('STUDENT') @HttpCode(200) @Post(':reference/sync')
   sync(@CurrentUser() u: AuthUser, @Param('reference') reference: string) { return this.payments.sync(u, reference); }

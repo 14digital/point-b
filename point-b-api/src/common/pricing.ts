@@ -1,7 +1,13 @@
 import { Currency, MentorCategory, MentorLevel, SessionKind } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { Pricing, convert } from './fx';
 
-export const currencyFor = (category: MentorCategory): Currency =>
+export { visitorPricing } from './fx';
+
+/** The two base currencies. A mentor's price is always set in one of these; visitors see it converted into their own. */
+export type BaseCurrency = 'PKR' | 'GBP';
+
+export const currencyFor = (category: MentorCategory): BaseCurrency =>
   category === 'LOCAL' ? 'PKR' : 'GBP';
 
 /** Provisional launch prices in minor units (paisa / pence). Overridable in the PricingRule table. */
@@ -31,10 +37,10 @@ export const DEFAULT_RANGES: Record<MentorLevel, { PKR: [number, number]; GBP: [
   EXECUTIVE: { PKR: [250_000, 500_000], GBP: [6_000, 9_000] },
 };
 
-export interface TierRule { level: MentorLevel; currency: Currency; priceMinor: number; minMinor: number; maxMinor: number; isDefault: boolean }
+export interface TierRule { level: MentorLevel; currency: BaseCurrency; priceMinor: number; minMinor: number; maxMinor: number; isDefault: boolean }
 
 /** The tier's standard price and allowed range, falling back to the defaults for anything not saved yet. */
-export async function tierRule(prisma: PrismaService, level: MentorLevel, currency: Currency): Promise<TierRule> {
+export async function tierRule(prisma: PrismaService, level: MentorLevel, currency: BaseCurrency): Promise<TierRule> {
   const r = await prisma.pricingRule.findUnique({ where: { level_currency: { level, currency } } });
   const [dMin, dMax] = DEFAULT_RANGES[level][currency];
   const priceMinor = r?.priceMinor ?? DEFAULT_PRICES[level][currency];
@@ -46,16 +52,25 @@ export async function tierRule(prisma: PrismaService, level: MentorLevel, curren
 /** Every price charged stays inside its tier's range, even if the range was narrowed after a mentor's price was set. */
 export const clampToRange = (minor: number, r: { minMinor: number; maxMinor: number }) => Math.min(r.maxMinor, Math.max(r.minMinor, minor));
 
+/**
+ * What a visitor pays: the mentor's own price (or their tier's), in PKR or GBP, converted into the visitor's currency
+ * at today's rate when one is given. convertedFrom says which currency it was converted from, or null if not converted.
+ */
 export async function priceFor(
   prisma: PrismaService,
   mentor: { category: MentorCategory; level: MentorLevel; priceOverrideMinor: number | null },
   kind: SessionKind = 'ONE_TO_ONE',
-): Promise<{ priceMinor: number; currency: Currency }> {
-  const currency = currencyFor(mentor.category);
-  const rule = await tierRule(prisma, mentor.level, currency);
+  visitor: Pricing | null = null,
+): Promise<{ priceMinor: number; currency: Currency; convertedFrom: BaseCurrency | null }> {
+  const base = currencyFor(mentor.category);
+  const rule = await tierRule(prisma, mentor.level, base);
   let priceMinor = clampToRange(mentor.priceOverrideMinor ?? rule.priceMinor, rule);
   if (kind === 'GROUP') priceMinor = groupPriceOf(priceMinor, await groupPercent(prisma));
-  return { priceMinor, currency };
+  if (visitor && visitor.currency !== base) {
+    const shown = convert(priceMinor, base, visitor.currency, visitor.rates);
+    if (shown != null) return { priceMinor: shown, currency: visitor.currency, convertedFrom: base };
+  }
+  return { priceMinor, currency: base, convertedFrom: null };
 }
 
 /** Promo codes can never take more than this off a session. */
@@ -96,3 +111,22 @@ export function commissionFor(rules: CommissionRules, level: MentorLevel, kind: 
 }
 
 export const feeOf = (paidMinor: number, percent: number) => Math.round((paidMinor * percent) / 100);
+
+/**
+ * POINT B's fee on a booking. On a company referral booking the mentor is paid as if the student paid the full price,
+ * so the fee is what POINT B would have kept at full price, less the discount it gave (it can go below zero).
+ */
+export function bookingFee(paidMinor: number, percent: number, opts: { listPriceMinor?: number | null; mentorPaidInFull?: boolean | null } = {}) {
+  if (!opts.mentorPaidInFull) return feeOf(paidMinor, percent);
+  const full = opts.listPriceMinor ?? paidMinor;
+  return feeOf(full, percent) - (full - paidMinor);
+}
+
+/** The fee on a saved booking: the one recorded when it was made, or today's tier rate if none was recorded yet. */
+export function feeForBooking(
+  b: { priceMinor: number; platformFeeMinor: number | null; listPriceMinor?: number | null; mentorPaidInFull?: boolean | null },
+  percent: number | null | undefined,
+): number | null {
+  if (b.platformFeeMinor != null) return b.platformFeeMinor;
+  return percent == null ? null : bookingFee(b.priceMinor, percent, b);
+}

@@ -1,5 +1,6 @@
 export type Role = "STUDENT" | "MENTOR" | "ADMIN";
-export type Currency = "PKR" | "GBP";
+export type Currency = "PKR" | "GBP" | "USD" | "EUR" | "AED" | "SAR" | "QAR" | "CAD" | "AUD" | "NZD" | "INR" | "BDT" | "KES" | "NGN" | "ZAR" | "SGD" | "MYR" | "TRY"
+  | "OMR" | "KWD" | "BHD" | "JOD" | "EGP" | "LKR" | "NPR" | "HKD" | "CNY" | "PHP" | "THB" | "IDR" | "CHF" | "SEK" | "NOK" | "DKK";
 export type Category = "LOCAL" | "INTERNATIONAL";
 export type Level = "PROFESSIONAL" | "SENIOR_SPECIALIST" | "EXECUTIVE";
 
@@ -19,7 +20,7 @@ export interface MentorSummary {
   category: Category; level: Level; languages: string[]; expertise: string[]; industries: string[];
   introduction: string; careerSummary: string; qualifications: string[]; achievements: string[];
   helpTopics: string[]; outsideScope: string[]; linkedinUrl: string | null; photoUrl?: string | null; verified: boolean; isDemo: boolean; status: string;
-  priceMinor: number; groupPriceMinor: number; currency: Currency; rating: number | null; reviewCount: number; sessionsCompleted: number; nextAvailable: string | null;
+  priceMinor: number; groupPriceMinor: number; currency: Currency; convertedFrom?: "PKR" | "GBP" | null; rating: number | null; reviewCount: number; sessionsCompleted: number; nextAvailable: string | null;
 }
 export interface MentorDetail extends MentorSummary {
   slots: Slot[];
@@ -33,7 +34,7 @@ export interface Booking {
   priceMinor: number; currency: Currency; startAt: string; endAt: string;
   mentor: { id: string; slug: string; name: string; title: string; photoUrl?: string | null };
   student?: { id: string; name: string };
-  meetingLink: string | null; review: { rating: number; comment: string; status: ReviewStatus } | null; canReview?: boolean; canReportMissing?: boolean; mentorReport?: string | null; mentorReportNote?: string | null;
+  meetingLink: string | null; review: { rating: number; comment: string; status: ReviewStatus; canEdit?: boolean } | null; canReview?: boolean; canReportMissing?: boolean; mentorReport?: string | null; mentorReportNote?: string | null;
   payment: { providerRef: string; provider: string; status: string; processedAt?: string | null; bankSubmittedAt?: string | null; bankTxnRef?: string | null } | null;
   listPriceMinor?: number; discountMinor?: number; walletAppliedMinor?: number;
   holdExpiresAt: string | null; awaitingVerification?: boolean; cancelReason: string | null; createdAt: string;

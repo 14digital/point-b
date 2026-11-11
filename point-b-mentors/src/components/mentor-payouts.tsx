@@ -6,7 +6,7 @@ import { useToast } from "@/components/toast";
 import { Empty, FinanceModal, SectionTitle, Sum, plural } from "@/components/finance-modal";
 import { api, errMsg } from "@/lib/api";
 import { LEVEL_LABEL } from "@/lib/constants";
-import { formatMoney, initials } from "@/lib/format";
+import { formatMoney, initials, currencyLabel } from "@/lib/format";
 import { useApi, useNow } from "@/lib/use-api";
 import { useAuth } from "@/lib/auth";
 import { PayoutDetailsView, type PayoutDetails } from "@/components/admin-mentor-detail";
@@ -21,7 +21,6 @@ interface MentorSession {
 interface MentorLedger { mentor: { id: string; name: string; email: string; level: Level; payoutDetails: PayoutDetails | null }; currency: Currency; configured: boolean; earnedMinor: number; paidMinor: number; dueMinor: number; unpaidCount: number; sessions: MentorSession[] }
 
 const NOT_SET = "Not configured";
-const CURRENCY_LABEL: Record<Currency, string> = { PKR: "Local · PKR", GBP: "International · GBP" };
 const day = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 const time = (iso: string) => new Date(iso).toLocaleTimeString("en-GB", { hour: "numeric", minute: "2-digit", hour12: true });
 
@@ -37,7 +36,7 @@ export function MentorPayoutsModal({ currency, period, query, mentors, grossMino
 }) {
   const [picked, setPickedMentor] = useState<MentorDue | null>(null);
   const money = (v: number | null) => (v == null ? NOT_SET : formatMoney(v, currency));
-  const eyebrow = `${CURRENCY_LABEL[currency]} · ${period}`;
+  const eyebrow = `${currencyLabel(currency)} · ${period}`;
 
   if (picked) return <MentorLedgerView mentor={picked} currency={currency} eyebrow={eyebrow} query={query} onBack={() => setPickedMentor(null)} onChanged={onChanged} onClose={onClose} />;
 

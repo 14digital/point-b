@@ -6,11 +6,13 @@ import { Reveal } from "@/components/motion";
 import { useApi } from "@/lib/use-api";
 import { LEVEL_LABEL } from "@/lib/constants";
 import { formatMoney } from "@/lib/format";
+import { PriceNote } from "@/components/price-note";
 import type { Currency, Level } from "@/lib/types";
 import { NoticeText } from "@/lib/policy";
 
 interface Tier { level: Level; currency: Currency; priceMinor: number; minMinor: number; maxMinor: number }
-interface Pricing { tiers: Tier[]; groupPercent: number }
+interface LocalTier { level: Level; from: "PKR" | "GBP"; currency: Currency; minMinor: number; maxMinor: number }
+interface Pricing { tiers: Tier[]; groupPercent: number; local: { country: string | null; currency: Currency; tiers: LocalTier[] } | null }
 
 const TIERS: { level: Level; tone: string; who: string; good: string }[] = [
   { level: "PROFESSIONAL", tone: "bg-sky", who: "Established in their field", good: "Career starts, first moves and practical day-to-day advice." },
@@ -28,7 +30,7 @@ const INCLUDED = [
 /** "Rs 1,000 – 2,000" or "£25 – 35"; a single price when the range is one value. */
 function range(min: number, max: number, c: Currency) {
   if (min === max) return formatMoney(min, c);
-  return `${formatMoney(min, c)} – ${formatMoney(max, c).replace(/^Rs |^£/, "")}`;
+  return `${formatMoney(min, c)} – ${formatMoney(max, c).replace(/^[^\d]+/, "")}`;
 }
 
 export default function PricingPage() {
@@ -48,11 +50,11 @@ export default function PricingPage() {
           Fair prices, <Mark color="mint">set by experience</Mark>
         </h1>
         <p className="animate-rise mt-7 max-w-2xl text-lg leading-relaxed text-ink-soft" style={{ ["--rise-delay" as string]: "120ms" }}>
-          Every session is 30 minutes. Mentors are grouped into three tiers by experience, and each tier has a price range. Local mentors are priced in Pakistani Rupees, international mentors in British Pounds. You always see a mentor&rsquo;s exact price before you book.
+          Every session is 30 minutes. Mentors are grouped into three tiers by experience, and each tier has its own price. Prices are shown in your own currency, and you always see a mentor&rsquo;s exact price before you book.
         </p>
 
         <dl className="animate-rise mt-14 grid grid-cols-2 overflow-hidden rounded-3xl bg-white/80 ring-1 ring-ink/5 backdrop-blur sm:grid-cols-4" style={{ ["--rise-delay" as string]: "180ms" }}>
-          {[["30 min", "every session"], ["3 tiers", "priced by experience"], ["PKR · GBP", "local and international"], [group ? `${100 - group}% less` : "Lower", "per seat in a group"]].map(([v, l], i) => (
+          {[["30 min", "every session"], ["3 tiers", "priced by experience"], [data?.local ? data.local.currency : "PKR · GBP", data?.local ? "in your currency" : "local and international"], [group ? `${100 - group}% less` : "Lower", "per seat in a group"]].map(([v, l], i) => (
             <div key={l} className={`px-6 py-5 ${i ? "sm:border-l" : ""} ${i % 2 ? "border-l" : ""} ${i > 1 ? "border-t sm:border-t-0" : ""} border-line`}>
               <dt className="sr-only">{l}</dt>
               <dd className="whitespace-nowrap text-xl font-semibold tracking-[-0.02em] text-ink tabular-nums sm:text-2xl">{v}</dd>
@@ -78,15 +80,17 @@ export default function PricingPage() {
               <dl className="mt-7 divide-y divide-line overflow-hidden rounded-2xl bg-paper/70 ring-1 ring-ink/[0.04]">
                 {(["PKR", "GBP"] as const).map((c) => {
                   const r = tier(t.level, c);
+                  const own = data?.local?.tiers.find((x) => x.level === t.level && x.from === c);
+                  const shown = own ? own.currency : c;
                   return (
                     <div key={c} className="px-5 py-4">
                       <dt className="flex items-center justify-between gap-3 text-xs">
                         <span className="font-medium text-ink-soft">{c === "PKR" ? "Local mentor" : "International mentor"}</span>
-                        <span className="rounded-full bg-white px-2 py-0.5 font-medium text-ink-soft ring-1 ring-ink/[0.06]">{c}</span>
+                        <span className="rounded-full bg-white px-2 py-0.5 font-medium text-ink-soft ring-1 ring-ink/[0.06]">{shown}</span>
                       </dt>
                       <dd className="mt-2">
                         {loading || !r ? <Skeleton className="h-7 w-36" /> : (
-                          <span className="whitespace-nowrap text-[clamp(1.2rem,1.9vw,1.6rem)] font-semibold leading-none tracking-[-0.025em] text-ink tabular-nums">{range(r.minMinor, r.maxMinor, c)}</span>
+                          <span className="whitespace-nowrap text-[clamp(1.2rem,1.9vw,1.6rem)] font-semibold leading-none tracking-[-0.025em] text-ink tabular-nums">{own ? range(own.minMinor, own.maxMinor, shown) : range(r.minMinor, r.maxMinor, c)}</span>
                         )}
                       </dd>
                     </div>
@@ -101,7 +105,8 @@ export default function PricingPage() {
             </Reveal>
           ))}
         </div>
-        <p className="mt-5 text-sm text-ink-soft">Each mentor&rsquo;s price sits inside their tier&rsquo;s range and is shown on their profile. There are no hidden fees: any tax or processing fee is shown before you pay.</p>
+        <PriceNote currency={data?.local?.currency} from={data?.local ? "GBP" : null} className="mt-5" />
+        <p className="mt-2 text-sm text-ink-soft">Each mentor&rsquo;s exact price is shown on their profile. There are no hidden fees: any tax or processing fee is shown before you pay.</p>
       </Container>
 
       {/* How prices work + group */}
@@ -120,7 +125,7 @@ export default function PricingPage() {
             <p className="mt-3 flex-1 text-[0.95rem] leading-relaxed text-ink/70">
               Some mentors also offer small group sessions. A seat costs {group ? <span className="font-medium text-ink">{group}% of that mentor&rsquo;s 1:1 price</span> : "less than a 1:1 session"}, and you still get the same attention and hear other students&rsquo; questions too.
             </p>
-            {group && <p className="mt-6 rounded-2xl bg-white/60 px-5 py-4 text-sm text-ink">Example: a Rs 2,000 mentor&rsquo;s group seat is {formatMoney(Math.max(100, Math.round((200_000 * group) / 100 / 100) * 100), "PKR")}.</p>}
+            {group && !data?.local && <p className="mt-6 rounded-2xl bg-white/60 px-5 py-4 text-sm text-ink">Example: a Rs 2,000 mentor&rsquo;s group seat is {formatMoney(Math.max(100, Math.round((200_000 * group) / 100 / 100) * 100), "PKR")}.</p>}
           </Reveal>
         </div>
       </Container>

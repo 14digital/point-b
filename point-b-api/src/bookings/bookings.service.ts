@@ -1,3 +1,4 @@
+import type { BookingStatus } from '@prisma/client';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit, ServiceUnavailableException } from '@nestjs/common';
 import { Booking, Prisma } from '@prisma/client';
 import { randomBytes } from 'crypto';
@@ -5,7 +6,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../common/notifications.service';
 import { WalletService } from '../common/wallet.service';
 import { AuthUser } from '../common/auth';
-import { commissionFor, commissionRules, feeOf, priceFor } from '../common/pricing';
+import { bookingFee, commissionFor, commissionRules, priceFor, visitorPricing } from '../common/pricing';
+import { money } from '../common/currency';
 import { DailyService } from '../calls/daily.service';
 import { StripeService } from '../payments/stripe.service';
 import { ActivityService } from '../activity/activity.service';
@@ -94,7 +96,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
       mentor: { id: b.mentor.id, slug: b.mentor.slug, name: b.mentor.user.name, title: b.mentor.title, photoUrl: b.mentor.photoUrl },
       student: viewer?.role === 'STUDENT' ? undefined : { id: b.student.id, name: b.student.name },
       meetingLink: showLink ? sessionUrl(b.reference) : null,
-      review: b.review ? { rating: b.review.rating, comment: b.review.comment, status: b.review.status ?? 'APPROVED' } : null,
+      review: b.review ? { rating: b.review.rating, comment: b.review.comment, status: b.review.status ?? 'APPROVED', canEdit: !b.review.editedAt } : null,
       canReview: !b.review && this.reviewable(b),
       canReportMissing: viewer?.id === b.studentId && this.mentorMissing(b),
       mentorReport: b.mentorReportStatus ?? null, mentorReportNote: b.mentorReportNote ?? null,
@@ -140,7 +142,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  async create(user: AuthUser, dto: CreateBookingDto) {
+  async create(user: AuthUser, dto: CreateBookingDto, country?: string | null) {
     await this.releaseExpiredHolds();
     if (!user.emailVerified) throw new ForbiddenException('Please confirm your email address before booking.');
     const student = await this.prisma.user.findUniqueOrThrow({ where: { id: user.id } });
@@ -154,13 +156,23 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     if (!slot || slot.mentor.status !== 'ACTIVE') throw new NotFoundException('This slot is no longer available');
     if (slot.startAt.getTime() <= Date.now() + 15 * 60_000) throw new BadRequestException('This slot starts too soon to book');
     if (slot.mentor.userId === user.id) throw new BadRequestException('You cannot book your own session');
-    const { priceMinor: listPriceMinor, currency } = await priceFor(this.prisma, slot.mentor, slot.kind);
+    const { priceMinor: listPriceMinor, currency } = await priceFor(this.prisma, slot.mentor, slot.kind, await visitorPricing(this.prisma, country));
+    if ((dto.expectedPriceMinor !== undefined && dto.expectedPriceMinor !== listPriceMinor) || (dto.expectedCurrency && dto.expectedCurrency !== currency)) {
+      throw new ConflictException('The price for your location has changed. Please refresh the page to see the latest price.');
+    }
     const repeatStudent = await this.isRepeat(user.id, slot.mentorId);
-    const promo = dto.promoCode?.trim() ? await this.resolvePromo(user.id, dto.promoCode, slot) : null;
+    const promo = dto.promoCode?.trim() ? await this.resolveCode(user.id, dto.promoCode, slot) : null;
     const discountMinor = promo ? Math.round((listPriceMinor * promo.percentOff) / 100 / 100) * 100 : 0;
     const priceMinor = listPriceMinor - discountMinor;
     const commissionPercent = commissionFor(await commissionRules(this.prisma), slot.mentor.level, slot.kind, repeatStudent);
-    const pricing = { listPriceMinor, discountMinor, promoCodeId: promo?.id ?? null, repeatStudent, commissionPercent, platformFeeMinor: commissionPercent == null ? null : feeOf(priceMinor, commissionPercent) };
+    const referral = promo?.kind === 'referral';
+    const pricing = {
+      listPriceMinor, discountMinor, repeatStudent, commissionPercent,
+      promoCodeId: promo?.kind === 'promo' ? promo.id : null,
+      referralCodeId: referral ? promo.id : null,
+      mentorPaidInFull: referral ? true : null,
+      platformFeeMinor: commissionPercent == null ? null : bookingFee(priceMinor, commissionPercent, { listPriceMinor, mentorPaidInFull: referral }),
+    };
     const already = await this.prisma.booking.findFirst({ where: { slotId: slot.id, studentId: user.id, status: { in: ['PENDING_PAYMENT', 'CONFIRMED'] } }, select: { id: true } });
     if (already) throw new ConflictException('You already have a seat in this session');
     const reference = 'PBM-' + randomBytes(4).toString('hex').toUpperCase();
@@ -194,7 +206,28 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     return !!(await this.prisma.booking.findFirst({ where: { studentId, mentorId, status: { in: ['CONFIRMED', 'COMPLETED'] } }, select: { id: true } }));
   }
 
-  /** A promo code the student may use on this slot: theirs, from this mentor, for a 1:1, unused, unexpired and not held by another booking. */
+  /**
+   * A code the student may use on this slot. Either a mentor's personal promo code (theirs, from this mentor, for a 1:1,
+   * unused, unexpired and not held by another booking), or a company referral code for this mentor, which any student
+   * can use once while it is live. On a referral the mentor is still paid in full.
+   */
+  private async resolveCode(studentId: string, raw: string, slot: { id: string; mentorId: string; kind: string }) {
+    const code = raw.trim().toUpperCase();
+    const ref = await this.prisma.referralCode.findUnique({ where: { code } });
+    if (ref) {
+      if (ref.mentorId !== slot.mentorId) throw new BadRequestException('That referral code is for sessions with a different mentor.');
+      if (slot.kind !== 'ONE_TO_ONE') throw new BadRequestException('Referral codes apply to 1:1 sessions only.');
+      if (ref.pausedAt) throw new BadRequestException('That referral code is not active at the moment.');
+      if (ref.expiresAt && ref.expiresAt < new Date()) throw new BadRequestException('That referral code has expired.');
+      const live = { referralCodeId: ref.id, status: { in: ['PENDING_PAYMENT', 'CONFIRMED', 'COMPLETED'] as BookingStatus[] } };
+      if (await this.prisma.booking.findFirst({ where: { ...live, studentId }, select: { id: true } })) throw new BadRequestException('You have already used this referral code.');
+      if (ref.maxUses != null && (await this.prisma.booking.count({ where: live })) >= ref.maxUses) throw new BadRequestException('That referral code has reached its limit.');
+      return { kind: 'referral' as const, id: ref.id, code: ref.code, percentOff: ref.percentOff };
+    }
+    const p = await this.resolvePromo(studentId, code, slot);
+    return { kind: 'promo' as const, id: p.id, code: p.code, percentOff: p.percentOff };
+  }
+
   private async resolvePromo(studentId: string, raw: string, slot: { id: string; mentorId: string; kind: string }) {
     const code = raw.trim().toUpperCase();
     const p = await this.prisma.promoCode.findUnique({ where: { code } });
@@ -208,14 +241,14 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     return p;
   }
 
-  async promoCheck(user: AuthUser, dto: PromoCheckDto) {
+  async promoCheck(user: AuthUser, dto: PromoCheckDto, country?: string | null) {
     await this.releaseExpiredHolds();
     const slot = await this.prisma.availabilitySlot.findUnique({ where: { id: dto.slotId }, include: { mentor: true } });
     if (!slot) throw new NotFoundException('This slot is no longer available');
-    const p = await this.resolvePromo(user.id, dto.code, slot);
-    const { priceMinor, currency } = await priceFor(this.prisma, slot.mentor, slot.kind);
+    const p = await this.resolveCode(user.id, dto.code, slot);
+    const { priceMinor, currency } = await priceFor(this.prisma, slot.mentor, slot.kind, await visitorPricing(this.prisma, country));
     const discountMinor = Math.round((priceMinor * p.percentOff) / 100 / 100) * 100;
-    return { code: p.code, percentOff: p.percentOff, listPriceMinor: priceMinor, discountMinor, priceMinor: priceMinor - discountMinor, currency };
+    return { code: p.code, kind: p.kind, percentOff: p.percentOff, listPriceMinor: priceMinor, discountMinor, priceMinor: priceMinor - discountMinor, currency };
   }
 
   /** The student's promo codes that can still be used, so the booking form can offer them. */
@@ -367,8 +400,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
       this.prisma.availabilitySlot.update({ where: { id: b.slotId }, data: { isBooked: false, seatsTaken: { decrement: 1 } } }),
     ]);
     const refunded = b.status === 'CONFIRMED';
-    const credit = refunded ? `Rs ${(b.priceMinor / 100).toLocaleString('en-PK')}` : '';
-    const creditText = b.currency === 'PKR' ? credit : `£${(b.priceMinor / 100).toFixed(2)}`;
+    const creditText = money(b.priceMinor, b.currency);
     if (refunded) await this.wallet.add(b.studentId, b.currency, b.priceMinor, 'CANCELLATION', { bookingId: b.id, reference: b.reference, note: dto.reason ?? 'Session cancelled' });
     else await this.wallet.returnUnused(b);
     const by = isStudent ? 'the student' : 'your mentor or our team';
@@ -434,7 +466,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
       data: approve ? { ...decided, status: 'CANCELLED', cancelledAt: now, mentorNoShowAt: now, cancelReason: 'Your mentor did not join. The full price was refunded to your POINT B balance.' } : decided,
     });
     if (!claimed.count) throw new ConflictException('This report has already been decided.');
-    const amount = b.currency === 'PKR' ? `Rs ${(b.priceMinor / 100).toLocaleString('en-PK')}` : `£${(b.priceMinor / 100).toFixed(2)}`;
+    const amount = money(b.priceMinor, b.currency);
     const facts: [string, string][] = [['Session', emailDate(b.slot.startAt)], ['Reference', b.reference]];
     const first = b.student.name.split(' ')[0];
     const mentorFirst = b.mentor.user.name.split(' ')[0];
@@ -471,6 +503,21 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     const mentorUserId = (await this.prisma.mentorProfile.findUnique({ where: { id: b.mentorId }, select: { userId: true } }))?.userId;
     await this.notify.send(b.mentor.user.email, `New feedback from ${b.student.name.split(' ')[0]}`, `Hi ${b.mentor.user.name.split(' ')[0]},\n\n${b.student.name} has left feedback on your session. You can read it on your dashboard. The POINT B team reviews all feedback before it appears on your public profile.`, mentorUserId, { cta: { label: 'Read the feedback', url: `${webUrl()}/dashboard/mentor?tab=feedback` }, facts: [['Rating', `${dto.rating} out of 5`], ['Session', emailDate(b.slot.startAt)]] });
     this.activity.record(user.id, 'review_left', { reference: b.reference });
+    return this.get(user, reference);
+  }
+
+  /** Students can change their feedback once. The new text goes back to the POINT B team, so it can't skip approval. */
+  async editReview(user: AuthUser, reference: string, dto: CreateReviewDto) {
+    const b = await this.load(user, reference);
+    if (b.studentId !== user.id) throw new ForbiddenException('Only the student can edit this feedback');
+    if (!b.review) throw new BadRequestException('You haven’t left feedback on this session yet');
+    // A single conditional update, so two edits sent at once can't both succeed.
+    const claimed = await this.prisma.review.updateMany({
+      where: { id: b.review.id, OR: [{ editedAt: null }, { editedAt: { isSet: false } }] },
+      data: { rating: dto.rating, comment: dto.comment, status: 'PENDING', moderatedAt: null, moderatedBy: null, editedAt: new Date() },
+    });
+    if (!claimed.count) throw new ConflictException('You have already used your one edit on this feedback');
+    this.activity.record(user.id, 'review_edited', { reference: b.reference });
     return this.get(user, reference);
   }
 }

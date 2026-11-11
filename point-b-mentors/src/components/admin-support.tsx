@@ -153,7 +153,7 @@ function TicketView({ id, meId, onChanged }: { id: string; meId: string; onChang
 }
 
 function Bubble({ who, at, tone, children }: { who: string; at: string; tone: "them" | "us" | "note"; children: string }) {
-  const style = tone === "them" ? "bg-white ring-1 ring-line" : tone === "us" ? "bg-ink text-white" : "bg-lemon/60 ring-1 ring-brass/20";
+  const style = tone === "them" ? "bg-white ring-1 ring-line" : tone === "us" ? "bg-ink text-white" : "bg-lemon/60 ring-1 ring-amber/20";
   return (
     <li className={`flex gap-3 ${tone === "us" ? "flex-row-reverse" : ""}`}>
       <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-medium text-ink" style={{ backgroundColor: pastelFor(who) }}>{initials(who)}</span>

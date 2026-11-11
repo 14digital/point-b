@@ -3,6 +3,7 @@ import { Newsreader, Inter } from "next/font/google";
 import "./globals.css";
 import { Nav } from "@/components/nav";
 import { Footer } from "@/components/footer";
+import { ChatWidget } from "@/components/chat-widget";
 import { ActivityTracker } from "@/components/activity-tracker";
 import { PaymentDueBar } from "@/components/payment-due-bar";
 import { AuthProvider } from "@/lib/auth";
@@ -39,6 +40,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           <main className="flex-1">{children}</main>
           <Footer />
           <PaymentDueBar />
+          <ChatWidget />
         </AuthProvider>
       </body>
     </html>

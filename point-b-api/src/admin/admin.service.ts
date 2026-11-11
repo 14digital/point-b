@@ -16,7 +16,9 @@ export const EDIT_LINK_DAYS = 14;
 /** Pakistan is local; anywhere else is international. Decides the mentor's listing and currency. */
 const categoryFor = (country: string): MentorCategory => (/pakistan/i.test(country) ? 'LOCAL' : 'INTERNATIONAL');
 export const hashToken = (t: string) => createHash('sha256').update(t).digest('hex');
-import { DEFAULT_PRICES, commissionRules, currencyFor, feeOf, groupPercent, priceFor, tierRule } from '../common/pricing';
+import { reportCurrencies } from '../common/currency';
+import { convert } from '../common/fx';
+import { DEFAULT_PRICES, commissionRules, visitorPricing, currencyFor, groupPercent, priceFor, tierRule, feeForBooking } from '../common/pricing';
 import { AdminEditApplicationDto } from '../applications/applications.dto';
 import { InterviewDto, InterviewSlotSettingsDto, PricingRuleDto, ScorecardDto, SettingDto, UpdateMentorAdminDto } from './admin.dto';
 import { INTERVIEW_MINUTES, InterviewSlotsService } from './interview-slots.service';
@@ -349,8 +351,15 @@ export class AdminService {
   }
 
   /** What the public pricing page shows: each tier's range, and the group seat discount. */
-  async publicPricing() {
-    return { tiers: await this.pricing(), groupPercent: await groupPercent(this.prisma) };
+  async publicPricing(country?: string | null) {
+    const visitor = await visitorPricing(this.prisma, country);
+    const tiers = await this.pricing();
+    // Each tier's range in the visitor's own currency, converted at today's rate.
+    const local = visitor ? tiers.map((t) => {
+      const lo = convert(t.minMinor, t.currency, visitor.currency, visitor.rates), hi = convert(t.maxMinor, t.currency, visitor.currency, visitor.rates);
+      return lo == null || hi == null ? null : { level: t.level, from: t.currency, currency: visitor.currency, minMinor: lo, maxMinor: hi };
+    }).filter((x) => x !== null) : [];
+    return { tiers, groupPercent: await groupPercent(this.prisma), local: visitor && local.length ? { country: country ?? null, currency: visitor.currency, tiers: local } : null };
   }
 
   async setPricing(adminId: string, dto: PricingRuleDto) {
@@ -408,7 +417,7 @@ export class AdminService {
     if (!b) throw new NotFoundException('Booking not found');
     const rules = await commissionRules(this.prisma);
     const percent = b.commissionPercent ?? rules.tier[b.mentor.level];
-    const feeMinor = b.platformFeeMinor ?? (percent == null ? null : feeOf(b.priceMinor, percent));
+    const feeMinor = feeForBooking(b, percent);
     const reviewerIds = [...new Set(b.payments.map((p) => p.reviewedBy).filter((x): x is string => !!x))];
     const [reviewers, history, promo] = await Promise.all([
       this.prisma.user.findMany({ where: { id: { in: reviewerIds } }, select: { id: true, name: true } }),
@@ -473,14 +482,14 @@ export class AdminService {
       this.prisma.booking.findMany({
         where: { status: { in: ['CONFIRMED', 'COMPLETED'] }, ...made },
         select: {
-          currency: true, priceMinor: true, listPriceMinor: true, platformFeeMinor: true, commissionPercent: true, discountMinor: true, repeatStudent: true, sessionKind: true, payoutId: true, createdAt: true,
+          currency: true, priceMinor: true, platformFeeMinor: true, listPriceMinor: true, mentorPaidInFull: true, commissionPercent: true, discountMinor: true, repeatStudent: true, sessionKind: true, payoutId: true, createdAt: true,
           payments: { where: { status: 'SUCCEEDED' }, select: { provider: true }, take: 1 },
           mentor: { select: { id: true, level: true, user: { select: { name: true } } } },
         },
       }),
     ]);
     // Each booking's fee was fixed when it was made (tier rate, or the repeat-student rate); older ones use today's tier rate.
-    const feeFor = (b: (typeof paid)[number]) => b.platformFeeMinor ?? (rules.tier[b.mentor.level] == null ? null : feeOf(b.priceMinor, rules.tier[b.mentor.level]!));
+    const feeFor = (b: (typeof paid)[number]) => feeForBooking(b, rules.tier[b.mentor.level]);
     const rateFor = (b: (typeof paid)[number]) => b.commissionPercent ?? rules.tier[b.mentor.level];
     const tally = (rows: typeof paid) => {
       const grossMinor = rows.reduce((a, b) => a + b.priceMinor, 0);
@@ -496,7 +505,7 @@ export class AdminService {
       return [...groups.values()];
     };
     const configured = Object.values(rules.tier).some((v) => v != null);
-    const finance = (['PKR', 'GBP'] as const).map((currency) => {
+    const finance = reportCurrencies([...paid, ...cancelled]).map((currency) => {
       const rows = paid.filter((b) => b.currency === currency);
       const total = tally(rows);
       const dropped = cancelled.filter((b) => b.currency === currency);

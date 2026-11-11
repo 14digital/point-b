@@ -28,7 +28,7 @@ const PHASES: { tone: string; label: string; title: string; text: string; steps:
     title: "Confirm in one step",
     text: "The full price is shown before you pay. Your time is held for 15 minutes while you check out.",
     steps: [
-      { title: "Pay securely", body: "Pay by card through Stripe. We never see or store your card details. Local sessions are priced in PKR, international sessions in GBP, with no hidden fees.", icon: ic(<><rect x="3" y="6" width="18" height="13" rx="2" /><path d="M3 10h18M7 15h3" /></>) },
+      { title: "Pay securely", body: "Pay by card through Stripe. We never see or store your card details. Prices are shown for your country, with no hidden fees.", icon: ic(<><rect x="3" y="6" width="18" height="13" rx="2" /><path d="M3 10h18M7 15h3" /></>) },
       { title: "Get your confirmation", body: "You receive a booking reference by email, and the session is saved to your dashboard with your mentor, time and a private link to the call room.", icon: ic(<><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 7l9 6 9-6" /></>) },
     ],
   },
@@ -73,7 +73,7 @@ export default function HowItWorksPage() {
         </div>
 
         <dl className="animate-rise mt-16 grid grid-cols-2 overflow-hidden rounded-3xl bg-white/80 ring-1 ring-ink/5 backdrop-blur sm:grid-cols-4" style={{ ["--rise-delay" as string]: "240ms" }}>
-          {[["30 min", "per session"], ["8 steps", "search to feedback"], ["{notice}", "to cancel or reschedule free"], ["PKR · GBP", "local and international"]].map(([v, l], i) => (
+          {[["30 min", "per session"], ["8 steps", "search to feedback"], ["{notice}", "to cancel or reschedule free"], ["Your price", "set for your country"]].map(([v, l], i) => (
             <div key={l} className={`px-6 py-5 ${i ? "sm:border-l" : ""} ${i % 2 ? "border-l" : ""} ${i > 1 ? "border-t sm:border-t-0" : ""} border-line`}>
               <dt className="sr-only">{l}</dt>
               <dd className="font-display text-3xl text-ink"><NoticeText text={v} /></dd>

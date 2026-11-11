@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { useRouter } from "next/navigation";
 import { loadStripe, type Appearance, type Stripe } from "@stripe/stripe-js";
 import { Elements, PaymentElement, useElements, useStripe } from "@stripe/react-stripe-js";
 import { Alert, Button, Skeleton, Spinner } from "./ui";
@@ -69,12 +70,13 @@ function useCountdown(until?: string) {
  * Payment step for a held booking. Renders a scrollable body and a footer with the pay button,
  * so it slots into any dialog. Uses Stripe when the API has keys, otherwise the demo checkout.
  */
-export function Checkout({ reference, onPaid, bodyClass, footerClass, footerLead }: {
-  reference: string; onPaid: () => void; bodyClass: string; footerClass: string; footerLead?: ReactNode;
+export function Checkout({ reference, onPaid, onDone, bodyClass, footerClass, footerLead }: {
+  reference: string; onPaid: () => void; onDone?: () => void; bodyClass: string; footerClass: string; footerLead?: ReactNode;
 }) {
   const [info, setInfo] = useState<CheckoutInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [method, setMethod] = useState<"card" | "bank">("card");
+  const [payFull, setPayFull] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -95,10 +97,12 @@ export function Checkout({ reference, onPaid, bodyClass, footerClass, footerLead
     );
   }
 
-  if (info.state === "verifying") return <Verifying info={info} bodyClass={bodyClass} footerClass={footerClass} />;
+  if (info.state === "verifying") return <Verifying info={info} onDone={onDone} bodyClass={bodyClass} footerClass={footerClass} />;
 
   // Bank app / QR is offered beside the card form for PKR sessions. A POINT B balance is offered first.
-  const balance = <BalanceOffer info={info} onPaid={onPaid} onUpdated={setInfo} />;
+  const balance = <BalanceOffer info={info} onUpdated={(i) => { setPayFull(false); setInfo(i); }} payFull={payFull} setPayFull={setPayFull} />;
+  const fullFromBalance = payFull && !!info.wallet && !info.wallet.appliedMinor && info.wallet.balanceMinor >= info.amountMinor;
+  if (fullFromBalance) return <BalanceForm info={info} picker={balance} onPaid={onPaid} bodyClass={bodyClass} footerClass={footerClass} footerLead={footerLead} />;
   const picker = <>{balance}{info.bank ? <MethodPicker value={method} onChange={setMethod} /> : null}</>;
   if (info.bank && method === "bank") {
     return <BankForm info={info} bank={info.bank} picker={picker} onSubmitted={(txnRef) => setInfo({ state: "verifying", reference: info.reference, amountMinor: info.amountMinor, currency: info.currency, txnRef, submittedAt: new Date().toISOString() })} bodyClass={bodyClass} footerClass={footerClass} footerLead={footerLead} />;
@@ -119,41 +123,108 @@ export function Checkout({ reference, onPaid, bodyClass, footerClass, footerLead
 
 type FormProps = { info: Extract<CheckoutInfo, { state: "ready" }>; onPaid: () => void; bodyClass: string; footerClass: string; footerLead?: ReactNode; picker?: ReactNode };
 
-/** Offers the student's POINT B balance (from cancelled sessions or credit). Covers all of the session, or part of it. */
-function BalanceOffer({ info, onPaid, onUpdated }: { info: FormProps["info"]; onPaid: () => void; onUpdated: (i: CheckoutInfo) => void }) {
+/**
+ * The student's POINT B balance (from cancelled sessions or credit), with a switch to use it. When it covers part of
+ * the price it is applied straight away and the rest is paid by card or bank; switching it off puts it back. When it
+ * covers the whole session, the student confirms with one button.
+ */
+function BalanceOffer({ info, onUpdated, payFull, setPayFull }: { info: FormProps["info"]; onUpdated: (i: CheckoutInfo) => void; payFull: boolean; setPayFull: (v: boolean) => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const w = info.wallet;
   if (!w || (w.balanceMinor <= 0 && !w.appliedMinor)) return null;
   const money = (m: number) => formatMoney(m, info.currency);
-  if (w.appliedMinor) return (
-    <div className="flex items-center gap-3 rounded-2xl bg-mint/50 px-4 py-3 text-sm ring-1 ring-forest/15">
-      <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden className="shrink-0 text-forest"><path d="M4 10.5l4 4 8-9" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /></svg>
-      <span className="text-ink">{money(w.appliedMinor)} paid from your POINT B balance. Pay the remaining {money(info.amountMinor)} below.</span>
+  const price = info.amountMinor + w.appliedMinor;
+  const covers = !w.appliedMinor && w.balanceMinor >= info.amountMinor;
+  const on = w.appliedMinor > 0 || (covers && payFull);
+  const using = w.appliedMinor || Math.min(w.balanceMinor, price);
+  const toPay = price - using;
+  const left = w.balanceMinor - (w.appliedMinor ? 0 : using);
+
+  async function toggle() {
+    setError(null);
+    if (covers) { setPayFull(!payFull); return; }
+    setBusy(true);
+    try {
+      const next = await api<CheckoutInfo>(`/payments/${info.reference}/use-balance`, { method: on ? "DELETE" : "POST" });
+      track(on ? "balance_removed" : "balance_used", { reference: info.reference });
+      onUpdated(next);
+    } catch (e) { setError(errMsg(e)); }
+    setBusy(false);
+  }
+
+  return (
+    <div className={`overflow-hidden rounded-2xl ring-1 transition-colors duration-300 ${on ? "bg-mint/35 ring-forest/20" : "bg-white ring-line"}`}>
+      <button type="button" role="switch" aria-checked={on} disabled={busy} onClick={toggle}
+        className="flex w-full items-center gap-3.5 px-4 py-3.5 text-left disabled:cursor-wait sm:px-5">
+        <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-colors ${on ? "bg-white text-forest" : "bg-lemon/80 text-ink"}`}>
+          <svg width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden><rect x="2.5" y="5" width="15" height="11" rx="2.5" stroke="currentColor" strokeWidth="1.5" /><path d="M13 10.5h2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /><path d="M5 5V4.5A1.5 1.5 0 016.5 3H14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg>
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-medium text-ink">Use my POINT B balance</span>
+          <span className="block text-xs text-ink-soft">
+            {w.appliedMinor ? <>{money(w.appliedMinor)} applied to this session</> : <>{money(w.balanceMinor)} available{covers ? " · covers this whole session" : ""}</>}
+          </span>
+        </span>
+        <span aria-hidden className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors duration-200 ${on ? "bg-forest" : "bg-ink/15"}`}>
+          {busy ? <span className="absolute inset-0 flex items-center justify-center"><Spinner /></span> : (
+            <span className={`h-5 w-5 rounded-full bg-white shadow-[0_1px_3px_rgba(17,17,17,0.3)] transition-transform duration-200 ${on ? "translate-x-[22px]" : "translate-x-0.5"}`} />
+          )}
+        </span>
+      </button>
+
+      <div className={`grid transition-[grid-template-rows] duration-300 ease-out ${on ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}>
+        <div className="overflow-hidden">
+          <dl className="mx-4 mb-4 space-y-2 rounded-xl bg-white px-4 py-3.5 text-sm ring-1 ring-forest/10 sm:mx-5">
+            <div className="flex justify-between gap-4"><dt className="text-ink-soft">Session price</dt><dd className="tabular-nums text-ink">{money(price)}</dd></div>
+            <div className="flex justify-between gap-4"><dt className="text-ink-soft">From your POINT B balance</dt><dd className="tabular-nums font-medium text-forest">&minus; {money(using)}</dd></div>
+            <div className="flex items-baseline justify-between gap-4 border-t border-dashed border-line pt-2.5">
+              <dt className="font-medium text-ink">Left to pay</dt>
+              <dd className="font-display text-2xl leading-none tabular-nums text-ink">{money(toPay)}</dd>
+            </div>
+            <p className="pt-0.5 text-xs text-ink-soft">
+              {toPay ? <>Pay the <span className="whitespace-nowrap">{money(toPay)}</span> below by card or bank. </> : "Nothing else to pay. "}
+              Balance left after this: <span className="whitespace-nowrap">{money(Math.max(0, left))}</span>.
+            </p>
+          </dl>
+        </div>
+      </div>
+      {error && <div className="px-4 pb-4 sm:px-5"><Alert>{error}</Alert></div>}
     </div>
   );
-  const covers = w.balanceMinor >= info.amountMinor;
-  const use = Math.min(w.balanceMinor, info.amountMinor);
-  async function apply() {
+}
+
+/** The whole session is paid from the balance: one clear confirmation instead of a card form. */
+function BalanceForm({ info, picker, onPaid, bodyClass, footerClass, footerLead }: FormProps) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const hold = useCountdown(info.holdExpiresAt);
+  async function pay() {
     setBusy(true); setError(null);
     try {
       const next = await api<CheckoutInfo>(`/payments/${info.reference}/use-balance`, { method: "POST" });
-      track("balance_used", { reference: info.reference });
-      if (next.state === "paid") onPaid(); else onUpdated(next);
+      track("balance_used", { reference: info.reference, label: "Full" });
+      if (next.state === "paid") onPaid(); else { setError("Your balance didn't cover the full price. Please refresh and try again."); setBusy(false); }
     } catch (e) { setError(errMsg(e)); setBusy(false); }
   }
   return (
-    <div className="rounded-2xl bg-lemon/50 p-4 ring-1 ring-brass/20">
-      <div className="flex flex-wrap items-center gap-3">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-ink"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden><rect x="2.5" y="5" width="15" height="11" rx="2.5" stroke="currentColor" strokeWidth="1.5" /><path d="M13 10.5h2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /><path d="M5 5V4.5A1.5 1.5 0 016.5 3H14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg></span>
-        <div className="min-w-0 flex-1 basis-[11rem]">
-          <p className="text-sm font-medium text-ink">You have {money(w.balanceMinor)} in your POINT B balance</p>
-          <p className="text-xs text-ink-soft">{covers ? "It covers this whole session." : `Use it now and pay the remaining ${money(info.amountMinor - use)} by card or bank.`}</p>
-        </div>
-        <Button size="sm" className="w-full sm:w-auto" disabled={busy} onClick={apply}>{busy ? <Spinner /> : covers ? `Pay with balance` : `Use ${money(use)}`}</Button>
+    <>
+      <div className={bodyClass}>
+        <Summary info={info} />
+        {picker}
+        {error && <Alert>{error}</Alert>}
+        <p className="flex items-center gap-2 text-xs text-ink-soft">
+          <svg width="13" height="13" viewBox="0 0 20 20" fill="none" aria-hidden><path d="M10 2.5l6 2.5v4.5c0 4-2.6 6.8-6 8-3.4-1.2-6-4-6-8V5l6-2.5z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" /></svg>
+          Your session is confirmed straight away. If you cancel in time, the amount goes back to your balance.
+        </p>
       </div>
-      {error && <div className="mt-3"><Alert>{error}</Alert></div>}
-    </div>
+      <footer className={footerClass}>
+        {footerLead}
+        <Button className="flex-1 sm:flex-none sm:min-w-52" disabled={busy || !!hold?.expired} onClick={pay}>
+          {busy ? <><Spinner /> Confirming…</> : <>Pay {formatMoney(info.amountMinor, info.currency)} from balance</>}
+        </Button>
+      </footer>
+    </>
   );
 }
 
@@ -405,7 +476,7 @@ function BankForm({ info, bank, picker, onSubmitted, bodyClass, footerClass, foo
   );
 }
 
-function Verifying({ info, bodyClass, footerClass }: { info: Extract<CheckoutInfo, { state: "verifying" }>; bodyClass: string; footerClass: string }) {
+function Verifying({ info, onDone, bodyClass, footerClass }: { info: Extract<CheckoutInfo, { state: "verifying" }>; onDone?: () => void; bodyClass: string; footerClass: string }) {
   const at = info.submittedAt ? new Date(info.submittedAt) : null;
   const steps: [string, string, "done" | "now" | "next"][] = [
     ["Payment details sent", at ? `${at.toLocaleDateString("en-GB", { day: "numeric", month: "short" })}, ${at.toLocaleTimeString("en-GB", { hour: "numeric", minute: "2-digit", hour12: true })}` : "Just now", "done"],
@@ -437,7 +508,11 @@ function Verifying({ info, bodyClass, footerClass }: { info: Extract<CheckoutInf
         </ol>
         <p className="text-xs text-ink-soft">Your session time is held for you while we check. If we can&rsquo;t match the payment, we&rsquo;ll email you the reason.</p>
       </div>
-      <footer className={footerClass}><Button href="/dashboard/student" className="w-full sm:w-auto sm:min-w-48">Go to my sessions</Button></footer>
+      <footer className={footerClass}>
+        {/* Inside the popup a plain link does nothing when the student is already on the dashboard, so close it first. */}
+        {onDone ? <Button className="w-full sm:w-auto sm:min-w-48" onClick={onDone}>Go to my sessions</Button>
+          : <Button href="/dashboard/student" className="w-full sm:w-auto sm:min-w-48">Go to my sessions</Button>}
+      </footer>
     </>
   );
 }
@@ -449,10 +524,11 @@ function Summary({ info }: { info: FormProps["info"] }) {
       <div>
         <p className="text-xs text-ink-soft">Amount due</p>
         <p className="font-display text-3xl leading-tight text-ink">{formatMoney(info.amountMinor, info.currency)}</p>
+        {info.wallet?.appliedMinor ? <p className="text-xs font-medium text-forest">After {formatMoney(info.wallet.appliedMinor, info.currency)} from your balance</p> : null}
         <p className="text-xs text-ink-soft">Ref. {info.reference}</p>
       </div>
       {hold && (
-        <div className={`rounded-xl px-3 py-2 text-right ${hold.expired ? "bg-rust-pale text-rust" : "bg-white text-ink"}`}>
+        <div className={`shrink-0 rounded-xl px-3 py-2 text-right ${hold.expired ? "bg-rust-pale text-rust" : "bg-white text-ink"}`}>
           <p className="text-[11px] uppercase tracking-wider opacity-60">{hold.expired ? "Hold expired" : "Time held"}</p>
           <p className="font-mono text-lg tabular-nums">{hold.label}</p>
         </div>
@@ -554,6 +630,7 @@ function MockForm({ info, picker, onPaid, bodyClass, footerClass, footerLead }: 
 
 /** Standalone payment dialog, used to resume checkout from the dashboard. */
 export function CheckoutDialog({ reference, title, subtitle, onClose: close, onPaid: paid }: { reference: string; title: string; subtitle: string; onClose: () => void; onPaid: () => void }) {
+  const router = useRouter();
   const onClose = useCallback(() => { close(); paymentChanged(); }, [close]);
   const onPaid = useCallback(() => { paid(); paymentChanged(); }, [paid]);
   useEffect(() => {
@@ -576,7 +653,7 @@ export function CheckoutDialog({ reference, title, subtitle, onClose: close, onP
             <svg width="16" height="16" viewBox="0 0 20 20" fill="none"><path d="M5 5l10 10M15 5L5 15" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
           </button>
         </header>
-        <Checkout reference={reference} onPaid={onPaid}
+        <Checkout reference={reference} onPaid={onPaid} onDone={() => { onClose(); router.push("/dashboard/student"); }}
           bodyClass="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-6 sm:px-8"
           footerClass="flex items-center justify-end gap-2 border-t border-line bg-white px-6 py-4 sm:px-8" />
       </div>

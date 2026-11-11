@@ -21,7 +21,7 @@ function strength(p: string) {
   if (/\d/.test(p) && /[^A-Za-z0-9]/.test(p)) s++;
   return s;
 }
-const LEVELS = [["Too short", "bg-rust/60"], ["Weak", "bg-rust/60"], ["Fair", "bg-brass"], ["Good", "bg-forest/70"], ["Strong", "bg-forest"]] as const;
+const LEVELS = [["Too short", "bg-rust/60"], ["Weak", "bg-rust/60"], ["Fair", "bg-amber"], ["Good", "bg-forest/70"], ["Strong", "bg-forest"]] as const;
 
 function Reset() {
   const params = useSearchParams();

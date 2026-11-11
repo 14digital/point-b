@@ -70,7 +70,7 @@ export function Badge({
 }) {
   const tones: Record<string, string> = {
     neutral: "bg-paper-dim text-ink-soft",
-    brass: "bg-brass-pale text-brass-dark",
+    amber: "bg-amber-pale text-amber-dark",
     forest: "bg-forest-pale text-forest",
     rust: "bg-rust-pale text-rust",
   };
@@ -151,7 +151,7 @@ export function StarRating({ rating, reviewCount }: { rating: number; reviewCoun
 
 export function DemoBanner({ children }: { children: ReactNode }) {
   return (
-    <div className="flex items-start gap-2.5 rounded-xl border border-brass/30 bg-brass-pale/60 px-4 py-3 text-sm text-brass-dark">
+    <div className="flex items-start gap-2.5 rounded-xl border border-amber/30 bg-amber-pale/60 px-4 py-3 text-sm text-amber-dark">
       <svg width="16" height="16" viewBox="0 0 20 20" fill="none" className="mt-0.5 shrink-0">
         <circle cx="10" cy="10" r="8.5" stroke="currentColor" strokeWidth="1.3" />
         <path d="M10 6.2v4.4M10 13.6h.01" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
@@ -174,7 +174,7 @@ export function Alert({ tone = "error", children }: { tone?: "error" | "success"
   const tones = {
     error: "border-rust/30 bg-rust-pale text-rust",
     success: "border-forest/30 bg-forest-pale text-forest",
-    info: "border-brass/30 bg-brass-pale/60 text-brass-dark",
+    info: "border-amber/30 bg-amber-pale/60 text-amber-dark",
   } as const;
   return (
     <div role={tone === "error" ? "alert" : "status"} className={`rounded-xl border px-4 py-3 text-sm leading-relaxed ${tones[tone]}`}>

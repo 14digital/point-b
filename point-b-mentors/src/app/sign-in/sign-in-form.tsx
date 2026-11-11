@@ -11,11 +11,12 @@ import { isValidPhone, type CountryCode } from "@/components/phone-input";
 import type { Role } from "@/lib/types";
 import { NoticeText } from "@/lib/policy";
 import { VerifyEmail } from "@/components/verify-email";
+import { GoogleButton } from "@/components/google-button";
 
 const age = (dob: string) => (Date.now() - new Date(dob).getTime()) / (365.25 * 86400_000);
 
 export function SignInForm() {
-  const { login, register, loginWithCode } = useAuth();
+  const { login, register, loginWithCode, loginWithGoogle } = useAuth();
   const [twoStep, setTwoStep] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [code, setCode] = useState("");
@@ -60,6 +61,11 @@ export function SignInForm() {
     }
   }
 
+  async function continueWithGoogle(credential: string) {
+    setBusy(true); setError(null);
+    try { finish((await loginWithGoogle(credential)).role); } catch (err) { setError(errMsg(err)); setBusy(false); }
+  }
+
   async function submitCode(e: React.FormEvent) {
     e.preventDefault();
     if (!twoStep) return;
@@ -85,7 +91,7 @@ export function SignInForm() {
         <div className="mx-auto grid max-w-5xl gap-10 lg:grid-cols-[minmax(0,1fr)_440px] lg:items-stretch lg:gap-12">
           {/* Brand panel */}
           <aside className="animate-rise relative hidden overflow-hidden rounded-[2rem] bg-ink p-10 text-white lg:flex lg:flex-col">
-            <div aria-hidden className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-brass/30 blur-[90px]" />
+            <div aria-hidden className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-lime/25 blur-[90px]" />
             <div aria-hidden className="pointer-events-none absolute -bottom-28 -left-20 h-72 w-72 rounded-full bg-sky/20 blur-[90px]" />
             <p className="relative text-sm font-medium text-white/60">POINT B Mentors</p>
             <h1 className="relative mt-4 font-display text-[3.4rem] leading-[1.02]">
@@ -99,7 +105,7 @@ export function SignInForm() {
               ].map(([t, d]) => (
                 <li key={t} className="flex gap-3">
                   <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/10">
-                    <svg width="11" height="11" viewBox="0 0 20 20" fill="none" aria-hidden><path d="M4 10.5l4 4 8-9" stroke="#e9c880" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                    <svg width="11" height="11" viewBox="0 0 20 20" fill="none" aria-hidden><path d="M4 10.5l4 4 8-9" stroke="#b7de5b" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
                   </span>
                   <span><span className="block text-sm font-medium">{t}</span><span className="text-sm text-white/55"><NoticeText text={d} /></span></span>
                 </li>
@@ -154,7 +160,9 @@ export function SignInForm() {
                   <button type="button" onClick={() => { setTwoStep(null); setCode(""); setError(null); }} className="w-full text-center text-sm text-ink-soft underline-offset-4 hover:text-ink hover:underline">Use a different account</button>
                 </form>
               ) : (
-              <form onSubmit={submit} className="mt-7 space-y-5">
+              <>
+              <GoogleButton showTerms={signingIn} onCredential={continueWithGoogle} />
+              <form onSubmit={submit} className="mt-5 space-y-5">
                 {mode === "up" && (
                   <Field label="Full name"><input className="input" required autoComplete="name" placeholder="Your name" value={f.name} onChange={(e) => set("name", e.target.value)} /></Field>
                 )}
@@ -196,6 +204,7 @@ export function SignInForm() {
                   {busy ? <Spinner /> : signingIn ? "Sign in" : "Create account"}
                 </Button>
               </form>
+              </>
               )}
 
               {signingIn ? (
