@@ -17,8 +17,8 @@ const WEEK = [[1, "Mon"], [2, "Tue"], [3, "Wed"], [4, "Thu"], [5, "Fri"], [6, "S
 const LENGTHS = [["1", "1 month"], ["2", "2 months"], ["3", "3 months"]] as const;
 type Length = (typeof LENGTHS)[number][0];
 
-const TIMES = Array.from({ length: 34 }, (_, i) => ({ h: 6 + Math.floor(i / 2), m: (i % 2) * 30 }));
-const PERIODS = [["Morning", 0, 12], ["Afternoon", 12, 17], ["Evening", 17, 24]] as const;
+const TIMES = Array.from({ length: 48 }, (_, i) => ({ h: Math.floor(i / 2), m: (i % 2) * 30 }));
+const PERIODS = [["Night", 0, 6], ["Morning", 6, 12], ["Afternoon", 12, 17], ["Evening", 17, 24]] as const;
 const timeKey = (h: number, m: number) => `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 const timeLabel = (h: number, m: number) => `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h < 12 ? "am" : "pm"}`;
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
