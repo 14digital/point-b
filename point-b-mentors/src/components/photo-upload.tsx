@@ -8,12 +8,12 @@ const MIN_SIDE = 300;
 const MAX_LENGTH = 1_900_000;
 
 /** Turns any photo into a sensibly sized JPEG in the browser, so a phone picture uploads quickly. */
-async function prepare(file: File): Promise<string> {
+export async function prepare(file: Blob, minSide = MIN_SIDE): Promise<string> {
   if (!file.type.startsWith("image/")) throw new Error("Please choose an image file (JPG, PNG or WebP).");
   if (file.size > 15_000_000) throw new Error("That image is too large. Please choose one under 15 MB.");
   let bitmap: ImageBitmap;
   try { bitmap = await createImageBitmap(file); } catch { throw new Error("We couldn't read that image. Please choose a JPG or PNG."); }
-  if (Math.min(bitmap.width, bitmap.height) < MIN_SIDE) throw new Error(`That photo is too small to look sharp. Please use one at least ${MIN_SIDE} pixels wide.`);
+  if (Math.min(bitmap.width, bitmap.height) < minSide) throw new Error(`That photo is too small to look sharp. Please use one at least ${minSide} pixels wide.`);
   const scale = Math.min(1, MAX_SIDE / Math.max(bitmap.width, bitmap.height));
   const canvas = document.createElement("canvas");
   canvas.width = Math.round(bitmap.width * scale);

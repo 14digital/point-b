@@ -6,7 +6,8 @@ import { AuthUser, CurrentUser, Public } from '../common/auth';
 import { DailyService } from '../calls/daily.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../common/notifications.service';
-import { CreateApplicationDto, UpdateApplicationDto } from './applications.dto';
+import { CreateApplicationDto, LinkedInImportDto, UpdateApplicationDto } from './applications.dto';
+import { LinkedInImportService } from './linkedin-import.service';
 import { hashToken } from '../admin/admin.service';
 import { webUrl } from '../common/email-template';
 
@@ -16,10 +17,32 @@ const EDITABLE = {
   previousMentorshipExperience: true, topicsOffered: true, preferredPricing: true, weeklyAvailability: true, motivation: true, participation: true,
 } as const;
 
+/** A JPEG data URL as stored bytes; nothing when no photo was given. */
+function photoData(image?: string) {
+  if (!image) return {};
+  const photo = Buffer.from(image.slice(image.indexOf(',') + 1), 'base64');
+  if (photo.length < 3 || photo[0] !== 0xff || photo[1] !== 0xd8 || photo[2] !== 0xff) throw new BadRequestException('The photo must be a JPEG image.');
+  return { photo };
+}
+const withoutPhoto = <T extends { photoImage?: string }>(dto: T) => { const { photoImage: _p, ...rest } = dto; void _p; return rest; };
+
 @ApiTags('applications')
 @Controller('applications')
 export class ApplicationsController {
-  constructor(private prisma: PrismaService, private notify: NotificationsService, private daily: DailyService) {}
+  constructor(private prisma: PrismaService, private notify: NotificationsService, private daily: DailyService, private linkedin: LinkedInImportService) {}
+
+  /** Whether the form can offer to fill itself from LinkedIn. */
+  @Public() @Get('linkedin/status')
+  linkedinStatus() {
+    return { enabled: this.linkedin.enabled };
+  }
+
+  /** Reads a LinkedIn profile and returns it as application fields, for the applicant to check before sending. */
+  @Public() @Throttle({ default: { limit: 60, ttl: 3_600_000 } }) // the form asks again while a new profile is being fetched
+  @Post('linkedin')
+  importLinkedIn(@Body() dto: LinkedInImportDto) {
+    return this.linkedin.import(dto.url, dto.ticket);
+  }
 
   @Public() @Throttle({ default: { limit: 5, ttl: 3_600_000 } })
   @Post()
@@ -28,7 +51,8 @@ export class ApplicationsController {
     const email = dto.email.toLowerCase();
     const open = await this.prisma.mentorApplication.findFirst({ where: { email, status: { in: ['SUBMITTED', 'UNDER_REVIEW', 'SHORTLISTED', 'INTERVIEW_SCHEDULED', 'INTERVIEW_COMPLETED', 'CHANGES_REQUESTED'] } } });
     if (open) throw new BadRequestException('You already have an application in progress. We will be in touch soon.');
-    const app = await this.prisma.mentorApplication.create({ data: { ...dto, email } });
+    const { photoImage, ...fields } = dto;
+    const app = await this.prisma.mentorApplication.create({ data: { ...fields, email, ...photoData(photoImage) } });
     await this.notify.send(email, 'We have received your mentor application', `Thanks ${dto.fullName.split(' ')[0]}. Applications are reviewed in order received. Approval is not automatic and includes a short interview.`);
     return { id: app.id, status: app.status };
   }
@@ -97,7 +121,7 @@ export class ApplicationsController {
     // Single use: the guarded update only succeeds while this exact token is still current.
     const done = await this.prisma.mentorApplication.updateMany({
       where: { id: app.id, editTokenHash: hashToken(token), status: 'CHANGES_REQUESTED' },
-      data: { ...dto, status: 'UNDER_REVIEW', editTokenHash: null, editTokenExpiresAt: null, resubmittedAt: new Date(), resubmissionCount: { increment: 1 } },
+      data: { ...withoutPhoto(dto), ...photoData(dto.photoImage), status: 'UNDER_REVIEW', editTokenHash: null, editTokenExpiresAt: null, resubmittedAt: new Date(), resubmissionCount: { increment: 1 } },
     });
     if (done.count === 0) throw new GoneException('This link is no longer valid.');
     const first = dto.fullName.split(' ')[0];

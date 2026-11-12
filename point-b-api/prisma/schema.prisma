@@ -203,6 +203,8 @@ model MentorApplication {
   countryOfResidence           String
   professionalLocation         String
   linkedinUrl                  String
+  // Headshot brought in from LinkedIn (JPEG), copied to the mentor profile on approval.
+  photo                        Bytes?
   headline                     String
   currentRole                  String
   organization                 String

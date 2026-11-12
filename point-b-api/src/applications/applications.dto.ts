@@ -1,5 +1,6 @@
+import { PHOTO_IMAGE, PHOTO_IMAGE_MAX_LENGTH, PHOTO_IMAGE_MESSAGE } from '../mentors/mentor-photo';
 import { OmitType, PartialType } from '@nestjs/swagger';
-import { ArrayMaxSize, IsArray, IsBoolean, IsEmail, IsIn, IsInt, IsOptional, IsString, IsUrl, Max, MaxLength, Min, MinLength } from 'class-validator';
+import { ArrayMaxSize, Matches, IsArray, IsBoolean, IsEmail, IsIn, IsInt, IsOptional, IsString, IsUrl, Max, MaxLength, Min, MinLength } from 'class-validator';
 
 export class CreateApplicationDto {
   @IsString() @MinLength(2) @MaxLength(100) fullName: string;
@@ -24,10 +25,18 @@ export class CreateApplicationDto {
   @IsString() @MinLength(20) @MaxLength(2000) motivation: string;
   @IsIn(['Paid', 'Voluntary']) participation: 'Paid' | 'Voluntary';
   @IsBoolean() agreedToTerms: boolean;
+  /** Optional headshot, a JPEG data URL (from the LinkedIn import, or chosen on the form). */
+  @IsOptional() @IsString() @MaxLength(PHOTO_IMAGE_MAX_LENGTH) @Matches(PHOTO_IMAGE, { message: PHOTO_IMAGE_MESSAGE }) photoImage?: string;
+}
+
+export class LinkedInImportDto {
+  @IsString() @MaxLength(300) url: string;
+  /** Bright Data snapshot id from an earlier "still collecting" answer. */
+  @IsOptional() @IsString() @MaxLength(60) ticket?: string;
 }
 
 /** What an applicant can change through their update link. The email address is fixed. */
 export class UpdateApplicationDto extends OmitType(CreateApplicationDto, ['email'] as const) {}
 
 /** What an admin can correct on any application: every field, optional, including the email address. */
-export class AdminEditApplicationDto extends PartialType(OmitType(CreateApplicationDto, ['agreedToTerms'] as const)) {}
+export class AdminEditApplicationDto extends PartialType(OmitType(CreateApplicationDto, ['agreedToTerms', 'photoImage'] as const)) {}

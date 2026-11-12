@@ -1,3 +1,4 @@
+import { saveMentorPhoto } from '../mentors/mentor-photo';
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { ApplicationStatus, MentorCategory, MentorLevel, Prisma } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
@@ -85,13 +86,14 @@ export class AdminService {
 
   // ---------- applications ----------
   listApplications(status?: ApplicationStatus) {
-    return this.prisma.mentorApplication.findMany({ where: status ? { status } : {}, orderBy: { submittedAt: 'desc' }, include: { scorecard: true }, omit: { editTokenHash: true, interviewTokenHash: true } });
+    return this.prisma.mentorApplication.findMany({ where: status ? { status } : {}, orderBy: { submittedAt: 'desc' }, include: { scorecard: true }, omit: { editTokenHash: true, interviewTokenHash: true, photo: true } });
   }
 
   async getApplication(id: string) {
     const a = await this.prisma.mentorApplication.findUnique({ where: { id }, include: { scorecard: true }, omit: { editTokenHash: true, interviewTokenHash: true } });
     if (!a) throw new NotFoundException('Application not found');
-    return { ...a, allowedTransitions: TRANSITIONS[a.status], passThreshold: PASS_THRESHOLD };
+    const { photo, ...rest } = a;
+    return { ...rest, photo: photo ? `data:image/jpeg;base64,${Buffer.from(photo).toString('base64')}` : null, allowedTransitions: TRANSITIONS[a.status], passThreshold: PASS_THRESHOLD };
   }
 
   /** Interviews still to happen, soonest first, for the admin's agenda. */
@@ -274,7 +276,7 @@ export class AdminService {
     if (c) await this.notify.send(email, c[0], c[1]);
   }
 
-  private async createMentorAccount(a: Omit<Prisma.MentorApplicationGetPayload<object>, 'editTokenHash' | 'interviewTokenHash'>) {
+  private async createMentorAccount(a: Omit<Prisma.MentorApplicationGetPayload<object>, 'editTokenHash' | 'interviewTokenHash' | 'photo'> & { photo: string | null }) {
     let user = await this.prisma.user.findUnique({ where: { email: a.email } });
     const isNew = !user;
     if (!user) {
@@ -300,6 +302,11 @@ export class AdminService {
       },
     });
     await this.prisma.mentorApplication.update({ where: { id: a.id }, data: { mentorProfileId: profile.id } });
+    // The headshot from the application (usually brought in from LinkedIn) becomes the profile photo.
+    if (a.photo) {
+      const photoUrl = await saveMentorPhoto(this.prisma, profile.id, a.photo).catch(() => null);
+      if (photoUrl) await this.prisma.mentorProfile.update({ where: { id: profile.id }, data: { photoUrl } });
+    }
     return { userId: user.id, isNew };
   }
 

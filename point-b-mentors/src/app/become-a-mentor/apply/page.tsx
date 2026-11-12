@@ -11,6 +11,8 @@ import { CountrySelect, listingNote } from "@/components/country-select";
 import { countryCode, countryIn } from "@/components/flag";
 import { PhoneInput, isValidPhone, parsePhone, toE164, type CountryCode } from "@/components/phone-input";
 import { isSupportedCountry } from "libphonenumber-js";
+import { PhotoUpload } from "@/components/photo-upload";
+import { LinkedInImport, type LinkedInProfile } from "./linkedin-import";
 import { MOTIVATION_STARTERS, draftMotivation, skillsFor, strengthsFor, topicsFor } from "./suggestions";
 
 const INDUSTRIES = ["Banking & Financial Services", "Technology", "Marketing & Brand", "Entrepreneurship", "Operations & Supply Chain", "Human Resources", "Law & Compliance", "Healthcare", "Design", "Education", "Consulting", "Other"];
@@ -34,6 +36,8 @@ type Form = {
   specialistAreas: string[]; strengths: string[]; qualifications: string; languages: string[]; previousMentorshipExperience: string;
   topicsOffered: string[]; preferredPricing: string; weeklyAvailability: string; motivation: string;
   participation: "Paid" | "Voluntary"; agreedToTerms: boolean;
+  /** Headshot as a JPEG data URL, from LinkedIn or chosen here. */
+  photo: string | null;
 };
 type Errors = Partial<Record<keyof Form, string>>;
 
@@ -64,7 +68,7 @@ function validate(step: number, f: Form): Errors {
   return e;
 }
 
-type UpdateInfo = Omit<Form, "yearsExperience" | "agreedToTerms"> & { yearsExperience: number; changesRequested: string | null; changesRequestedAt: string | null; expiresAt: string };
+type UpdateInfo = Omit<Form, "yearsExperience" | "agreedToTerms" | "photo"> & { yearsExperience: number; changesRequested: string | null; changesRequestedAt: string | null; expiresAt: string };
 
 export default function ApplyPage() {
   return <Suspense fallback={null}><ApplyForm /></Suspense>;
@@ -86,8 +90,10 @@ function ApplyForm() {
     fullName: "", email: "", phone: "", countryOfResidence: "", professionalLocation: "", linkedinUrl: "",
     headline: "", currentRole: "", organization: "", yearsExperience: "", industry: INDUSTRIES[0],
     specialistAreas: [], strengths: [], qualifications: "", languages: [], previousMentorshipExperience: "",
-    topicsOffered: [], preferredPricing: "", weeklyAvailability: "", motivation: "", participation: "Paid", agreedToTerms: false,
+    topicsOffered: [], preferredPricing: "", weeklyAvailability: "", motivation: "", participation: "Paid", agreedToTerms: false, photo: null,
   });
+  // Fields filled from LinkedIn carry a small tag until the applicant edits them.
+  const [imported, setImported] = useState<Set<keyof Form | "city">>(new Set());
   useEffect(() => {
     if (!token) return;
     let cancelled = false;
@@ -115,7 +121,29 @@ function ApplyForm() {
   useEffect(() => { if (!token) track("application_step", { label: STEPS[step].title }); }, [step, token]);
 
   const errors = showErrors ? validate(step, form) : {};
-  const set = <K extends keyof Form>(k: K, v: Form[K]) => setForm((f) => ({ ...f, [k]: v }));
+  const set = <K extends keyof Form>(k: K, v: Form[K]) => {
+    setForm((f) => ({ ...f, [k]: v }));
+    setImported((s) => { if (!s.has(k)) return s; const n = new Set(s); n.delete(k); return n; });
+  };
+  const fromLinkedIn = (k: keyof Form | "city") => imported.has(k);
+
+  /** Puts everything read from LinkedIn into the form, keeping anything the applicant already typed for email and phone. */
+  function applyImport(p: LinkedInProfile) {
+    const country = p.country ? countryIn(p.country) : "";
+    const next: Partial<Form> = {
+      fullName: p.fullName, headline: p.headline, currentRole: p.currentRole, organization: p.organization,
+      yearsExperience: p.yearsExperience === null ? "" : String(p.yearsExperience), industry: p.industry, countryOfResidence: country,
+      languages: p.languages, qualifications: p.qualifications, specialistAreas: p.specialistAreas, topicsOffered: p.topicsOffered,
+      strengths: [], linkedinUrl: p.linkedinUrl, photo: p.photo, ...(form.email ? {} : { email: p.email }),
+    };
+    const filled = (Object.entries(next) as [keyof Form, Form[keyof Form]][]).filter(([, v]) => (Array.isArray(v) ? v.length > 0 : !!v));
+    setForm((f) => ({ ...f, ...Object.fromEntries(filled) }));
+    const keys = new Set<keyof Form | "city">(filled.map(([k]) => k).filter((k) => k !== "strengths"));
+    if (p.city) { setCity(p.city); keys.add("city"); }
+    setImported(keys);
+    if (country && !form.phone) { const code = countryCode(country); if (code && isSupportedCountry(code)) setPhoneIso(code); }
+    setShowErrors(false);
+  }
 
   function go(to: number) {
     setStep(to); setShowErrors(false); setError(null);
@@ -131,8 +159,9 @@ function ApplyForm() {
     try {
       // Fields the short form no longer asks for are derived, so the application record stays complete.
       const location = city.trim() ? `${city.trim()}, ${form.countryOfResidence}` : form.countryOfResidence;
+      const { photo, ...fields } = form;
       const body = {
-        ...form, linkedinUrl: withScheme(form.linkedinUrl.trim()), yearsExperience: Number(form.yearsExperience) || 0,
+        ...fields, ...(photo ? { photoImage: photo } : {}), linkedinUrl: withScheme(form.linkedinUrl.trim()), yearsExperience: Number(form.yearsExperience) || 0,
         professionalLocation: location,
         headline: update && form.headline ? form.headline : `${form.currentRole.trim()} at ${form.organization.trim()}`,
         preferredPricing: form.preferredPricing || "Standard rate",
@@ -293,8 +322,9 @@ function ApplyForm() {
             <div key={step} className="animate-rise space-y-6 px-6 py-8 sm:px-10">
               {step === 0 && (
                 <>
+                  {!update && <LinkedInImport onImport={applyImport} />}
                   <Grid2>
-                    <F label="Full name" error={errors.fullName}><input className="input" value={form.fullName} onChange={(e) => set("fullName", e.target.value)} autoComplete="name" placeholder="As you'd like it on your profile" /></F>
+                    <F label="Full name" error={errors.fullName} linkedIn={fromLinkedIn("fullName")}><input className="input" value={form.fullName} onChange={(e) => set("fullName", e.target.value)} autoComplete="name" placeholder="As you'd like it on your profile" /></F>
                     <F label="Email" error={errors.email} hint={update ? "Contact the team if this needs to change." : undefined}><input type="email" className="input disabled:bg-paper disabled:text-ink-soft" disabled={!!update} value={form.email} onChange={(e) => set("email", e.target.value)} autoComplete="email" placeholder="you@example.com" /></F>
                   </Grid2>
                   <Grid2>
@@ -303,36 +333,42 @@ function ApplyForm() {
                       <PhoneInput id="phone" value={form.phone} iso={phoneIso} onIso={setPhoneIso} invalid={!!errors.phone} onChange={(v) => set("phone", v)} />
                       <p className={`mt-1.5 text-xs ${errors.phone ? "text-rust" : "text-ink-soft"}`}>{errors.phone ?? "Only used to arrange your interview."}</p>
                     </div>
-                    <F label="LinkedIn profile" error={errors.linkedinUrl}><input className="input" value={form.linkedinUrl} onChange={(e) => set("linkedinUrl", e.target.value)} placeholder="linkedin.com/in/your-name" /></F>
+                    <F label="LinkedIn profile" error={errors.linkedinUrl} linkedIn={fromLinkedIn("linkedinUrl")}><input className="input" value={form.linkedinUrl} onChange={(e) => set("linkedinUrl", e.target.value)} placeholder="linkedin.com/in/your-name" /></F>
                   </Grid2>
                   <Grid2>
                     <div>
-                      <label htmlFor="country" className="mb-1.5 block text-sm font-medium text-ink">Country</label>
+                      <label htmlFor="country" className="mb-1.5 flex items-center gap-2 text-sm font-medium text-ink">Country{fromLinkedIn("countryOfResidence") && <LinkedInTag />}</label>
                       <CountrySelect id="country" value={form.countryOfResidence} invalid={!!errors.countryOfResidence} onChange={(c) => { set("countryOfResidence", c); if (!form.phone) { const code = countryCode(c); if (code && isSupportedCountry(code)) setPhoneIso(code); } }} />
                       {errors.countryOfResidence ? <p className="mt-1.5 text-xs text-rust">{errors.countryOfResidence}</p>
                         : <p className="mt-1.5 text-xs leading-relaxed text-ink-soft">{form.countryOfResidence ? listingNote(form.countryOfResidence) : "Decides whether you're listed as a local or international mentor."}</p>}
                     </div>
-                    <F label="City (optional)"><input className="input" value={city} maxLength={60} onChange={(e) => setCity(e.target.value)} autoComplete="address-level2" placeholder="e.g. Lahore" /></F>
+                    <F label="City (optional)" linkedIn={fromLinkedIn("city")}><input className="input" value={city} maxLength={60} onChange={(e) => { setCity(e.target.value); setImported((s) => { const n = new Set(s); n.delete("city"); return n; }); }} autoComplete="address-level2" placeholder="e.g. Lahore" /></F>
                   </Grid2>
+                  {!update && (
+                    <div>
+                      <p className="mb-2.5 flex items-center gap-2 text-sm font-medium text-ink">Profile photo (optional){fromLinkedIn("photo") && <LinkedInTag />}</p>
+                      <PhotoUpload name={form.fullName || "You"} src={form.photo} onChange={(v) => set("photo", v)} hint="Used on your mentor profile if you're approved. A clear, recent headshot works best." />
+                    </div>
+                  )}
                 </>
               )}
 
               {step === 1 && (
                 <>
                   <Grid2>
-                    <F label="Current role" error={errors.currentRole}><input className="input" value={form.currentRole} onChange={(e) => set("currentRole", e.target.value)} placeholder="e.g. Head of Product" /></F>
-                    <F label="Organisation" error={errors.organization}><input className="input" value={form.organization} onChange={(e) => set("organization", e.target.value)} placeholder="e.g. a Lahore-based fintech" /></F>
+                    <F label="Current role" error={errors.currentRole} linkedIn={fromLinkedIn("currentRole")}><input className="input" value={form.currentRole} onChange={(e) => set("currentRole", e.target.value)} placeholder="e.g. Head of Product" /></F>
+                    <F label="Organisation" error={errors.organization} linkedIn={fromLinkedIn("organization")}><input className="input" value={form.organization} onChange={(e) => set("organization", e.target.value)} placeholder="e.g. a Lahore-based fintech" /></F>
                   </Grid2>
                   <Grid2>
-                    <F label="Years of experience" error={errors.yearsExperience}><input type="number" inputMode="numeric" min={0} max={60} className="input" value={form.yearsExperience} onChange={(e) => set("yearsExperience", e.target.value)} placeholder="e.g. 8" /></F>
-                    <F label="Industry">
+                    <F label="Years of experience" error={errors.yearsExperience} linkedIn={fromLinkedIn("yearsExperience")}><input type="number" inputMode="numeric" min={0} max={60} className="input" value={form.yearsExperience} onChange={(e) => set("yearsExperience", e.target.value)} placeholder="e.g. 8" /></F>
+                    <F label="Industry" linkedIn={fromLinkedIn("industry")}>
                       <select className="input" value={form.industry} onChange={(e) => set("industry", e.target.value)}>
                         {INDUSTRIES.map((i) => <option key={i}>{i}</option>)}
                       </select>
                     </F>
                   </Grid2>
-                  <F label="Languages you can mentor in" error={errors.languages} hint="Press Enter or comma after each one."><TagInput value={form.languages} max={8} onChange={(v) => set("languages", v)} placeholder="e.g. English, Urdu" /></F>
-                  <F label="Qualifications (optional)" hint="Degrees or certifications. Shown on your profile."><input className="input" value={form.qualifications} maxLength={500} onChange={(e) => set("qualifications", e.target.value)} placeholder="e.g. BSc Computer Science, FAST-NUCES" /></F>
+                  <F label="Languages you can mentor in" error={errors.languages} linkedIn={fromLinkedIn("languages")} hint="Press Enter or comma after each one."><TagInput value={form.languages} max={8} onChange={(v) => set("languages", v)} placeholder="e.g. English, Urdu" /></F>
+                  <F label="Qualifications (optional)" linkedIn={fromLinkedIn("qualifications")} hint="Degrees or certifications. Shown on your profile."><input className="input" value={form.qualifications} maxLength={500} onChange={(e) => set("qualifications", e.target.value)} placeholder="e.g. BSc Computer Science, FAST-NUCES" /></F>
                 </>
               )}
 
@@ -461,10 +497,15 @@ function Grid2({ children }: { children: ReactNode }) {
   return <div className="grid gap-6 sm:grid-cols-2">{children}</div>;
 }
 
-function F({ label, hint, error, children }: { label: string; hint?: string; error?: string; children: ReactNode }) {
+/** Marks a field that was filled from the applicant's LinkedIn profile. */
+function LinkedInTag() {
+  return <span className="inline-flex items-center gap-1 rounded-full bg-sky px-2 py-0.5 text-[10px] font-medium text-[#0A66C2]"><svg width="9" height="9" viewBox="0 0 24 24" aria-hidden><path fill="currentColor" d="M20.45 20.45h-3.56v-5.57c0-1.33-.02-3.04-1.85-3.04-1.86 0-2.14 1.45-2.14 2.94v5.67H9.35V9h3.41v1.56h.05c.48-.9 1.64-1.85 3.37-1.85 3.6 0 4.27 2.37 4.27 5.46v6.28zM5.34 7.43a2.06 2.06 0 110-4.13 2.06 2.06 0 010 4.13zM7.12 20.45H3.56V9h3.56v11.45z" /></svg>From LinkedIn</span>;
+}
+
+function F({ label, hint, error, linkedIn, children }: { label: string; hint?: string; error?: string; linkedIn?: boolean; children: ReactNode }) {
   return (
     <label className={`block ${error ? "[&_.input]:border-rust/60" : ""}`}>
-      <span className="mb-1.5 block text-sm font-medium text-ink">{label}</span>
+      <span className="mb-1.5 flex items-center gap-2 text-sm font-medium text-ink">{label}{linkedIn && <LinkedInTag />}</span>
       {children}
       {error ? <span className="mt-1.5 block text-xs text-rust">{error}</span> : hint ? <span className="mt-1.5 block text-xs text-ink-soft">{hint}</span> : null}
     </label>
