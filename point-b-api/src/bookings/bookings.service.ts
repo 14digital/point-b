@@ -29,6 +29,7 @@ const NO_REMINDER = { OR: [{ reminderSentAt: null }, { reminderSentAt: { isSet: 
 
 const include = {
   slot: true,
+  course: { select: { id: true, slug: true, title: true, sessionsCount: true, sessionMinutes: true, weekdays: true, startTime: true, slots: { select: { id: true, sessionNumber: true, startAt: true, endAt: true, hostStartedAt: true }, orderBy: { startAt: 'asc' } } } },
   mentor: { select: { id: true, slug: true, title: true, photoUrl: true, user: { select: { name: true, email: true } } } },
   student: { select: { id: true, name: true, email: true } },
   review: true,
@@ -37,6 +38,15 @@ const include = {
 /** The in-app call page. Everyone, mentor and student, joins through it; access is decided server-side. */
 export const sessionUrl = (reference: string) => `${webUrl()}/session/${reference}`;
 type FullBooking = Prisma.BookingGetPayload<{ include: typeof include }>;
+/** Bookings that are a single session rather than a course enrolment. */
+const NOT_COURSE = { OR: [{ courseId: null }, { courseId: { isSet: false } }] } satisfies Prisma.BookingWhereInput;
+const UNREMINDED_SLOT = { OR: [{ reminderSentAt: null }, { reminderSentAt: { isSet: false } }] } satisfies Prisma.AvailabilitySlotWhereInput;
+/** The class of a course that is on now (the room is open from 10 minutes before to an hour after), or else the next one. */
+export function currentClass<T extends { startAt: Date; endAt: Date }>(classes: T[], now = Date.now()): { live: T | null; next: T | null } {
+  const live = classes.find((c) => now >= c.startAt.getTime() - 10 * 60_000 && now <= c.endAt.getTime() + 60 * 60_000) ?? null;
+  return { live, next: classes.find((c) => c.startAt.getTime() > now) ?? null };
+}
+const lastClass = (b: FullBooking) => b.course?.slots[b.course.slots.length - 1] ?? b.slot;
 
 @Injectable()
 export class BookingsService implements OnModuleInit, OnModuleDestroy {
@@ -58,11 +68,20 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
    */
   async closeFinished() {
     const now = Date.now();
-    const due = await this.prisma.booking.findMany({ where: { status: 'CONFIRMED', hostStartedAt: { isSet: true, not: null }, slot: { endAt: { lt: new Date(now - 24 * 3600_000) } } }, include, take: 100 });
+    const due = await this.prisma.booking.findMany({ where: { status: 'CONFIRMED', hostStartedAt: { isSet: true, not: null }, slot: { endAt: { lt: new Date(now - 24 * 3600_000) } }, ...NOT_COURSE }, include, take: 100 });
     for (const b of due) {
       const claimed = await this.prisma.booking.updateMany({ where: { id: b.id, status: 'CONFIRMED' }, data: { status: 'COMPLETED', completedAt: new Date() } });
       // An email about a session from weeks ago would only confuse people.
       if (claimed.count && !b.review && b.slot.endAt.getTime() > now - REPORT_WINDOW_DAYS * 86400_000) await this.askForFeedback(b);
+    }
+    // Course enrolments finish a day after the final class.
+    const finished = await this.prisma.course.findMany({ where: { status: { in: ['LIVE', 'CLOSED'] }, bookings: { some: { status: 'CONFIRMED' } } }, select: { id: true, slots: { select: { endAt: true }, orderBy: { startAt: 'desc' }, take: 1 } } });
+    for (const c of finished.filter((c) => c.slots[0] && c.slots[0].endAt.getTime() < now - 24 * 3600_000)) {
+      const open = await this.prisma.booking.findMany({ where: { courseId: c.id, status: 'CONFIRMED' }, include, take: 500 });
+      for (const b of open) {
+        const claimed = await this.prisma.booking.updateMany({ where: { id: b.id, status: 'CONFIRMED' }, data: { status: 'COMPLETED', completedAt: new Date() } });
+        if (claimed.count && !b.review && lastClass(b).endAt.getTime() > now - REPORT_WINDOW_DAYS * 86400_000) await this.askForFeedback(b);
+      }
     }
   }
 
@@ -71,7 +90,8 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     const now = new Date();
     const soon = await this.prisma.availabilitySlot.findMany({ where: { startAt: { gt: now, lte: new Date(now.getTime() + REMINDER_MINUTES * 60_000) } }, select: { id: true } });
     if (soon.length === 0) return;
-    const due = await this.prisma.booking.findMany({ where: { status: 'CONFIRMED', ...NO_REMINDER, slotId: { in: soon.map((x) => x.id) } }, include });
+    await this.sendClassReminders(now);
+    const due = await this.prisma.booking.findMany({ where: { status: 'CONFIRMED', ...NO_REMINDER, ...NOT_COURSE, slotId: { in: soon.map((x) => x.id) } }, include });
     for (const b of due) {
       // Only the instance that flips reminderSentAt null -> set sends the emails.
       const claimed = await this.prisma.booking.updateMany({ where: { id: b.id, ...NO_REMINDER }, data: { reminderSentAt: now } });
@@ -83,6 +103,24 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
       const cta = { label: 'Join your session', url: link };
       await this.notify.send(b.student.email, `Your session starts in ${mins} minutes`, `Hi ${b.student.name.split(' ')[0]},\n\nYour session with ${b.mentor.user.name} is about to begin. Use the button below to join. Your mentor will be in the room.`, b.student.id, { cta, facts: facts(['Mentor', b.mentor.user.name]), whatsapp: { alert: 'sessionReminder', params: [b.student.name.split(' ')[0], b.mentor.user.name, String(mins), link] } });
       await this.notify.send(b.mentor.user.email, `Your session starts in ${mins} minutes`, `Hi ${b.mentor.user.name.split(' ')[0]},\n\nYour session with ${b.student.name} is about to begin. You are the host: open the room first and your mentee will be let in.`, mentor?.userId, { cta, facts: [...facts(['Student', b.student.name]), ['Agenda', b.agenda]] });
+    }
+  }
+
+  /** Before each class of a course: one reminder to every enrolled learner and to the mentor. Claimed per class. */
+  private async sendClassReminders(now: Date) {
+    const classes = await this.prisma.availabilitySlot.findMany({ where: { courseId: { not: null }, startAt: { gt: now, lte: new Date(now.getTime() + REMINDER_MINUTES * 60_000) }, ...UNREMINDED_SLOT }, include: { course: { select: { id: true, title: true, sessionsCount: true, mentor: { select: { userId: true, user: { select: { name: true, email: true } } } } } } } });
+    for (const k of classes) {
+      if (!k.course) continue;
+      const claimed = await this.prisma.availabilitySlot.updateMany({ where: { id: k.id, ...UNREMINDED_SLOT }, data: { reminderSentAt: now } });
+      if (!claimed.count) continue;
+      const mins = Math.max(1, Math.round((k.startAt.getTime() - now.getTime()) / 60_000));
+      const label = `Class ${k.sessionNumber ?? 1} of ${k.course.sessionsCount}`;
+      const learners = await this.prisma.booking.findMany({ where: { courseId: k.course.id, status: 'CONFIRMED' }, select: { reference: true, student: { select: { id: true, name: true, email: true } } } });
+      for (const l of learners) {
+        const link = sessionUrl(l.reference);
+        await this.notify.send(l.student.email, `${k.course.title} starts in ${mins} minutes`, `Hi ${l.student.name.split(' ')[0]},\n\nYour class with ${k.course.mentor.user.name} is about to begin. Use the button below to join.`, l.student.id, { cta: { label: 'Join the class', url: link }, facts: [['Course', k.course.title], ['Class', label], ['Starts', emailDate(k.startAt)]], whatsapp: { alert: 'sessionReminder', params: [l.student.name.split(' ')[0], k.course.mentor.user.name, String(mins), link] } });
+      }
+      await this.notify.send(k.course.mentor.user.email, `${k.course.title} starts in ${mins} minutes`, `Hi ${k.course.mentor.user.name.split(' ')[0]},\n\nYour class is about to begin, with ${learners.length} learner${learners.length === 1 ? '' : 's'} enrolled. You are the host: open the room first and your learners will be let in.`, k.course.mentor.userId, { cta: { label: 'Open your dashboard', url: `${webUrl()}/dashboard/mentor?tab=courses` }, facts: [['Course', k.course.title], ['Class', label], ['Starts', emailDate(k.startAt)]] });
     }
   }
 
@@ -105,7 +143,19 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
       awaitingVerification: b.status === 'PENDING_PAYMENT' && !!b.awaitingVerification,
       cancelReason: b.cancelReason, createdAt: b.createdAt,
       rescheduleCount: b.rescheduleCount, rescheduledAt: b.rescheduledAt,
-      rescheduleBy: b.status === 'CONFIRMED' ? new Date(b.slot.startAt.getTime() - noticeHours * 3600_000) : null,
+      rescheduleBy: b.status === 'CONFIRMED' && !b.course ? new Date(b.slot.startAt.getTime() - noticeHours * 3600_000) : null,
+      cancelBy: b.status === 'CONFIRMED' ? new Date(b.slot.startAt.getTime() - noticeHours * 3600_000) : null,
+      course: b.course ? (() => {
+        const { live, next } = currentClass(b.course.slots);
+        const last = b.course.slots[b.course.slots.length - 1];
+        return {
+          id: b.course.id, slug: b.course.slug, title: b.course.title, sessionsCount: b.course.sessionsCount,
+          classes: b.course.slots.map((k) => ({ number: k.sessionNumber ?? 1, startAt: k.startAt, endAt: k.endAt })),
+          liveClass: live ? { number: live.sessionNumber ?? 1, startAt: live.startAt, endAt: live.endAt } : null,
+          nextClass: next ? { number: next.sessionNumber ?? 1, startAt: next.startAt, endAt: next.endAt } : null,
+          endsAt: last?.endAt ?? b.slot.endAt,
+        };
+      })() : null,
     };
   }
 
@@ -287,6 +337,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
    */
   async call(user: AuthUser, reference: string) {
     const b = await this.load(user, reference);
+    if (b.course) return this.courseCall(user, b);
     const base = { reference: b.reference, mentorName: b.mentor.user.name, startAt: b.slot.startAt, endAt: b.slot.endAt, sessionKind: b.sessionKind, canReportMissing: b.studentId === user.id && this.mentorMissing(b), mentorReport: b.studentId === user.id ? b.mentorReportStatus ?? null : null };
     if (b.status !== 'CONFIRMED' && b.status !== 'COMPLETED') return { ...base, state: 'not_confirmed' as const };
     const now = Date.now();
@@ -307,6 +358,84 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     return { ...base, state: 'ready' as const, url, token, isHost };
   }
 
+  /**
+   * The call page for a course: the room of whichever class is on now. Each class has its own room, which every enrolled
+   * learner shares; learners wait until the mentor has opened it.
+   */
+  private async courseCall(user: AuthUser, b: FullBooking) {
+    const course = b.course!;
+    const { live, next } = currentClass(course.slots);
+    const k = live ?? next ?? course.slots[course.slots.length - 1];
+    const base = { reference: b.reference, mentorName: b.mentor.user.name, startAt: k.startAt, endAt: k.endAt, sessionKind: b.sessionKind, canReportMissing: false, mentorReport: null, course: { title: course.title, classNumber: k.sessionNumber ?? 1, sessionsCount: course.sessionsCount } };
+    if (b.status !== 'CONFIRMED' && b.status !== 'COMPLETED') return { ...base, state: 'not_confirmed' as const };
+    if (!live) return { ...base, state: next ? 'too_early' as const : 'ended' as const };
+    if (!this.daily.enabled()) throw new ServiceUnavailableException('Video calling is not configured yet. Please contact support.');
+    const mentorUserId = (await this.prisma.mentorProfile.findUniqueOrThrow({ where: { id: b.mentorId }, select: { userId: true } })).userId;
+    const isHost = user.id === mentorUserId || user.role === 'ADMIN';
+    const room = 'pb-' + live.id.toLowerCase();
+    if (!isHost && (await this.daily.presence(room, mentorUserId)) === 'no') return { ...base, state: 'waiting_for_host' as const };
+    // Room for everyone enrolled plus the mentor and a few of the team; Daily rooms take up to 200 people.
+    const enrolled = await this.prisma.booking.count({ where: { courseId: course.id, status: { in: ['CONFIRMED', 'COMPLETED'] } } });
+    const url = await this.daily.ensureRoom(room, live.endAt, Math.min(200, enrolled + 5));
+    if (isHost && !live.hostStartedAt) {
+      await this.prisma.availabilitySlot.updateMany({ where: { id: live.id, hostStartedAt: { isSet: false } }, data: { hostStartedAt: new Date() } });
+      await this.prisma.booking.updateMany({ where: { courseId: course.id, hostStartedAt: { isSet: false } }, data: { hostStartedAt: new Date() } });
+    }
+    const token = await this.daily.token(room, { userId: user.id, userName: user.name, owner: isHost, startAt: live.startAt, endAt: live.endAt });
+    if (user.role !== 'ADMIN') this.activity.record(user.id, 'session_joined', { reference: b.reference, label: `${course.title}, class ${live.sessionNumber ?? 1}` });
+    return { ...base, startAt: live.startAt, endAt: live.endAt, course: { ...base.course, classNumber: live.sessionNumber ?? 1 }, state: 'ready' as const, url, token, isHost };
+  }
+
+  /**
+   * Enrols a learner on a live course: holds a seat (counted on the course's first class) and opens a payment, exactly
+   * like a booking. Price is the course's, in rupees. Open until the final class starts.
+   */
+  async enrol(user: AuthUser, courseId: string, expectedPriceMinor?: number) {
+    await this.releaseExpiredHolds();
+    if (!user.emailVerified) throw new ForbiddenException('Please confirm your email address before enrolling.');
+    const student = await this.prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    if (student.dateOfBirth) {
+      const age = (Date.now() - student.dateOfBirth.getTime()) / (365.25 * 86400_000);
+      if (age < 18 && !student.guardianConsent) throw new ForbiddenException('A parent or guardian must give consent before anyone under 18 can enrol. We have emailed them.');
+    }
+    const course = /^[a-f0-9]{24}$/i.test(courseId) ? await this.prisma.course.findUnique({ where: { id: courseId }, include: { mentor: true, slots: { orderBy: { startAt: 'asc' } } } }) : null;
+    if (!course || course.status !== 'LIVE' || course.mentor.status !== 'ACTIVE' || !course.slots.length || course.priceMinor == null) throw new NotFoundException('This course isn’t open for enrolment');
+    const first = course.slots[0], last = course.slots[course.slots.length - 1];
+    if (last.startAt.getTime() <= Date.now()) throw new BadRequestException('The final class of this course has already started, so it’s closed for enrolment.');
+    if (course.mentor.userId === user.id) throw new BadRequestException('You cannot enrol on your own course');
+    if (expectedPriceMinor !== undefined && expectedPriceMinor !== course.priceMinor) throw new ConflictException('The price of this course has changed. Please refresh the page to see the latest price.');
+    const already = await this.prisma.booking.findFirst({ where: { courseId: course.id, studentId: user.id, status: { in: ['PENDING_PAYMENT', 'CONFIRMED', 'COMPLETED'] } }, select: { reference: true, status: true } });
+    if (already) {
+      // Coming back to a payment they started: carry on with it.
+      if (already.status === 'PENDING_PAYMENT') return this.get(user, already.reference);
+      throw new ConflictException('You’re already enrolled on this course. You’ll find it on your dashboard.');
+    }
+    const priceMinor = course.priceMinor;
+    const reference = 'PBC-' + randomBytes(4).toString('hex').toUpperCase();
+    try {
+      const booking = await this.withWriteConflictRetry(() => this.prisma.$transaction(async (tx) => {
+        const claimed = await tx.availabilitySlot.updateMany({ where: { id: first.id, isBooked: false, seatsTaken: { lt: first.capacity } }, data: { seatsTaken: { increment: 1 } } });
+        if (claimed.count === 0) throw new ConflictException('Sorry, this course has just filled up.');
+        await tx.availabilitySlot.updateMany({ where: { id: first.id, seatsTaken: { gte: first.capacity } }, data: { isBooked: true } });
+        const b = await tx.booking.create({
+          data: {
+            reference, studentId: user.id, mentorId: course.mentorId, slotId: first.id, courseId: course.id, sessionKind: 'GROUP',
+            agenda: course.title, currentSituation: '', usefulOutcome: '', priceMinor, currency: 'PKR',
+            // Learner pays POINT B; the mentor's fixed course fee is settled separately (not a % of this booking).
+            listPriceMinor: priceMinor, discountMinor: 0, repeatStudent: false, commissionPercent: null, platformFeeMinor: null,
+          },
+        });
+        await tx.payment.create({ data: { bookingId: b.id, provider: this.stripe.enabled() ? 'stripe' : (process.env.PAYMENTS_PROVIDER ?? 'mock'), providerRef: 'pay_' + randomBytes(10).toString('hex'), amountMinor: priceMinor, currency: 'PKR' } });
+        return b;
+      }));
+      this.activity.record(user.id, 'booking_held', { reference: booking.reference, label: course.title });
+      return this.get(user, booking.reference);
+    } catch (e) {
+      if ((e as { code?: string }).code === 'P2034') throw new ConflictException('Sorry, this course has just filled up.');
+      throw e;
+    }
+  }
+
   /** Called by the payments module once the provider confirms the charge. Idempotent. */
   async confirmPaid(bookingId: string) {
     const b = await this.prisma.booking.findUniqueOrThrow({ where: { id: bookingId }, include });
@@ -318,9 +447,15 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     await this.prisma.booking.update({ where: { id: b.id }, data: { status: 'CONFIRMED', meetingLink: sessionUrl(b.reference) } });
     this.activity.record(b.studentId, 'payment_succeeded', { reference: b.reference, label: b.mentor.user.name });
     if (b.promoCodeId) await this.prisma.promoCode.updateMany({ where: { id: b.promoCodeId, usedAt: null }, data: { usedAt: new Date(), bookingId: b.id } });
-    const when = b.slot.startAt.toISOString();
     const mentorUserId = (await this.prisma.mentorProfile.findUnique({ where: { id: b.mentorId }, select: { userId: true } }))?.userId;
     const link = sessionUrl(b.reference);
+    if (b.course) {
+      const { next } = currentClass(b.course.slots);
+      const facts: [string, string][] = [['Course', b.course.title], ['Taught by', b.mentor.user.name], ['Classes', `${b.course.sessionsCount}, ${b.course.sessionMinutes} minutes each`], ...(next ? [['Next class', emailDate(next.startAt)] as [string, string]] : []), ['Reference', b.reference]];
+      await this.notify.send(b.student.email, `You’re enrolled: ${b.course.title}`, `Hi ${b.student.name.split(' ')[0]},\n\nThank you. Your payment has been received and your place on ${b.course.title} with ${b.mentor.user.name} is confirmed.\n\nEvery class runs live online, in your browser. Join from your dashboard when it is time; we will email you a reminder 30 minutes before each class.`, b.student.id, { cta: { label: 'View your course', url: link }, facts, whatsapp: { alert: 'bookingConfirmed', params: [b.student.name.split(' ')[0], b.mentor.user.name, next?.startAt ?? b.slot.startAt, 'Course', b.reference, link] } });
+      await this.notify.send(b.mentor.user.email, `New learner on ${b.course.title}`, `Hi ${b.mentor.user.name.split(' ')[0]},\n\n${b.student.name} has enrolled on your course.`, mentorUserId, { emailOnly: true, cta: { label: 'Open your dashboard', url: `${webUrl()}/dashboard/mentor?tab=courses` }, facts: [['Course', b.course.title], ['Learner', b.student.name]] });
+      return;
+    }
     const kind = b.sessionKind === 'GROUP' ? 'Group session' : '1:1 session';
     const facts = (who: [string, string]): [string, string][] => [who, ['Date and time', emailDate(b.slot.startAt)], ['Type', kind], ['Agenda', b.agenda], ['Reference', b.reference]];
     const cta = { label: 'View your session', url: link };
@@ -335,6 +470,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
   async reschedule(user: AuthUser, reference: string, newSlotId: string) {
     const b = await this.load(user, reference);
     if (b.studentId !== user.id) throw new ForbiddenException('Only the person who booked can reschedule');
+    if (b.course) throw new BadRequestException('Course classes run on a fixed schedule, so they can’t be moved.');
     if (b.status !== 'CONFIRMED') throw new BadRequestException('Only confirmed sessions can be rescheduled');
     const hours = await this.noticeHours();
     if (b.slot.startAt.getTime() - Date.now() < hours * 3600_000) {
@@ -385,7 +521,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     if (user.role !== 'ADMIN' && !isStudent) throw new ForbiddenException('Only the person who booked can cancel this session');
     if (isStudent && b.status === 'CONFIRMED') {
       const hours = await this.noticeHours();
-      if (b.slot.startAt.getTime() - Date.now() < hours * 3600_000) throw new BadRequestException(`Sessions can be cancelled for a full refund up to ${noticeLabel(hours)} before the start time, so this one can no longer be cancelled or refunded.`);
+      if (b.slot.startAt.getTime() - Date.now() < hours * 3600_000) throw new BadRequestException(b.course ? `A course can be cancelled for a full refund up to ${noticeLabel(hours)} before its first class, so this one can no longer be cancelled or refunded.` : `Sessions can be cancelled for a full refund up to ${noticeLabel(hours)} before the start time, so this one can no longer be cancelled or refunded.`);
     }
     // Only the request that flips the status goes on, so a double click can never credit the balance twice.
     const claimed = await this.prisma.booking.updateMany({ where: { id: b.id, status: b.status }, data: { status: 'CANCELLED', cancelledAt: new Date(), cancelReason: dto.reason ?? (isStudent ? 'Cancelled by the person who booked' : 'Cancelled by mentor/admin') } });
@@ -403,6 +539,12 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     const creditText = money(b.priceMinor, b.currency);
     if (refunded) await this.wallet.add(b.studentId, b.currency, b.priceMinor, 'CANCELLATION', { bookingId: b.id, reference: b.reference, note: dto.reason ?? 'Session cancelled' });
     else await this.wallet.returnUnused(b);
+    if (b.course) {
+      const what = `your place on ${b.course.title}`;
+      await this.notify.send(b.student.email, 'Your enrolment has been cancelled', `Hi ${b.student.name.split(' ')[0]},\n\n${what[0].toUpperCase() + what.slice(1)} has been cancelled${isStudent ? '' : ' by our team'}.${refunded ? ` The full ${creditText} has been added to your POINT B balance, and you can use it for any future course.` : ' You were not charged.'}`, b.student.id, { cta: { label: 'See all courses', url: `${webUrl()}/courses` }, facts: [['Course', b.course.title], ['Reference', b.reference]] });
+      this.activity.record(b.studentId, 'booking_cancelled', { reference: b.reference, label: isStudent ? 'By the learner' : 'By the team' });
+      return this.get(user, reference);
+    }
     const by = isStudent ? 'the student' : 'your mentor or our team';
     const cf = (who: [string, string]): [string, string][] => [who, ['Was scheduled for', emailDate(b.slot.startAt)], ['Reference', b.reference]];
     await this.notify.send(b.student.email, 'Your booking has been cancelled', `Hi ${b.student.name.split(' ')[0]},\n\nYour session with ${b.mentor.user.name} has been cancelled${isStudent ? '' : ` by ${by}`}.${refunded ? ` The full ${creditText} has been added to your POINT B balance, and you can use it at checkout for any future session.` : ' You were not charged.'}\n\nYou are welcome to book another time whenever suits you.`, b.student.id, { cta: { label: 'Find another time', url: `${webUrl()}/mentors/${b.mentor.slug}` }, facts: cf(['Mentor', b.mentor.user.name]), whatsapp: { alert: 'bookingCancelled', params: [b.student.name.split(' ')[0], b.mentor.user.name, b.slot.startAt, refunded ? `${creditText} has been added to your POINT B balance for your next session.` : 'You were not charged.', b.reference, `${webUrl()}/mentors/${b.mentor.slug}`] } });
@@ -416,6 +558,7 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     const mentorUserId = (await this.prisma.mentorProfile.findUniqueOrThrow({ where: { id: b.mentorId } })).userId;
     if (user.role !== 'ADMIN' && mentorUserId !== user.id) throw new ForbiddenException('Only the mentor can complete this session');
     if (b.status !== 'CONFIRMED') throw new BadRequestException('Only confirmed sessions can be completed');
+    if (b.course) throw new BadRequestException('Courses are completed automatically after the final class.');
     // Allowed from the scheduled start, or earlier if the mentor has already opened the call room.
     if (b.slot.startAt.getTime() > Date.now() && !b.hostStartedAt) throw new BadRequestException('This session has not started yet');
     // A student can only have missed a session the mentor was actually in.
@@ -426,12 +569,17 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async askForFeedback(b: FullBooking) {
+    if (b.course) {
+      await this.notify.send(b.student.email, `How was ${b.course.title}?`, `Hi ${b.student.name.split(' ')[0]},\n\nThank you for taking ${b.course.title} with ${b.mentor.user.name}. Your feedback takes less than a minute and helps us plan the next courses.`, b.student.id, { cta: { label: 'Leave your feedback', url: `${webUrl()}/dashboard/student` }, facts: [['Course', b.course.title], ['Taught by', b.mentor.user.name], ['Reference', b.reference]] });
+      return;
+    }
     await this.notify.send(b.student.email, `How was your session with ${b.mentor.user.name}?`, `Hi ${b.student.name.split(' ')[0]},\n\nThank you for your session with ${b.mentor.user.name}. Your feedback takes less than a minute and helps other students and professionals choose the right mentor, and it helps your mentor improve.\n\nPlease rate your session and share a few words about how it went.`, b.student.id, { cta: { label: 'Leave your feedback', url: `${webUrl()}/dashboard/student` }, whatsapp: { alert: 'feedbackRequest', params: [b.student.name.split(' ')[0], b.mentor.user.name, b.slot.startAt, `${webUrl()}/dashboard/student`] }, facts: [['Mentor', b.mentor.user.name], ['Session', emailDate(b.slot.startAt)], ['Reference', b.reference]] });
   }
 
   /** The mentor never opened the room, the session should have started, and it's recent enough to report. */
   private mentorMissing(b: FullBooking) {
     if (b.status !== 'CONFIRMED' && b.status !== 'COMPLETED') return false;
+    if (b.course) return false; // a missed class is raised with support, not refunded per learner
     if (b.hostStartedAt || b.mentorReportStatus) return false;
     const now = Date.now();
     return now >= b.slot.startAt.getTime() + REPORT_AFTER_MINUTES * 60_000 && now <= b.slot.endAt.getTime() + REPORT_WINDOW_DAYS * 86400_000;
@@ -490,6 +638,8 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     if (b.status === 'COMPLETED') return true;
     if (b.status !== 'CONFIRMED') return false;
     const now = Date.now();
+    // A course can be reviewed once its final class has started.
+    if (b.course) return lastClass(b).startAt.getTime() <= now;
     return b.slot.endAt.getTime() <= now || (!!b.hostStartedAt && b.slot.startAt.getTime() <= now);
   }
 

@@ -9,10 +9,16 @@ import { formatMoney, currencyLabel } from "@/lib/format";
 import type { Currency, Level } from "@/lib/types";
 
 interface Tally { sessions: number; grossMinor: number; feeMinor: number | null; payoutMinor: number | null }
+export interface CourseRevenueRow {
+  id: string; title: string; mentorId: string; mentorName: string;
+  enrolments: number; grossMinor: number; mentorFeeMinor: number; companyMinor: number; feePaid: boolean; feePaidAt: string | null;
+}
 export interface FinanceSummary {
   currency: Currency; grossMinor: number; sessions: number;
   refundedMinor: number; refundedCount: number; unpaidCancelledMinor: number; unpaidCancelledCount: number;
   platformRevenueMinor: number | null; mentorPayoutsMinor: number | null; payoutsPaidMinor: number | null; payoutsDueMinor: number | null; listValueMinor: number; discountsMinor: number; repeatSessions: number;
+  sessionCount?: number; courseEnrolmentCount?: number; courseGrossMinor?: number; courseMentorFeesMinor?: number; courseCompanyMinor?: number;
+  courses?: CourseRevenueRow[];
   tiers: (Tally & { level: Level; currentPercent: number | null; rates: (Tally & { returning: boolean; percent: number | null })[] })[];
   kinds: (Tally & { kind: "ONE_TO_ONE" | "GROUP" })[];
   methods: (Tally & { method: string })[];
@@ -32,6 +38,24 @@ export function FinanceBreakdown({ f, period, query, repeatPercent, onChanged, h
   const [open, setOpen] = useState<Section | null>(null);
   const money = (v: number | null) => (v == null ? NOT_SET : formatMoney(v, f.currency));
   const share = f.platformRevenueMinor == null ? 0 : percentOf(f.platformRevenueMinor, f.grossMinor);
+  const courseCount = f.courses?.length ?? 0;
+  const sessionCount = f.sessionCount ?? 0;
+  const courseLed = courseCount > 0 && sessionCount === 0;
+  const revenueNote = f.platformRevenueMinor == null || f.grossMinor <= 0
+    ? undefined
+    : courseLed
+      ? "Gross − mentor course fees"
+      : courseCount > 0
+        ? "After mentor payouts"
+        : `${shortPercent(share)} of gross`;
+  const revenueTotalNote = f.grossMinor > 0 && f.platformRevenueMinor != null
+    ? (courseLed
+      ? `${money(f.grossMinor)} gross − ${money(f.courseMentorFeesMinor ?? 0)} mentor fees`
+      : courseCount > 0
+        ? `After mentor payouts · ${money(f.grossMinor)} gross`
+        : `${shortPercent(share)} of ${money(f.grossMinor)} gross`)
+    : undefined;
+
   return (
     <Panel className="flex flex-col">
       <span className={`self-start rounded-full px-3 py-1.5 text-xs font-medium text-ink ${f.currency === "PKR" ? "bg-mint" : f.currency === "GBP" ? "bg-sky" : "bg-lilac"}`}>{currencyLabel(f.currency)}</span>
@@ -40,7 +64,7 @@ export function FinanceBreakdown({ f, period, query, repeatPercent, onChanged, h
         <span className="min-w-0">
           <span className="block text-sm text-ink-soft">Gross booking value</span>
           <span className="block font-display text-5xl leading-tight text-ink tabular-nums">{money(f.grossMinor)}</span>
-          <span className="block text-xs text-ink-soft">{plural(f.sessions, "paid session")}</span>
+          <span className="block text-xs text-ink-soft">{plural(f.sessions, "paid booking")}</span>
         </span>
         <span className="mb-1 inline-flex shrink-0 items-center gap-1 text-xs font-medium text-ink-soft transition-colors group-hover:text-ink">View<Chevron /></span>
       </button>
@@ -49,13 +73,13 @@ export function FinanceBreakdown({ f, period, query, repeatPercent, onChanged, h
 
       {f.platformRevenueMinor != null && f.grossMinor > 0 && (
         <div className="mt-5 flex h-2 gap-0.5 overflow-hidden rounded-full" aria-hidden>
-          <span className="h-full rounded-l-full bg-brass" style={{ width: `${share}%` }} />
+          <span className="h-full rounded-l-full bg-brass" style={{ width: `${Math.max(0, Math.min(100, share))}%` }} />
           <span className="h-full flex-1 rounded-r-full bg-ink/15" />
         </div>
       )}
 
       <div className="mt-4 divide-y divide-line">
-        <OpenRow label="Company revenue" dot="bg-brass" note={f.platformRevenueMinor != null && f.grossMinor > 0 ? `${shortPercent(share)} of gross` : undefined} value={money(f.platformRevenueMinor)} onClick={() => setOpen("revenue")} />
+        <OpenRow label="Company revenue" dot="bg-brass" note={revenueNote} value={money(f.platformRevenueMinor)} onClick={() => setOpen("revenue")} />
         <OpenRow label="Mentor payouts due" dot="bg-ink/25" note={f.payoutsPaidMinor ? `${money(f.payoutsPaidMinor)} already paid` : f.mentors.length ? plural(f.mentors.length, "mentor") : undefined} value={money(f.payoutsDueMinor)} onClick={() => setOpen("payouts")} />
       </div>
 
@@ -67,8 +91,8 @@ export function FinanceBreakdown({ f, period, query, repeatPercent, onChanged, h
         <Stat label="Cancelled before payment" value={money(f.unpaidCancelledMinor)} note={`${plural(f.unpaidCancelledCount, "booking")}, nothing received`} />
       </dl>
 
-      {open === "gross" && <FinanceModal label="Gross booking value" eyebrow={`${currencyLabel(f.currency)} · ${period}`} title="Gross booking value" total={money(f.grossMinor)} totalNote={plural(f.sessions, "paid session")} onClose={() => setOpen(null)}><GrossDetail f={f} /></FinanceModal>}
-      {open === "revenue" && <FinanceModal label="Company revenue" eyebrow={`${currencyLabel(f.currency)} · ${period}`} title="Company revenue" total={money(f.platformRevenueMinor)} totalNote={f.grossMinor > 0 && f.platformRevenueMinor != null ? `${shortPercent(share)} of ${money(f.grossMinor)} gross` : undefined} onClose={() => setOpen(null)}><RevenueDetail f={f} repeatPercent={repeatPercent} /></FinanceModal>}
+      {open === "gross" && <FinanceModal label="Gross booking value" eyebrow={`${currencyLabel(f.currency)} · ${period}`} title="Gross booking value" total={money(f.grossMinor)} totalNote={plural(f.sessions, "paid booking")} onClose={() => setOpen(null)}><GrossDetail f={f} /></FinanceModal>}
+      {open === "revenue" && <FinanceModal label="Company revenue" eyebrow={`${currencyLabel(f.currency)} · ${period}`} title="Company revenue" total={money(f.platformRevenueMinor)} totalNote={revenueTotalNote} onClose={() => setOpen(null)}><RevenueDetail f={f} repeatPercent={repeatPercent} /></FinanceModal>}
       {open === "payouts" && <MentorPayoutsModal currency={f.currency} period={period} query={query} mentors={f.mentors} grossMinor={f.grossMinor} revenueMinor={f.platformRevenueMinor} payoutMinor={f.mentorPayoutsMinor} paidMinor={f.payoutsPaidMinor} dueMinor={f.payoutsDueMinor} onChanged={onChanged} onClose={() => setOpen(null)} />}
     </Panel>
   );
@@ -101,7 +125,7 @@ function ShareList({ rows, total, currency }: { rows: { key: string; label: stri
       {rows.map(({ key, label, t }) => (
         <li key={key} className={t.sessions ? "" : "text-ink-soft"}>
           <div className="flex items-baseline justify-between gap-4 text-sm">
-            <span className={t.sessions ? "text-ink" : ""}>{label}<span className="ml-2 text-xs text-ink-soft">{plural(t.sessions, "session")}</span></span>
+            <span className={t.sessions ? "text-ink" : ""}>{label}<span className="ml-2 text-xs text-ink-soft">{plural(t.sessions, "booking")}</span></span>
             <span className="whitespace-nowrap tabular-nums">{formatMoney(t.grossMinor, currency)}</span>
           </div>
           <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-paper-dim" aria-hidden><span className="block h-full rounded-full bg-ink/70" style={{ width: `${percentOf(t.grossMinor, total)}%` }} /></div>
@@ -113,7 +137,7 @@ function ShareList({ rows, total, currency }: { rows: { key: string; label: stri
 
 function GrossDetail({ f }: { f: FinanceSummary }) {
   const money = (v: number) => formatMoney(v, f.currency);
-  if (!f.sessions) return <Empty>No paid sessions in this period.</Empty>;
+  if (!f.sessions) return <Empty>No paid bookings in this period.</Empty>;
   return (
     <>
       <section>
@@ -122,7 +146,7 @@ function GrossDetail({ f }: { f: FinanceSummary }) {
       </section>
       <section>
         <SectionTitle>By session type</SectionTitle>
-        <ShareList currency={f.currency} total={f.grossMinor} rows={f.kinds.map((k) => ({ key: k.kind, label: k.kind === "GROUP" ? "Group sessions" : "1:1 sessions", t: k }))} />
+        <ShareList currency={f.currency} total={f.grossMinor} rows={f.kinds.map((k) => ({ key: k.kind, label: k.kind === "GROUP" ? "Courses / group" : "1:1 sessions", t: k }))} />
       </section>
       <section>
         <SectionTitle>By payment method</SectionTitle>
@@ -134,34 +158,72 @@ function GrossDetail({ f }: { f: FinanceSummary }) {
 
 function RevenueDetail({ f, repeatPercent }: { f: FinanceSummary; repeatPercent: number }) {
   const money = (v: number | null) => (v == null ? NOT_SET : formatMoney(v, f.currency));
+  const courses = f.courses ?? [];
+  const sessionTiers = f.tiers.filter((t) => t.sessions > 0);
+  const showTiers = (f.sessionCount ?? 0) > 0;
   return (
-    <section>
-      <SectionTitle>By tier</SectionTitle>
-      <ul className="space-y-3">
-        {f.tiers.map((t) => (
-          <li key={t.level} className="rounded-2xl border border-line p-4">
-            <div className="flex items-start justify-between gap-4">
-              <div className="min-w-0">
-                <p className="text-sm font-medium text-ink">{LEVEL_LABEL[t.level]}</p>
-                <p className="mt-0.5 text-xs text-ink-soft">{t.currentPercent == null ? "No commission set" : `${t.currentPercent}% commission`}{t.sessions ? ` · ${plural(t.sessions, "session")} · ${money(t.grossMinor)} gross` : " · No sessions"}</p>
-              </div>
-              <p className={`whitespace-nowrap font-display text-2xl leading-none tabular-nums ${t.sessions ? "text-ink" : "text-ink-soft"}`}>{money(t.feeMinor)}</p>
-            </div>
-            {t.rates.length > 0 && (
-              <ul className="mt-3 space-y-1.5 border-t border-line pt-3 text-xs text-ink-soft">
-                {t.rates.map((r) => (
-                  <li key={`${r.returning}-${r.percent}`} className="flex justify-between gap-4">
-                    <span>{r.returning ? "Returning mentees" : "Standard rate"} at {r.percent == null ? "no set rate" : `${r.percent}%`}, on {money(r.grossMinor)}</span>
-                    <span className="whitespace-nowrap text-ink tabular-nums">{money(r.feeMinor)}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </li>
-        ))}
-      </ul>
-      <p className="mt-4 text-xs leading-relaxed text-ink-soft">Returning mentees are charged {repeatPercent}% on 1:1 sessions, unless their mentor&apos;s tier is already lower. A booking keeps the rate it was made at; bookings from before rates were saved use today&apos;s tier rate.</p>
-    </section>
+    <>
+      <section>
+        <SectionTitle>How it adds up</SectionTitle>
+        <Sum lines={[
+          ["Gross booking value", money(f.grossMinor)],
+          ["Mentor payouts (fixed course fees + 1:1 share)", f.mentorPayoutsMinor == null ? NOT_SET : `− ${money(f.mentorPayoutsMinor)}`],
+          ["Company revenue", money(f.platformRevenueMinor), true],
+        ]} />
+        <p className="mt-3 text-xs leading-relaxed text-ink-soft">For courses, company revenue is learner payments minus the mentor&apos;s fixed course fee — not a Professional / Senior Specialist / Executive commission percentage.</p>
+      </section>
+
+      <section>
+        <SectionTitle>By course</SectionTitle>
+        {!courses.length ? <Empty>No published courses in this period.</Empty> : (
+          <ul className="space-y-3">
+            {courses.map((c) => (
+              <li key={c.id} className="rounded-2xl border border-line p-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-ink">{c.title}</p>
+                    <p className="mt-0.5 text-xs text-ink-soft">{c.mentorName} · {plural(c.enrolments, "enrolment")} · {money(c.grossMinor)} gross · fee {money(c.mentorFeeMinor)}{c.feePaid ? " · paid" : " · unpaid"}</p>
+                  </div>
+                  <p className={`whitespace-nowrap font-display text-2xl leading-none tabular-nums ${c.enrolments || c.mentorFeeMinor ? "text-ink" : "text-ink-soft"}`}>{money(c.companyMinor)}</p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {showTiers && (
+        <section>
+          <SectionTitle>1:1 by tier</SectionTitle>
+          {!sessionTiers.length ? <Empty>No paid 1:1 sessions in this period.</Empty> : (
+            <ul className="space-y-3">
+              {f.tiers.map((t) => (
+                <li key={t.level} className="rounded-2xl border border-line p-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-ink">{LEVEL_LABEL[t.level]}</p>
+                      <p className="mt-0.5 text-xs text-ink-soft">{t.currentPercent == null ? "No commission set" : `${t.currentPercent}% commission`}{t.sessions ? ` · ${plural(t.sessions, "session")} · ${money(t.grossMinor)} gross` : " · No sessions"}</p>
+                    </div>
+                    <p className={`whitespace-nowrap font-display text-2xl leading-none tabular-nums ${t.sessions ? "text-ink" : "text-ink-soft"}`}>{money(t.feeMinor)}</p>
+                  </div>
+                  {t.rates.length > 0 && (
+                    <ul className="mt-3 space-y-1.5 border-t border-line pt-3 text-xs text-ink-soft">
+                      {t.rates.map((r) => (
+                        <li key={`${r.returning}-${r.percent}`} className="flex justify-between gap-4">
+                          <span>{r.returning ? "Returning mentees" : "Standard rate"} at {r.percent == null ? "no set rate" : `${r.percent}%`}, on {money(r.grossMinor)}</span>
+                          <span className="whitespace-nowrap text-ink tabular-nums">{money(r.feeMinor)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="mt-4 text-xs leading-relaxed text-ink-soft">Tier commissions apply only to 1:1 sessions. Returning mentees are charged {repeatPercent}% on 1:1, unless their mentor&apos;s tier is already lower.</p>
+        </section>
+      )}
+    </>
   );
 }
 
@@ -180,7 +242,7 @@ function Trend({ f }: { f: FinanceSummary }) {
     <div className="mt-5">
       <div className="flex items-baseline justify-between gap-3 text-xs">
         <span className="text-ink-soft">Gross by {f.trend.unit}</span>
-        <span className="tabular-nums text-ink">{shown ? <>{label(shown.period)} · <span className="font-medium">{formatMoney(shown.grossMinor, f.currency)}</span> · {plural(shown.sessions, "session")}</> : best.grossMinor ? <span className="text-ink-soft">Best: {label(best.period)}, {formatMoney(best.grossMinor, f.currency)}</span> : <span className="text-ink-soft">No paid sessions yet</span>}</span>
+        <span className="tabular-nums text-ink">{shown ? <>{label(shown.period)} · <span className="font-medium">{formatMoney(shown.grossMinor, f.currency)}</span> · {plural(shown.sessions, "booking")}</> : best.grossMinor ? <span className="text-ink-soft">Best: {label(best.period)}, {formatMoney(best.grossMinor, f.currency)}</span> : <span className="text-ink-soft">No paid bookings yet</span>}</span>
       </div>
       <div className="mt-2 flex h-20 items-end gap-[2px] border-b border-line" role="img" aria-label={`Gross booking value by ${f.trend.unit}, highest ${formatMoney(best.grossMinor, f.currency)}`} onMouseLeave={() => setActive(null)}>
         {pts.map((p, i) => (

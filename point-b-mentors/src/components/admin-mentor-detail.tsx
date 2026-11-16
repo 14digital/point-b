@@ -11,7 +11,7 @@ import { api, errMsg } from "@/lib/api";
 import { LEVEL_LABEL, STATUS_LABEL } from "@/lib/constants";
 import { fmtDay, fmtTime, formatMoney } from "@/lib/format";
 import { useApi } from "@/lib/use-api";
-import type { Currency, Level } from "@/lib/types";
+import type { AdminCourse, Currency, Level } from "@/lib/types";
 
 export interface PayoutDetails { method?: string; accountTitle?: string; bankName?: string; iban?: string; accountNumber?: string; wallet?: string; updatedAt?: string; updatedBy?: string }
 interface MentorDetail {
@@ -27,11 +27,19 @@ interface MentorDetail {
 
 const TONE: Record<string, "neutral" | "brass" | "forest" | "rust"> = { PENDING_PAYMENT: "brass", CONFIRMED: "forest", COMPLETED: "forest", CANCELLED: "rust", NO_SHOW: "rust", ACTIVE: "forest", ONBOARDING: "brass", PAUSED: "rust", SUSPENDED: "rust" };
 
-/** One mentor in full: performance, the next two weeks of availability, profile editing and where to pay them. */
+/** One mentor in full: their courses and fees, profile editing and where to pay them. */
 export function MentorDetailModal({ id, onClose, onChanged }: { id: string; onClose: () => void; onChanged: () => void }) {
   const toast = useToast();
   const { user } = useAuth();
   const d = useApi<MentorDetail>(`/admin/mentors/${id}/profile`);
+  const allCourses = useApi<AdminCourse[]>("/admin/courses");
+  const courses = (allCourses.data ?? []).filter((c) => c.mentor.id === id);
+  const published = courses.filter((c) => c.status === "LIVE" || c.status === "CLOSED");
+  const learners = published.reduce((n, c) => n + c.enrolled, 0);
+  const revenue = published.reduce((n, c) => n + c.revenueMinor, 0);
+  const company = published.reduce((n, c) => n + (c.companyRevenueMinor ?? 0), 0);
+  // Fees are agreed per course, possibly in different currencies, so each currency is added up on its own.
+  const feeTotals = (list: AdminCourse[]) => Object.entries(list.reduce<Record<string, number>>((t, c) => ((t[c.mentorFeeCurrency] = (t[c.mentorFeeCurrency] ?? 0) + c.mentorFeeMinor), t), {})).map(([cur, v]) => formatMoney(v, cur as Currency)).join(" + ") || formatMoney(0, "PKR");
   const [edit, setEdit] = useState<(Partial<MentorDetail> & { photoImage?: string }) | null>(null);
   const [pay, setPay] = useState<PayoutDetails | null>(null);
   const [busy, setBusy] = useState(false);
@@ -39,7 +47,6 @@ export function MentorDetailModal({ id, onClose, onChanged }: { id: string; onCl
   const m = d.data;
   const role = user?.staffRole ?? "OWNER";
   const canEdit = role !== "FINANCE", canPay = role !== "OPERATIONS";
-  const currency: Currency = m?.category === "LOCAL" ? "PKR" : "GBP";
 
   async function save(path: string, body: unknown, msg: string) {
     setBusy(true);
@@ -48,10 +55,9 @@ export function MentorDetailModal({ id, onClose, onChanged }: { id: string; onCl
   }
 
   if (booking) return <BookingDetailModal reference={booking} onClose={() => setBooking(null)} onChanged={() => d.reload()} />;
-  const maxDay = Math.max(1, ...(m?.availability ?? []).map((a) => a.open + a.booked));
 
   return (
-    <FinanceModal label={m ? `Mentor ${m.user.name}` : "Mentor"} eyebrow={m ? `${LEVEL_LABEL[m.level]} · ${m.category === "LOCAL" ? "Local · PKR" : "International · GBP"}` : "Mentor"} onClose={onClose} wide
+    <FinanceModal label={m ? `Mentor ${m.user.name}` : "Mentor"} eyebrow={m ? `${LEVEL_LABEL[m.level]} · Faculty` : "Mentor"} onClose={onClose} wide
       title={m ? <span className="flex items-center gap-3">
         {m.photoUrl
           // eslint-disable-next-line @next/next/no-img-element
@@ -63,35 +69,27 @@ export function MentorDetailModal({ id, onClose, onChanged }: { id: string; onCl
         <>
           <section className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {([
-              ["Rating", m.stats.rating ? `${m.stats.rating.toFixed(1)} ★` : "—", `${m.stats.reviews} review${m.stats.reviews === 1 ? "" : "s"}${m.stats.hiddenReviews ? `, ${m.stats.hiddenReviews} hidden` : ""}`],
-              ["Sessions", String(m.stats.completed), `${m.stats.upcoming} upcoming`],
-              ["Cancelled / no-show", `${m.stats.cancelled} / ${m.stats.noShows}`, m.stats.mentorNoShows ? `Mentor missed ${m.stats.mentorNoShows}` : "all time"],
-              ["Owed to mentor", formatMoney(m.stats.dueMinor, currency), `${formatMoney(m.stats.paidMinor, currency)} paid of ${formatMoney(m.stats.earnedMinor, currency)}`],
-            ] as const).map(([k, v, note]) => (
-              <div key={k} className="rounded-2xl bg-paper px-4 py-3"><p className="text-[11px] text-ink-soft">{k}</p><p className="mt-0.5 font-display text-2xl leading-tight text-ink tabular-nums">{v}</p><p className="text-[11px] text-ink-soft">{note}</p></div>
+              ["bg-lemon/60", "Courses", String(published.length), `${courses.length - published.length} not published`],
+              ["bg-mint/60", "Learners", String(learners), "enrolled across courses"],
+              ["bg-sky/60", "Company share", formatMoney(company, "PKR"), `${formatMoney(revenue, "PKR")} learner gross`],
+              ["bg-peach/60", "Fees still to pay", feeTotals(published.filter((c) => !c.feePaid)), `of ${feeTotals(published)} agreed`],
+            ] as const).map(([tone, k, v, note]) => (
+              <div key={k} className={`rounded-2xl px-4 py-3 ${tone}`}><p className="text-[11px] text-ink/60">{k}</p><p className="mt-0.5 font-display text-2xl leading-tight text-ink tabular-nums">{v}</p><p className="text-[11px] text-ink/60">{note}</p></div>
             ))}
           </section>
 
-          {m.stats.forCancelledMinor > 0 && <Alert tone="info">{formatMoney(m.stats.forCancelledMinor, currency)} already paid to this mentor was for sessions that were later cancelled. Recover it from their next payout, or note it as a goodwill payment.</Alert>}
-
           <section>
-            <SectionTitle aside={<span className={`text-xs ${m.openSlots ? "text-ink-soft" : "font-medium text-rust"}`}>{m.openSlots ? `${m.openSlots} open time${m.openSlots === 1 ? "" : "s"}` : "No open times. Mentees can't book."}</span>}>Next 14 days</SectionTitle>
-            <div className="flex items-end gap-1.5 rounded-2xl bg-paper px-3 pb-2 pt-3" role="img" aria-label={`Availability for the next 14 days: ${m.openSlots} open times`}>
-              {m.availability.map((a) => {
-                const total = a.open + a.booked;
-                return (
-                  <div key={a.day} className="flex flex-1 flex-col items-center gap-1" title={`${fmtDay(a.day + "T12:00:00Z")}: ${a.open} open, ${a.booked} booked`}>
-                    <div className="flex h-16 w-full flex-col justify-end gap-0.5">
-                      {a.booked > 0 && <span className="block w-full rounded-sm bg-ink/70" style={{ height: Math.max(3, (a.booked / maxDay) * 62) }} />}
-                      {a.open > 0 && <span className="block w-full rounded-sm bg-forest/60" style={{ height: Math.max(3, (a.open / maxDay) * 62) }} />}
-                      {!total && <span className="block h-1 w-full rounded-sm bg-line" />}
-                    </div>
-                    <span className="text-[10px] text-ink-soft">{new Date(a.day + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "narrow" })}</span>
-                  </div>
-                );
-              })}
-            </div>
-            <p className="mt-2 flex gap-4 text-[11px] text-ink-soft"><span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-forest/60" />Open</span><span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-ink/70" />Booked</span></p>
+            <SectionTitle aside={<span className="text-xs text-ink-soft">{m.stats.rating ? `${m.stats.rating.toFixed(1)} ★ from ${m.stats.reviews} review${m.stats.reviews === 1 ? "" : "s"}` : "No reviews yet"}</span>}>Courses</SectionTitle>
+            {allCourses.loading ? <Skeleton className="h-20 rounded-2xl" /> : !courses.length ? <p className="rounded-2xl bg-paper px-4 py-4 text-sm text-ink-soft">No courses yet. The mentor plans them from the Courses tab of their dashboard.</p> : (
+              <ul className="divide-y divide-line rounded-2xl bg-paper px-4">
+                {courses.map((c) => (
+                  <li key={c.id} className="flex flex-wrap items-center gap-3 py-3">
+                    <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium text-ink">{c.title}</span><span className="block text-xs text-ink-soft">{c.schedule} · {c.sessionsCount} classes{c.status === "LIVE" || c.status === "CLOSED" ? ` · ${c.enrolled} enrolled` : ""}</span></span>
+                    <span className="text-right text-xs"><span className="block text-sm tabular-nums text-ink">{c.priceMinor != null ? formatMoney(c.priceMinor, "PKR") : "Price not set"}</span><span className="text-ink-soft">Fee {formatMoney(c.mentorFeeMinor, c.mentorFeeCurrency)}{c.feePaid ? " · paid" : ""}</span></span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </section>
 
           <section>
@@ -106,7 +104,7 @@ export function MentorDetailModal({ id, onClose, onChanged }: { id: string; onCl
                 </div>
                 <label className="block text-xs text-ink-soft">Introduction<textarea className="input mt-1 min-h-20 bg-white" value={edit.introduction ?? ""} maxLength={2000} onChange={(e) => setEdit({ ...edit, introduction: e.target.value })} /></label>
                 <label className="block text-xs text-ink-soft">Career summary<textarea className="input mt-1 min-h-24 bg-white" value={edit.careerSummary ?? ""} maxLength={4000} onChange={(e) => setEdit({ ...edit, careerSummary: e.target.value })} /></label>
-                <label className="flex items-center gap-2 text-sm text-ink"><input type="checkbox" className="h-4 w-4 accent-ink" checked={!!edit.verified} onChange={(e) => setEdit({ ...edit, verified: e.target.checked })} />Show the &ldquo;Verified mentor&rdquo; badge (identity and credentials checked)</label>
+                <label className="flex items-center gap-2 text-sm text-ink"><input type="checkbox" className="h-4 w-4 accent-ink" checked={!!edit.verified} onChange={(e) => setEdit({ ...edit, verified: e.target.checked })} />Show the &ldquo;POINT B faculty&rdquo; badge (identity and credentials checked)</label>
                 <div className="flex justify-end gap-2">
                   <Button size="sm" variant="ghost" disabled={busy} onClick={() => setEdit(null)}>Cancel</Button>
                   <Button size="sm" disabled={busy || !edit.title?.trim()} onClick={() => save("profile", edit, "Profile updated on the live site.")}>{busy ? <Spinner /> : "Save profile"}</Button>
@@ -128,8 +126,8 @@ export function MentorDetailModal({ id, onClose, onChanged }: { id: string; onCl
           </section>
 
           <section>
-            <SectionTitle>Recent bookings</SectionTitle>
-            {!m.recentBookings.length ? <p className="text-sm text-ink-soft">No bookings yet.</p> : (
+            <SectionTitle>Recent enrolments</SectionTitle>
+            {!m.recentBookings.length ? <p className="text-sm text-ink-soft">No enrolments yet.</p> : (
               <ul className="divide-y divide-line">{m.recentBookings.map((b) => (
                 <li key={b.reference}><button type="button" onClick={() => setBooking(b.reference)} className="flex w-full items-center gap-3 py-2.5 text-left hover:bg-paper/50">
                   <span className="min-w-0 flex-1"><span className="block truncate text-sm text-ink">{b.studentName}</span><span className="block text-xs text-ink-soft">{fmtDay(b.startAt).replace(/^\w+, /, "")}, {fmtTime(b.startAt)}</span></span>
@@ -143,7 +141,7 @@ export function MentorDetailModal({ id, onClose, onChanged }: { id: string; onCl
             <section>
               <SectionTitle>Payouts</SectionTitle>
               <ul className="divide-y divide-line text-sm">{m.payouts.map((p) => (
-                <li key={p.id} className="flex justify-between gap-3 py-2"><span className="text-ink">{fmtDay(p.createdAt).replace(/^\w+, /, "")}<span className="text-ink-soft"> · {p.sessions} session{p.sessions === 1 ? "" : "s"}{p.reference ? ` · ref ${p.reference}` : ""}</span></span><span className="tabular-nums text-ink">{formatMoney(p.amountMinor, p.currency)}</span></li>
+                <li key={p.id} className="flex justify-between gap-3 py-2"><span className="text-ink">{fmtDay(p.createdAt).replace(/^\w+, /, "")}<span className="text-ink-soft">{p.reference ? ` · ref ${p.reference}` : ""}</span></span><span className="tabular-nums text-ink">{formatMoney(p.amountMinor, p.currency)}</span></li>
               ))}</ul>
             </section>
           )}

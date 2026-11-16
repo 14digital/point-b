@@ -15,21 +15,33 @@ const isObjectId = (id: string) => /^[a-f0-9]{24}$/i.test(id);
 export class PayoutsService {
   constructor(private prisma: PrismaService, private notify: NotificationsService) {}
 
-  /** A mentor's paid sessions in the period (by when they were booked), with what they earn and whether it has been paid. */
+  /** A mentor's paid 1:1 sessions and fixed course fees in the period, with what they earn and whether it has been paid. */
   async mentorSessions(mentorId: string, currency: Currency, from?: Date, to?: Date) {
     if (!isObjectId(mentorId)) throw new NotFoundException('Mentor not found');
     const mentor = await this.prisma.mentorProfile.findUnique({ where: { id: mentorId }, select: { id: true, level: true, photoUrl: true, payoutDetails: true, user: { select: { name: true, email: true } } } });
     if (!mentor) throw new NotFoundException('Mentor not found');
     const rules = await commissionRules(this.prisma);
-    const rows = await this.prisma.booking.findMany({
-      where: { mentorId, currency, status: { in: [...PAID] }, ...(from || to ? { createdAt: { ...(from && { gte: from }), ...(to && { lt: to }) } } : {}) },
-      orderBy: { slot: { startAt: 'desc' } },
-      select: {
-        id: true, reference: true, status: true, sessionKind: true, repeatStudent: true, priceMinor: true, platformFeeMinor: true, listPriceMinor: true, mentorPaidInFull: true, commissionPercent: true, payoutId: true,
-        slot: { select: { startAt: true, endAt: true } }, student: { select: { name: true } },
-        payout: { select: { id: true, createdAt: true, reference: true, note: true, sessions: true, amountMinor: true } },
-      },
-    });
+    const inRange = from || to ? { ...(from && { gte: from }), ...(to && { lt: to }) } : undefined;
+    const [rows, courses, coursePayouts] = await Promise.all([
+      this.prisma.booking.findMany({
+        where: { mentorId, currency, status: { in: [...PAID] }, OR: [{ courseId: null }, { courseId: { isSet: false } }], ...(inRange ? { createdAt: inRange } : {}) },
+        orderBy: { slot: { startAt: 'desc' } },
+        select: {
+          id: true, reference: true, status: true, sessionKind: true, repeatStudent: true, priceMinor: true, platformFeeMinor: true, listPriceMinor: true, mentorPaidInFull: true, commissionPercent: true, payoutId: true,
+          slot: { select: { startAt: true, endAt: true } }, student: { select: { name: true } },
+          payout: { select: { id: true, createdAt: true, reference: true, note: true, sessions: true, amountMinor: true } },
+        },
+      }),
+      this.prisma.course.findMany({
+        where: {
+          mentorId, mentorFeeCurrency: currency, status: { in: ['LIVE', 'CLOSED'] },
+          ...(inRange ? { OR: [{ reviewedAt: inRange }, { bookings: { some: { status: { in: [...PAID] }, createdAt: inRange } } }] } : {}),
+        },
+        select: { id: true, title: true, mentorFeeMinor: true, sessionsCount: true, reviewedAt: true },
+        orderBy: { reviewedAt: 'desc' },
+      }),
+      this.prisma.mentorPayout.findMany({ where: { mentorId, courseId: { not: null } }, select: { id: true, courseId: true, createdAt: true, reference: true, note: true, sessions: true, amountMinor: true } }),
+    ]);
     const sessions = rows.map((b) => {
       const percent = b.commissionPercent ?? rules.tier[mentor.level];
       const feeMinor = feeForBooking(b, percent);
@@ -40,13 +52,26 @@ export class PayoutsService {
         payout: b.payout,
       };
     });
+    const courseFees = courses.map((c) => {
+      const payout = coursePayouts.find((p) => p.courseId === c.id) ?? null;
+      return {
+        id: c.id, title: c.title, sessionsCount: c.sessionsCount, reviewedAt: c.reviewedAt,
+        feeMinor: c.mentorFeeMinor, payout: payout ? { id: payout.id, createdAt: payout.createdAt, reference: payout.reference, note: payout.note, sessions: payout.sessions, amountMinor: payout.amountMinor } : null,
+      };
+    });
     const sum = (list: typeof sessions) => list.reduce((n, s) => n + (s.payoutMinor ?? 0), 0);
     const open = sessions.filter((s) => !s.payout);
+    const openCourses = courseFees.filter((c) => !c.payout);
+    const courseEarned = courseFees.reduce((n, c) => n + c.feeMinor, 0);
+    const coursePaid = courseFees.filter((c) => c.payout).reduce((n, c) => n + c.feeMinor, 0);
     return {
       mentor: { id: mentor.id, name: mentor.user.name, email: mentor.user.email, level: mentor.level, photoUrl: mentor.photoUrl, payoutDetails: mentor.payoutDetails },
       currency, configured: sessions.every((s) => s.payoutMinor != null),
-      earnedMinor: sum(sessions), paidMinor: sum(sessions.filter((s) => s.payout)), dueMinor: sum(open), unpaidCount: open.length,
-      sessions,
+      earnedMinor: sum(sessions) + courseEarned,
+      paidMinor: sum(sessions.filter((s) => s.payout)) + coursePaid,
+      dueMinor: sum(open) + openCourses.reduce((n, c) => n + c.feeMinor, 0),
+      unpaidCount: open.length + openCourses.length,
+      sessions, courses: courseFees,
     };
   }
 
@@ -56,9 +81,10 @@ export class PayoutsService {
     const rules = await commissionRules(this.prisma);
     const rows = await this.prisma.booking.findMany({
       where: { id: { in: ids } },
-      select: { id: true, mentorId: true, currency: true, status: true, priceMinor: true, platformFeeMinor: true, listPriceMinor: true, mentorPaidInFull: true, commissionPercent: true, payoutId: true, mentor: { select: { level: true, user: { select: { name: true } } } } },
+      select: { id: true, mentorId: true, currency: true, status: true, courseId: true, priceMinor: true, platformFeeMinor: true, listPriceMinor: true, mentorPaidInFull: true, commissionPercent: true, payoutId: true, mentor: { select: { level: true, user: { select: { name: true } } } } },
     });
     if (rows.length !== ids.length || rows.some((b) => b.mentorId !== dto.mentorId)) throw new BadRequestException('Some of these sessions are not this mentor\'s');
+    if (rows.some((b) => b.courseId)) throw new BadRequestException('Course enrolments are paid through the course fee, not as session payouts.');
     if (rows.some((b) => !(PAID as readonly string[]).includes(b.status))) throw new BadRequestException('Only paid sessions can be paid out');
     if (rows.some((b) => b.payoutId)) throw new ConflictException('Some of these sessions have already been paid. Refresh and try again.');
     const currencies = new Set(rows.map((b) => b.currency));

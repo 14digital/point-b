@@ -27,18 +27,20 @@ import { InterviewSlotEditor, InterviewSlotPicker } from "@/components/interview
 import { UserTracking } from "@/components/user-tracking";
 import { WhatsAppDelivery } from "@/components/whatsapp-delivery";
 import { useUrlTab } from "@/lib/use-url-tab";
-import { CountrySelect, isLocalCountry } from "@/components/country-select";
+import { CountrySelect } from "@/components/country-select";
 import { Flag, countryIn } from "@/components/flag";
 import { formatPhone } from "@/components/phone-input";
+import { AdminCourses } from "@/components/admin-courses";
+import type { AdminCourse } from "@/lib/types";
 import type { AdminInterview, AppStatus, Application, Booking, Currency, Level } from "@/lib/types";
 
-const TABS = ["Overview", "Applications", "Mentors", "Bookings", "Mentees", "Reviews", "Support", "Live chat", "Referrals", "User tracking", "Activity", "Settings"] as const;
+const TABS = ["Overview", "Applications", "Mentors", "Courses", "Enrolments", "Mentees", "Reviews", "Support", "Live chat", "Referrals", "User tracking", "Activity", "Settings"] as const;
 type Tab = (typeof TABS)[number];
 /** What each team role sees. Owners see everything. */
 const TABS_FOR: Record<"OWNER" | "OPERATIONS" | "FINANCE", readonly Tab[]> = {
   OWNER: TABS,
-  OPERATIONS: ["Overview", "Applications", "Mentors", "Bookings", "Mentees", "Reviews", "Support", "Live chat", "Referrals", "User tracking", "Settings"],
-  FINANCE: ["Overview", "Mentors", "Bookings", "Mentees", "Referrals", "Settings"],
+  OPERATIONS: ["Overview", "Applications", "Mentors", "Courses", "Enrolments", "Mentees", "Reviews", "Support", "Live chat", "Referrals", "User tracking", "Settings"],
+  FINANCE: ["Overview", "Mentors", "Courses", "Enrolments", "Mentees", "Referrals", "Settings"],
 };
 
 const TONE: Record<string, "neutral" | "brass" | "forest" | "rust"> = {
@@ -62,6 +64,8 @@ function Console() {
   const tickets = useApi<{ status: string; urgent: boolean }[]>(ops ? "/admin/support" : null);
   const reviews = useApi<{ status: string }[]>(ops ? "/admin/reviews" : null);
   const reviewsWaiting = reviews.data?.filter((r) => r.status === "PENDING").length ?? 0;
+  const courses = useApi<{ status: string }[]>("/admin/courses");
+  const coursesWaiting = courses.data?.filter((c) => c.status === "SUBMITTED").length ?? 0;
   const consentWaiting = students.data?.filter((x) => x.needsConsent).length ?? 0;
   const openTickets = tickets.data?.filter((t) => t.status !== "RESOLVED").length ?? 0;
   const chats = useApi<{ chats: number }>(ops ? "/admin/chats/unread" : null);
@@ -84,17 +88,18 @@ function Console() {
       <DashboardHero
         eyebrow={<><span>Administration</span><span aria-hidden>·</span><span>POINT B control centre</span></>}
         title={<>{greeting()}, <Mark color="lilac">{user?.name ?? "admin"}</Mark></>}
-        subtitle={toReview ? `${toReview} application${toReview === 1 ? "" : "s"} waiting for review, and ${s?.bookings.CONFIRMED ?? 0} upcoming confirmed session${s?.bookings.CONFIRMED === 1 ? "" : "s"}.` : "Everything is up to date. Here's how the platform is doing."}
-        actions={<><Button variant="secondary" href="/mentors">View live site</Button>{!!toReview && ops && <Button onClick={() => setTab("Applications")}>Review applications</Button>}</>}
+        subtitle={coursesWaiting ? `${coursesWaiting} course${coursesWaiting === 1 ? "" : "s"} waiting for review and pricing.` : toReview ? `${toReview} application${toReview === 1 ? "" : "s"} waiting for review.` : "Everything is up to date. Here's how the platform is doing."}
+        actions={<><Button variant="secondary" href="/">View live site</Button>{coursesWaiting > 0 ? <Button onClick={() => setTab("Courses")}>Review courses</Button> : !!toReview && ops && <Button onClick={() => setTab("Applications")}>Review applications</Button>}</>}
       >
-        <div className="mt-10"><AdminNav tabs={tabs} value={tab} onChange={setTab} counts={{ ...(toReview && ops ? { Applications: toReview } : {}), ...(consentWaiting ? { Mentees: consentWaiting } : {}), ...(openTickets ? { Support: openTickets } : {}), ...(unreadChats ? { "Live chat": unreadChats } : {}), ...(reviewsWaiting ? { Reviews: reviewsWaiting } : {}) }} /></div>
+        <div className="mt-10"><AdminNav tabs={tabs} value={tab} onChange={setTab} counts={{ ...(toReview && ops ? { Applications: toReview } : {}), ...(consentWaiting ? { Mentees: consentWaiting } : {}), ...(openTickets ? { Support: openTickets } : {}), ...(unreadChats ? { "Live chat": unreadChats } : {}), ...(reviewsWaiting ? { Reviews: reviewsWaiting } : {}), ...(coursesWaiting ? { Courses: coursesWaiting } : {}) }} /></div>
       </DashboardHero>
       <Container className="py-10 sm:py-12">
         {tab === "Overview" && <Overview role={role} onReview={() => setTab("Applications")} onOpenApp={(id) => { setFocusId(id); setTab("Applications"); }} onGo={setTab}
           urgentTickets={tickets.data?.filter((t) => t.urgent && t.status !== "RESOLVED").length ?? 0} consentWaiting={consentWaiting} twoStepOff={user?.twoFactorEnabled === false} />}
         {tab === "Applications" && <Applications initialId={focusId} />}
-        {tab === "Mentors" && <Mentors />}
-        {tab === "Bookings" && <Bookings />}
+        {tab === "Mentors" && <Mentors onOpenCourses={() => setTab("Courses")} />}
+        {tab === "Courses" && <AdminCourses onChanged={courses.reload} />}
+        {tab === "Enrolments" && <Bookings />}
         {tab === "Mentees" && <Students onChanged={students.reload} />}
         {tab === "Reviews" && <Reviews onChanged={reviews.reload} />}
         {tab === "Support" && <Support meId={user?.id ?? ""} onChanged={tickets.reload} />}
@@ -127,6 +132,10 @@ function Overview({ role, onReview, onOpenApp, onGo, urgentTickets, consentWaiti
   const filtered = query !== "";
   const { data: s, loading, error, reload } = useApi<Stats>(`/admin/stats${filtered ? `?${query}` : ""}`);
   const interviews = useApi<AdminInterview[]>(role !== "FINANCE" ? "/admin/interviews" : null);
+  const courses = useApi<AdminCourse[]>("/admin/courses");
+  const live = (courses.data ?? []).filter((c) => c.status === "LIVE");
+  const waitingCourses = (courses.data ?? []).filter((c) => c.status === "SUBMITTED").length;
+  const learnersEnrolled = (courses.data ?? []).reduce((n, c) => n + c.enrolled, 0);
   const money = role !== "OPERATIONS";
   const alerts = [
     urgentTickets > 0 && { tone: "bg-rust-pale ring-rust/20", text: `${urgentTickets} safeguarding report${urgentTickets === 1 ? "" : "s"} waiting`, action: "Open support", go: "Support" as Tab },
@@ -137,7 +146,7 @@ function Overview({ role, onReview, onOpenApp, onGo, urgentTickets, consentWaiti
     <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
       <div className="min-w-0">
         <p className="font-display text-2xl leading-tight text-ink">{rangeLabel(range)}</p>
-        <p className="mt-1 text-xs text-ink-soft">Counted from when bookings were made and applications submitted.</p>
+        <p className="mt-1 text-xs text-ink-soft">Counted from when learners enrolled and applications were submitted.</p>
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <DateRangePicker value={range} onChange={setRange} />
@@ -165,8 +174,8 @@ function Overview({ role, onReview, onOpenApp, onGo, urgentTickets, consentWaiti
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatTile label="Active mentors" value={s.activeMentors} note={filtered ? `${s.newMentors} joined in this period` : undefined} tone="mint" />
         <StatTile label="Applications in pipeline" value={pipeline} note={filtered ? `${s.applications.SUBMITTED ?? 0} awaiting first review · ${pipelineOverall} in pipeline overall` : `${s.applications.SUBMITTED ?? 0} awaiting first review`} tone="sky" delay={60} />
-        <StatTile label={filtered ? "New mentees" : "Registered mentees"} value={s.students} note={filtered ? `${s.studentsTotal} registered in total` : undefined} tone="peach" delay={120} />
-        <StatTile label="Booking conversion" value={s.bookingConversion == null ? "—" : `${Math.round(s.bookingConversion * 100)}%`} note={`${s.repeatStudents} repeat mentee${s.repeatStudents === 1 ? "" : "s"}`} tone="lilac" delay={180} />
+        <StatTile label={filtered ? "New learners" : "Registered learners"} value={s.students} note={filtered ? `${s.studentsTotal} registered in total` : undefined} tone="peach" delay={120} />
+        <StatTile label="Live courses" value={courses.loading ? "–" : live.length} note={waitingCourses ? `${waitingCourses} waiting for review` : `${learnersEnrolled} learner${learnersEnrolled === 1 ? "" : "s"} enrolled`} tone="lilac" delay={180} onClick={() => onGo("Courses")} />
       </div>
 
       {money && <BankTransfers />}
@@ -197,7 +206,7 @@ function Overview({ role, onReview, onOpenApp, onGo, urgentTickets, consentWaiti
       )}
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
-        <Panel title="Bookings" action={<span className="text-sm text-ink-soft">{totalBookings} {filtered ? "in this period" : "in total"}</span>}>
+        <Panel title="Enrolments" action={<span className="text-sm text-ink-soft">{totalBookings} {filtered ? "in this period" : "in total"}</span>}>
           <div className="flex h-3 overflow-hidden rounded-full bg-paper-dim" aria-hidden>
             {totalBookings > 0 && BOOKING_BARS.map(([k, , c]) => (s.bookings[k] ?? 0) > 0 && <span key={k} className={`${c} h-full`} style={{ width: `${((s.bookings[k] ?? 0) / totalBookings) * 100}%` }} />)}
           </div>
@@ -223,8 +232,6 @@ function Overview({ role, onReview, onOpenApp, onGo, urgentTickets, consentWaiti
           </ul>
         </Panel>
       </div>
-
-      {!s.commissionConfigured && <Alert tone="info">No platform commission is configured for every tier, so platform revenue and mentor payouts are not calculated. Set the tier rates under Pricing &amp; settings.</Alert>}
 
       <div className="grid gap-6 md:grid-cols-2">
         {s.finance.map((f) => <FinanceBreakdown key={f.currency} f={f} period={rangeLabel(range)} query={query} repeatPercent={s.commission.repeat} onChanged={reload} heldMinor={s.balancesHeld?.[f.currency] ?? 0} />)}
@@ -585,35 +592,47 @@ function Quote({ label, text }: { label: string; text: string }) {
 
 interface AdminMentor { id: string; slug: string; country: string; level: Level; category: string; status: string; verified: boolean; isDemo: boolean; priceMinor: number; currency: Currency; priceOverrideMinor: number | null; sessionsCompleted: number; user: { name: string; email: string }; openSlots14: number; rating: number | null; reviewCount: number; hasPayoutDetails: boolean }
 
-interface TierRule { level: Level; currency: Currency; priceMinor: number; minMinor: number; maxMinor: number; isDefault: boolean }
 
-const MENTOR_FILTERS = [["all", "All"], ["ACTIVE", "Active"], ["ONBOARDING", "Onboarding"], ["PAUSED", "Paused or suspended"], ["noslots", "No open times"], ["nopayout", "No payout details"]] as const;
+const MENTOR_FILTERS = [["all", "All"], ["ACTIVE", "Active"], ["ONBOARDING", "Onboarding"], ["PAUSED", "Paused or suspended"], ["nocourse", "No live course"], ["nopayout", "No payout details"]] as const;
+const COURSE_TONE: Record<string, "neutral" | "brass" | "forest" | "rust"> = { DRAFT: "neutral", SUBMITTED: "brass", CHANGES_REQUESTED: "rust", LIVE: "forest", CLOSED: "neutral", REJECTED: "neutral" };
+const COURSE_LABEL: Record<string, string> = { DRAFT: "Draft", SUBMITTED: "Waiting for review", CHANGES_REQUESTED: "Changes requested", LIVE: "Live", CLOSED: "Enrolment closed", REJECTED: "Declined" };
+const isPublished = (c: AdminCourse) => c.status === "LIVE" || c.status === "CLOSED";
 
-function Mentors() {
+function Mentors({ onOpenCourses }: { onOpenCourses: () => void }) {
   const { data, loading, error, reload } = useApi<AdminMentor[]>("/admin/mentors");
-  const tiers = useApi<TierRule[]>("/admin/pricing");
+  const courses = useApi<AdminCourse[]>("/admin/courses");
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<(typeof MENTOR_FILTERS)[number][0]>("all");
   const [open, setOpen] = useState<string | null>(null);
   if (loading) return <Skeleton className="h-64 rounded-3xl" />;
   if (error) return <Alert>{error}</Alert>;
   if (!data?.length) return <EmptyState title="No mentors yet" description="Mentors appear here once an application reaches onboarding." />;
+  const coursesOf = (id: string) => (courses.data ?? []).filter((c) => c.mentor.id === id);
+  const hasLive = (id: string) => coursesOf(id).some((c) => c.status === "LIVE");
   const term = q.trim().toLowerCase();
   const rows = data.filter((m) => {
     if (term && !`${m.user.name} ${m.user.email} ${m.country}`.toLowerCase().includes(term)) return false;
     if (filter === "ACTIVE" || filter === "ONBOARDING") return m.status === filter;
     if (filter === "PAUSED") return m.status === "PAUSED" || m.status === "SUSPENDED";
-    if (filter === "noslots") return m.status === "ACTIVE" && m.openSlots14 === 0;
+    if (filter === "nocourse") return m.status === "ACTIVE" && !hasLive(m.id);
     if (filter === "nopayout") return m.status === "ACTIVE" && !m.hasPayoutDetails;
     return true;
   });
-  const noSlots = data.filter((m) => m.status === "ACTIVE" && m.openSlots14 === 0).length;
+  const noCourse = courses.data ? data.filter((m) => m.status === "ACTIVE" && !hasLive(m.id)).length : 0;
+  const waiting = (courses.data ?? []).filter((c) => c.status === "SUBMITTED").length;
   return (
     <div className="space-y-5">
-      {noSlots > 0 && (
-        <button type="button" onClick={() => setFilter("noslots")} className="flex w-full items-center gap-4 group rounded-3xl bg-lemon/60 px-5 py-4 text-left ring-1 ring-amber/15 transition-colors hover:bg-lemon/90">
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white text-ink"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden><rect x="3" y="4.5" width="14" height="12.5" rx="2.5" stroke="currentColor" strokeWidth="1.5" /><path d="M3 8.5h14M7 2.5v3.5M13 2.5v3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg></span>
-          <span className="min-w-0 flex-1"><span className="block font-medium text-ink">{noSlots} active mentor{noSlots === 1 ? " has" : "s have"} no open times in the next 14 days</span><span className="block text-sm text-ink-soft">Mentees can&rsquo;t book them. A nudge to add availability usually helps.</span></span>
+      {waiting > 0 && (
+        <button type="button" onClick={onOpenCourses} className="group flex w-full items-center gap-4 rounded-3xl bg-lemon/70 px-5 py-4 text-left ring-1 ring-amber/15 transition-colors hover:bg-lemon">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white text-ink"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M3 5.5c2.5-1 4.8-1 7 .5 2.2-1.5 4.5-1.5 7-.5v10c-2.5-1-4.8-1-7 .5-2.2-1.5-4.5-1.5-7-.5z" /><path d="M10 6v10" /></svg></span>
+          <span className="min-w-0 flex-1"><span className="block font-medium text-ink">{waiting} course{waiting === 1 ? " is" : "s are"} waiting for review and pricing</span><span className="block text-sm text-ink-soft">Set the price learners pay, then publish.</span></span>
+          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-white px-3.5 py-1.5 text-sm font-medium text-ink shadow-sm">Review<svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden className="transition-transform group-hover:translate-x-0.5"><path d="M7.5 5l5 5-5 5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg></span>
+        </button>
+      )}
+      {noCourse > 0 && (
+        <button type="button" onClick={() => setFilter("nocourse")} className="group flex w-full items-center gap-4 rounded-3xl bg-sky/50 px-5 py-4 text-left ring-1 ring-ink/5 transition-colors hover:bg-sky/80">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white text-ink"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden><circle cx="10" cy="7" r="3" /><path d="M4 17c.8-3.2 3.2-5 6-5s5.2 1.8 6 5" /></svg></span>
+          <span className="min-w-0 flex-1"><span className="block font-medium text-ink">{noCourse} active mentor{noCourse === 1 ? " has" : "s have"} no live course</span><span className="block text-sm text-ink-soft">They don&rsquo;t appear on the faculty page until a course of theirs is published.</span></span>
           <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-white px-3.5 py-1.5 text-sm font-medium text-ink shadow-sm">Show<svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden className="transition-transform group-hover:translate-x-0.5"><path d="M7.5 5l5 5-5 5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg></span>
         </button>
       )}
@@ -621,35 +640,35 @@ function Mentors() {
         <input className="input min-w-[14rem] flex-1 bg-white" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search mentors by name, email or country" aria-label="Search mentors" />
         <FilterChips options={MENTOR_FILTERS} value={filter} onChange={setFilter} label="Filter mentors" />
       </div>
-      {!rows.length ? <EmptyState title="No mentors match" description="Try another search or filter." /> : <div className="grid gap-4 xl:grid-cols-2">{rows.map((m) => <MentorRow key={m.id} m={m} tiers={tiers.data ?? []} onSaved={reload} onOpen={() => setOpen(m.id)} />)}</div>}
+      {!rows.length ? <EmptyState title="No mentors match" description="Try another search or filter." /> : <div className="grid gap-4 xl:grid-cols-2">{rows.map((m) => <MentorRow key={m.id} m={m} courses={coursesOf(m.id)} coursesLoading={courses.loading} onSaved={reload} onOpen={() => setOpen(m.id)} onOpenCourses={onOpenCourses} />)}</div>}
       {open && <MentorDetailModal id={open} onClose={() => setOpen(null)} onChanged={reload} />}
     </div>
   );
 }
 
-function MentorRow({ m, tiers, onSaved, onOpen }: { m: AdminMentor; tiers: TierRule[]; onSaved: () => void; onOpen: () => void }) {
+function MentorRow({ m, courses, coursesLoading, onSaved, onOpen, onOpenCourses }: { m: AdminMentor; courses: AdminCourse[]; coursesLoading: boolean; onSaved: () => void; onOpen: () => void; onOpenCourses: () => void }) {
   const [level, setLevel] = useState(m.level);
   const [status, setStatus] = useState(m.status);
-  const [override, setOverride] = useState(m.priceOverrideMinor == null ? "" : String(m.priceOverrideMinor / 100));
   const [country, setCountry] = useState(countryIn(m.country));
   const savedCountry = countryIn(m.country);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
-  const range = tiers.find((t) => t.level === level && t.currency === m.currency);
-  const dirty = country !== savedCountry || level !== m.level || status !== m.status || override !== (m.priceOverrideMinor == null ? "" : String(m.priceOverrideMinor / 100));
+  const dirty = country !== savedCountry || level !== m.level || status !== m.status;
 
   async function save() {
     setBusy(true); setMsg(null);
-    try { await api(`/admin/mentors/${m.id}`, { method: "PATCH", body: { level, status, ...(country !== savedCountry ? { country } : {}), priceOverrideMinor: override === "" ? null : Math.round(Number(override) * 100) } }); onSaved(); }
+    try { await api(`/admin/mentors/${m.id}`, { method: "PATCH", body: { level, status, ...(country !== savedCountry ? { country } : {}) } }); onSaved(); }
     catch (e) { setMsg(errMsg(e)); } finally { setBusy(false); }
   }
+  const reset = () => { setLevel(m.level); setStatus(m.status); setCountry(savedCountry); setMsg(null); };
 
-  const reset = () => { setLevel(m.level); setStatus(m.status); setOverride(m.priceOverrideMinor == null ? "" : String(m.priceOverrideMinor / 100)); setCountry(savedCountry); setMsg(null); };
-  const priceNum = override === "" ? null : Number(override) * 100;
-  const outOfRange = !!range && priceNum != null && (priceNum < range.minMinor || priceNum > range.maxMinor);
-  const shown = priceNum ?? range?.priceMinor ?? m.priceMinor;
-  const pos = range && range.maxMinor > range.minMinor ? Math.min(100, Math.max(0, ((shown - range.minMinor) / (range.maxMinor - range.minMinor)) * 100)) : 0;
-  const local = country ? isLocalCountry(country) : m.category === "LOCAL";
+  const published = courses.filter(isPublished);
+  const learners = published.reduce((n, c) => n + c.enrolled, 0);
+  const revenue = published.reduce((n, c) => n + c.revenueMinor, 0);
+  const company = published.reduce((n, c) => n + (c.companyRevenueMinor ?? 0), 0);
+  const prices = published.map((c) => c.priceMinor).filter((x): x is number => x != null);
+  const coursePrice = !prices.length ? "—" : Math.min(...prices) === Math.max(...prices) ? formatMoney(prices[0], "PKR") : `${formatMoney(Math.min(...prices), "PKR")}–${formatMoney(Math.max(...prices), "PKR")}`;
+  const feesOwed = published.filter((c) => !c.feePaid);
 
   return (
     <div className="flex flex-col overflow-hidden rounded-[1.75rem] bg-white ring-1 ring-line transition-shadow hover:shadow-[0_20px_50px_-36px_rgba(17,17,17,0.35)]">
@@ -668,26 +687,53 @@ function MentorRow({ m, tiers, onSaved, onOpen }: { m: AdminMentor; tiers: TierR
         <div className="mt-4 flex flex-wrap items-center gap-1.5 text-xs text-ink">
           <span className="inline-flex items-center gap-1.5 rounded-full bg-paper px-2.5 py-1">{m.country && <Flag country={m.country} className="h-3 w-[18px]" />}{m.country || "Country not set"}</span>
           <span className="rounded-full bg-paper px-2.5 py-1">{LEVEL_LABEL[m.level]}</span>
-          <span className="rounded-full bg-paper px-2.5 py-1">{m.category === "LOCAL" ? "Local · PKR" : "International · GBP"}</span>
+          <span className="rounded-full bg-paper px-2.5 py-1">{m.rating ? <>★ {m.rating.toFixed(1)} <span className="text-ink-soft">({m.reviewCount})</span></> : <span className="text-ink-soft">No reviews yet</span>}</span>
+          {m.status === "ACTIVE" && !m.hasPayoutDetails && <span className="rounded-full bg-lemon px-2.5 py-1 text-ink">No payout details</span>}
           {m.status === "ACTIVE" && <a href={`/mentors/${m.slug}`} target="_blank" rel="noreferrer" className="ml-auto inline-flex items-center gap-1 text-xs font-medium text-ink-soft underline-offset-4 hover:text-ink hover:underline">Public profile<svg width="11" height="11" viewBox="0 0 20 20" fill="none" aria-hidden><path d="M7 13L13 7M8 7h5v5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg></a>}
         </div>
 
-        <div className="mt-3 flex flex-wrap gap-1.5 text-xs">
-          <span className="rounded-full bg-paper px-2.5 py-1 text-ink">{m.rating ? <>★ {m.rating.toFixed(1)} <span className="text-ink-soft">({m.reviewCount})</span></> : <span className="text-ink-soft">No reviews yet</span>}</span>
-          {m.status === "ACTIVE" && <span className={`rounded-full px-2.5 py-1 ${m.openSlots14 ? "bg-mint/70 text-forest" : "bg-rust-pale text-rust"}`}>{m.openSlots14 ? `${m.openSlots14} open times, next 14 days` : "No open times, next 14 days"}</span>}
-          {m.status === "ACTIVE" && !m.hasPayoutDetails && <span className="rounded-full bg-lemon px-2.5 py-1 text-ink">No payout details</span>}
-        </div>
-
-        <dl className="mt-5 grid grid-cols-2 divide-x divide-line rounded-2xl bg-paper/70 py-3.5">
-          <div className="px-5">
-            <dt className="text-[11px] uppercase tracking-[0.1em] text-ink-soft">Session price</dt>
-            <dd className="mt-1 flex flex-wrap items-baseline gap-x-2"><span className="whitespace-nowrap font-display text-2xl tabular-nums text-ink">{formatMoney(m.priceMinor, m.currency)}</span><span className="text-[11px] text-ink-soft">{m.priceOverrideMinor != null ? "custom" : "standard"}</span></dd>
+        <dl className="mt-5 grid grid-cols-3 divide-x divide-line rounded-2xl bg-paper/70 py-3.5">
+          <div className="px-4">
+            <dt className="text-[11px] uppercase tracking-[0.1em] text-ink-soft">Course price</dt>
+            <dd className="mt-1 whitespace-nowrap font-display text-xl tabular-nums text-ink">{coursePrice}</dd>
           </div>
-          <div className="px-5">
-            <dt className="text-[11px] uppercase tracking-[0.1em] text-ink-soft">Sessions completed</dt>
-            <dd className="mt-1 font-display text-2xl tabular-nums text-ink">{m.sessionsCompleted}</dd>
+          <div className="px-4">
+            <dt className="text-[11px] uppercase tracking-[0.1em] text-ink-soft">Learners</dt>
+            <dd className="mt-1 font-display text-xl tabular-nums text-ink">{learners}</dd>
+          </div>
+          <div className="px-4">
+            <dt className="text-[11px] uppercase tracking-[0.1em] text-ink-soft">Company share</dt>
+            <dd className="mt-1 whitespace-nowrap font-display text-xl tabular-nums text-ink" title={`${formatMoney(revenue, "PKR")} learner gross`}>{formatMoney(company, "PKR")}</dd>
           </div>
         </dl>
+
+        <div className="mt-4">
+          <div className="mb-2 flex items-baseline justify-between gap-2">
+            <p className="text-xs font-medium uppercase tracking-[0.12em] text-ink-soft">Courses</p>
+            {feesOwed.length > 0 && <span className="text-xs text-amber-dark">{feesOwed.length} fee{feesOwed.length === 1 ? "" : "s"} still to pay</span>}
+          </div>
+          {coursesLoading ? <Skeleton className="h-16 rounded-2xl" /> : !courses.length ? (
+            <p className="rounded-2xl border border-dashed border-ink/15 px-4 py-4 text-center text-sm text-ink-soft">No courses yet. The mentor plans them from their dashboard.</p>
+          ) : (
+            <ul className="space-y-2">
+              {courses.map((c) => (
+                <li key={c.id}>
+                  <button type="button" onClick={onOpenCourses} className="flex w-full items-center gap-3 rounded-2xl bg-paper/70 px-4 py-3 text-left transition-colors hover:bg-paper">
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium text-ink">{c.title}</span>
+                      <span className="block truncate text-xs text-ink-soft">{c.schedule} · {c.sessionsCount} classes{isPublished(c) ? ` · ${c.enrolled} enrolled` : ""}</span>
+                    </span>
+                    <span className="shrink-0 text-right">
+                      <span className="block whitespace-nowrap text-sm tabular-nums text-ink">{c.priceMinor != null ? formatMoney(c.priceMinor, "PKR") : "Price not set"}</span>
+                      <span className="block whitespace-nowrap text-[11px] text-ink-soft">Fee {formatMoney(c.mentorFeeMinor, c.mentorFeeCurrency)}{c.feePaid ? " · paid" : ""}</span>
+                    </span>
+                    <Badge tone={COURSE_TONE[c.status]}>{COURSE_LABEL[c.status]}</Badge>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </div>
 
       <div className="flex-1 space-y-4 border-t border-line bg-paper/40 p-6">
@@ -696,49 +742,23 @@ function MentorRow({ m, tiers, onSaved, onOpen }: { m: AdminMentor; tiers: TierR
           <Field label="Level"><select className="input bg-white" value={level} onChange={(e) => setLevel(e.target.value as Level)}>{(Object.keys(LEVEL_LABEL) as Level[]).map((l) => <option key={l} value={l}>{LEVEL_LABEL[l]}</option>)}</select></Field>
           <Field label="Status"><select className="input bg-white" value={status} onChange={(e) => setStatus(e.target.value)}>{["ONBOARDING", "ACTIVE", "PAUSED", "SUSPENDED"].map((st) => <option key={st} value={st}>{STATUS_LABEL[st]}</option>)}</select></Field>
         </div>
-
         <div>
           <span className="mb-1.5 block text-sm font-medium text-ink">Country</span>
           <CountrySelect value={country} onChange={setCountry} />
-          <p className={`mt-1.5 text-xs ${country && local !== (m.category === "LOCAL") ? "text-amber-dark" : "text-ink-soft"}`}>
-            {!country ? `Not recognised: "${m.country}". Choose a country.` : local !== (m.category === "LOCAL") ? `Will become ${local ? "Local · PKR" : "International · GBP"}. Check the price after saving.` : local ? "Local mentor, priced in PKR" : "International mentor, priced in GBP"}
-          </p>
-        </div>
-
-        <div>
-          <div className="mb-1.5 flex items-baseline justify-between gap-2">
-            <label htmlFor={`price-${m.id}`} className="text-sm font-medium text-ink">Session price</label>
-            {override !== "" && <button type="button" onClick={() => setOverride("")} className="text-xs text-ink-soft underline-offset-4 hover:text-ink hover:underline">Use standard price</button>}
-          </div>
-          <div className={`flex items-center rounded-xl bg-white ring-1 focus-within:ring-ink/40 ${outOfRange ? "ring-rust/60" : "ring-line"}`}>
-            <span className="border-r border-line px-3.5 py-2.5 text-sm text-ink-soft">{m.currency === "PKR" ? "Rs" : "£"}</span>
-            <input id={`price-${m.id}`} className="w-full min-w-0 bg-transparent px-3.5 py-2.5 text-sm tabular-nums text-ink outline-none placeholder:text-ink-soft/70" type="number" min={range ? range.minMinor / 100 : 0} max={range ? range.maxMinor / 100 : undefined} step="1" value={override} placeholder={range ? `${range.priceMinor / 100} (standard)` : "Standard price"} onChange={(e) => setOverride(e.target.value)} />
-          </div>
-          {range && (
-            <div className="mt-3">
-              <div className="relative h-1.5 rounded-full bg-paper-dim">
-                <span className={`absolute top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full ring-2 ring-white ${outOfRange ? "bg-rust" : "bg-ink"}`} style={{ left: `${pos}%` }} />
-              </div>
-              <div className="mt-1.5 flex justify-between text-[11px] tabular-nums text-ink-soft">
-                <span>{formatMoney(range.minMinor, m.currency)}</span>
-                <span>{outOfRange ? <span className="text-rust">Outside the {LEVEL_LABEL[level]} range</span> : `Standard ${formatMoney(range.priceMinor, m.currency)}`}</span>
-                <span>{formatMoney(range.maxMinor, m.currency)}</span>
-              </div>
-            </div>
-          )}
+          <p className="mt-1.5 text-xs text-ink-soft">{country ? "Shown on their faculty profile." : `Not recognised: "${m.country}". Choose a country.`}</p>
         </div>
         {msg && <Alert>{msg}</Alert>}
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line px-6 py-4">
-        <button type="button" onClick={onOpen} className="inline-flex items-center gap-1 text-sm font-medium text-ink underline-offset-4 hover:underline">Details, availability &amp; payouts<svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden><path d="M7.5 4.5 13 10l-5.5 5.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg></button>
+        <button type="button" onClick={onOpen} className="inline-flex items-center gap-1 text-sm font-medium text-ink underline-offset-4 hover:underline">Details, profile &amp; payouts<svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden><path d="M7.5 4.5 13 10l-5.5 5.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg></button>
         <div className="flex flex-wrap items-center justify-end gap-3">
           {dirty
             ? <span className="inline-flex items-center gap-2 text-xs text-amber-dark"><span className="h-1.5 w-1.5 rounded-full bg-amber" />Unsaved changes</span>
             : <span className="inline-flex items-center gap-1.5 text-xs text-ink-soft"><svg width="13" height="13" viewBox="0 0 20 20" fill="none" aria-hidden className="text-forest"><path d="M4 10.5l4 4 8-9" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /></svg>All changes saved</span>}
           <div className="flex gap-2">
             {dirty && <Button size="sm" variant="ghost" disabled={busy} onClick={reset}>Discard</Button>}
-            <Button size="sm" disabled={!dirty || busy || outOfRange} onClick={save}>{busy ? <Spinner /> : "Save changes"}</Button>
+            <Button size="sm" disabled={!dirty || busy} onClick={save}>{busy ? <Spinner /> : "Save changes"}</Button>
           </div>
         </div>
       </div>
@@ -766,20 +786,20 @@ function Bookings() {
   const reported = useApi<AdminBooking[]>("/admin/bookings?status=REPORTED");
   const changed = () => { reload(); reported.reload(); };
   return (
-    <Panel title="Bookings" action={data ? <span className="text-sm text-ink-soft">{data.length} shown</span> : undefined}>
-      <FilterChips className="mb-4" options={[...["", "PENDING_PAYMENT", "CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW"].map((k) => [k, k ? STATUS_LABEL[k] : "All"] as const), ["REPORTED", "Mentor reports"] as const]} value={status} onChange={setStatus} counts={reported.data?.length ? { REPORTED: reported.data.length } : {}} highlight="REPORTED" label="Filter bookings" />
+    <Panel title="Enrolments" action={data ? <span className="text-sm text-ink-soft">{data.length} shown</span> : undefined}>
+      <FilterChips className="mb-4" options={[...(["", "PENDING_PAYMENT", "CONFIRMED", "COMPLETED", "CANCELLED"] as const).map((k) => [k, k === "CONFIRMED" ? "Enrolled" : k ? STATUS_LABEL[k] : "All"] as const), ...(reported.data?.length ? [["REPORTED", "Reports"] as const] : [])]} value={status} onChange={setStatus} counts={reported.data?.length ? { REPORTED: reported.data.length } : {}} highlight="REPORTED" label="Filter enrolments" />
       {error && <Alert>{error}</Alert>}
-      {loading ? <Skeleton className="h-48" /> : !data?.length ? <EmptyState title="No bookings" description="Bookings appear here as mentees book sessions." /> : (
+      {loading ? <Skeleton className="h-48" /> : !data?.length ? <EmptyState title="No enrolments yet" description="Enrolments appear here as learners take places on courses." /> : (
         <div className="-mx-6 overflow-x-auto sm:-mx-7">
           <table className="w-full min-w-[860px] text-left text-sm">
-            <thead className="text-xs text-ink-soft"><tr className="border-y border-line bg-paper/60">{["Booking", "Mentee", "Mentor", "When", "Amount", "Payment", "Status"].map((h) => <th key={h} className="px-4 py-3 font-medium first:pl-6 last:pr-6 sm:first:pl-7 sm:last:pr-7">{h}</th>)}</tr></thead>
+            <thead className="text-xs text-ink-soft"><tr className="border-y border-line bg-paper/60">{["Reference", "Learner", "Course", "First class", "Amount", "Payment", "Status"].map((h) => <th key={h} className="px-4 py-3 font-medium first:pl-6 last:pr-6 sm:first:pl-7 sm:last:pr-7">{h}</th>)}</tr></thead>
             <tbody className="divide-y divide-line">{data.map((b) => {
               const why = cancelExplanation(b);
               return (
                 <tr key={b.id} onClick={() => setOpen(b.reference)} className="cursor-pointer align-top transition-colors hover:bg-paper/60">
                   <td className="py-3.5 pl-6 pr-4 sm:pl-7"><button type="button" onClick={(e) => { e.stopPropagation(); setOpen(b.reference); }} className="whitespace-nowrap font-mono text-xs text-ink underline-offset-4 hover:underline">{b.reference}</button></td>
                   <td className="px-4 py-3.5"><span className="flex items-center gap-2.5"><Avatar name={b.student.name} size="h-7 w-7 text-[10px]" /><span className="text-ink">{b.student.name}</span></span></td>
-                  <td className="px-4 py-3.5 text-ink">{b.mentor.user.name}</td>
+                  <td className="px-4 py-3.5"><span className="block max-w-[16rem] truncate text-ink">{b.course?.title ?? b.agenda}</span><span className="block text-xs text-ink-soft">{b.mentor.user.name}</span></td>
                   <td className="whitespace-nowrap px-4 py-3.5 text-ink-soft">{new Date(b.slot.startAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} · {fmtTime(b.slot.startAt)}</td>
                   <td className="whitespace-nowrap px-4 py-3.5 text-ink">{formatMoney(b.priceMinor, b.currency)}</td>
                   <td className="whitespace-nowrap px-4 py-3.5 text-xs text-ink-soft">{paymentLabel(b)}</td>
@@ -799,16 +819,9 @@ function Bookings() {
   );
 }
 
-const COMMISSION = [
-  { key: "commission_professional", label: "Professional", hint: "Tier 1 · first session with a mentor", tone: "bg-sky" },
-  { key: "commission_senior_specialist", label: "Senior Specialist", hint: "Tier 2 · first session with a mentor", tone: "bg-mint" },
-  { key: "commission_executive", label: "Executive / Industry Leader", hint: "Tier 3 · first session with a mentor", tone: "bg-lilac" },
-  { key: "repeat_commission_percent", label: "Returning mentee", hint: "Any tier · another 1:1 with the same mentor", tone: "bg-lemon" },
-] as const;
-
 const SETTING_NAMES: Record<string, string> = {
   commission_professional: "Professional commission", commission_senior_specialist: "Senior Specialist commission", commission_executive: "Executive commission",
-  repeat_commission_percent: "Returning mentee commission", reschedule_notice_hours: "Cancellation and rescheduling deadline", group_price_percent: "Group seat price",
+  repeat_commission_percent: "Returning mentee commission", reschedule_notice_hours: "Cancellation deadline", group_price_percent: "Group seat price",
 };
 
 function SettingsTab({ role }: { role: "OWNER" | "OPERATIONS" | "FINANCE" }) {
@@ -822,7 +835,7 @@ function SettingsTab({ role }: { role: "OWNER" | "OPERATIONS" | "FINANCE" }) {
           <TeamSettings />
         </SettingsSection>
       )}
-      {role === "OWNER" ? <div className="pt-10"><PricingSettings /></div> : <p className="pt-10 text-sm text-ink-soft">Pricing, commission and payment settings are managed by an owner.</p>}
+      {role === "OWNER" ? <div className="pt-10"><PricingSettings /></div> : <p className="pt-10 text-sm text-ink-soft">Payment and enrolment settings are managed by an owner.</p>}
     </div>
   );
 }
@@ -850,7 +863,7 @@ function ExportMenu({ query }: { query: string }) {
       </button>
       {open && (
         <div className="absolute right-0 top-full z-30 mt-2 w-72 animate-[pop_0.15s_ease-out] rounded-2xl bg-white p-2 shadow-xl ring-1 ring-line">
-          {([["bookings", "Bookings", "Every booking with price, commission, mentor share and payment"], ["payouts", "Mentor payouts", "Each payout with sessions and transfer reference"], ["refunds", "Refunds", "Cancelled bookings that were refunded"]] as const).map(([k, label, text]) => (
+          {([["bookings", "Enrolments", "Every enrolment with price and payment"], ["payouts", "Mentor payouts", "Each fee paid, with its transfer reference"], ["refunds", "Refunds", "Cancelled enrolments that were refunded"]] as const).map(([k, label, text]) => (
             <button key={k} type="button" disabled={!!busy} onClick={() => download(k, label)} className="flex w-full items-start gap-3 rounded-xl px-3 py-2.5 text-left hover:bg-paper disabled:opacity-60">
               <span className="mt-0.5 rounded-md bg-mint px-1.5 py-0.5 text-[10px] font-medium text-forest">CSV</span>
               <span className="min-w-0"><span className="block text-sm font-medium text-ink">{busy === k ? "Preparing…" : label}</span><span className="block text-xs text-ink-soft">{text}</span></span>
@@ -864,7 +877,6 @@ function ExportMenu({ query }: { query: string }) {
 }
 
 function PricingSettings() {
-  const rules = useApi<TierRule[]>("/admin/pricing");
   const settings = useApi<Record<string, string>>("/admin/settings");
   const toast = useToast();
   const [sv, setSv] = useState<Record<string, string>>({});
@@ -894,60 +906,21 @@ function PricingSettings() {
 
   return (
     <div className="divide-y divide-line">
-      <SettingsSection title="Tier price ranges" text="The price range per 30-minute session for each tier. Every mentor is priced inside it: the standard price, or their own price from the Mentors tab. The public pricing page shows these ranges.">
-        {rules.loading ? <Skeleton className="h-64 rounded-3xl" /> : (
-          <div className="space-y-4">
-            {(Object.keys(LEVEL_LABEL) as Level[]).map((l, i) => (
-              <div key={l} className="rounded-3xl bg-white p-5 ring-1 ring-line sm:p-6">
-                <div className="flex flex-wrap items-center gap-3">
-                  <span className={`rounded-full px-3 py-1 text-xs font-medium text-ink ${["bg-sky", "bg-mint", "bg-lilac"][i]}`}>Tier {i + 1}</span>
-                  <p className="font-display text-2xl leading-tight text-ink">{LEVEL_LABEL[l]}</p>
-                </div>
-                <div className="mt-4 divide-y divide-line">
-                  {(["PKR", "GBP"] as const).map((c) => {
-                    const r = rules.data?.find((x) => x.level === l && x.currency === c);
-                    return r ? <RangeEditor key={c} rule={r} onSaved={(t) => { toast(t); rules.reload(); }} onError={(t) => toast(t, "error")} /> : null;
-                  })}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </SettingsSection>
-
-      <SettingsSection title="Bank app & QR" text="Mentees paying in PKR can scan your QR code or transfer from any banking app, then send the transaction ID. You approve each payment in the Overview after checking your bank statement.">
+      <SettingsSection title="Bank app & QR" text="Learners can scan your QR code or transfer from any Pakistani banking app, then send the transaction ID. You approve each payment in the Overview after checking your bank statement.">
         <BankSettings />
-      </SettingsSection>
-
-      <SettingsSection title="Platform commission" text="The platform's share of each paid session; the rest goes to the mentor. A lower rate applies when a mentee books another 1:1 with a mentor they've already met. Each booking keeps the rate in force when it was made.">
-        <div className="grid gap-4 sm:grid-cols-2">
-          {COMMISSION.map(({ key, label, hint, tone }) => {
-            const current = settings.data?.[key] ?? (key.startsWith("commission_") ? settings.data?.commission_percent : undefined);
-            const f = field(key, current);
-            const pct = Number(f.value);
-            return (
-              <div key={key} className="flex flex-col rounded-3xl bg-white p-5 ring-1 ring-line sm:p-6">
-                <span className={`self-start rounded-full px-3 py-1 text-xs font-medium text-ink ${tone}`}>{label}</span>
-                <p className="mb-4 mt-2.5 text-xs leading-relaxed text-ink-soft">{hint}</p>
-                <SettingInput {...f} unit="%" max={100} placeholder={key === "repeat_commission_percent" ? "15" : "Not set"} />
-                <p className="mt-2 text-xs text-ink-soft">{f.value !== "" && pct >= 0 && pct <= 100 ? `Mentor keeps ${100 - pct}%` : key === "repeat_commission_percent" ? "Default is 15%" : "Set a rate to calculate payouts"}</p>
-              </div>
-            );
-          })}
-        </div>
       </SettingsSection>
 
       <SettingsSection title="Interview slots" text="The half-hour slots you offer when scheduling a mentor interview. Slots already booked can't be picked again.">
         <div className="rounded-3xl bg-white p-5 ring-1 ring-line sm:p-6"><InterviewSlotEditor /></div>
       </SettingsSection>
 
-      <SettingsSection title="Booking rules" text="Platform-wide rules. Changes apply to new bookings straight away.">
+      <SettingsSection title="Enrolment rules" text="Platform-wide rules. Changes apply straight away. Course prices are set on each course, in the Courses tab.">
         <div className="grid gap-4 sm:grid-cols-2">
-          {([["reschedule_notice_hours", "Cancellation and rescheduling deadline", "How long before a session a mentee can still cancel for a full refund or move it. After this there is no refund. Default is 48 hours (2 days).", "hours", undefined], ["group_price_percent", "Group seat price", "Each group seat as a share of the mentor's 1:1 price. Default is 40%.", "%", 100]] as const).map(([k, label, hint, unit, max]) => (
+          {([["reschedule_notice_hours", "Cancellation deadline", "How long before a course's first class a learner can still cancel for a full refund to their POINT B balance. After this there is no refund. Default is 48 hours (2 days).", "hours", undefined]] as const).map(([k, label, hint, unit, max]) => (
             <div key={k} className="flex flex-col rounded-3xl bg-white p-5 ring-1 ring-line sm:p-6">
               <p className="font-display text-2xl leading-tight text-ink">{label}</p>
               <p className="mb-4 mt-1.5 text-xs leading-relaxed text-ink-soft">{hint}</p>
-              <div className="mt-auto"><SettingInput {...field(k, settings.data?.[k])} unit={unit} max={max} placeholder={k === "group_price_percent" ? "40" : "48"} /></div>
+              <div className="mt-auto"><SettingInput {...field(k, settings.data?.[k])} unit={unit} max={max} placeholder="48" /></div>
             </div>
           ))}
         </div>
@@ -1049,42 +1022,6 @@ function BankSettings() {
         {dirty && <Button size="sm" variant="ghost" disabled={busy} onClick={() => { setF(null); setQr(undefined); }}>Discard</Button>}
         <Button size="sm" disabled={!dirty || busy} onClick={save}>{busy ? <Spinner /> : "Save"}</Button>
       </div>
-    </div>
-  );
-}
-
-function RangeEditor({ rule, onSaved, onError }: { rule: TierRule; onSaved: (msg: string) => void; onError: (msg: string) => void }) {
-  const major = (x: number) => String(x / 100);
-  const [f, setF] = useState({ min: major(rule.minMinor), max: major(rule.maxMinor), std: major(rule.priceMinor) });
-  const [busy, setBusy] = useState(false);
-  const dirty = f.min !== major(rule.minMinor) || f.max !== major(rule.maxMinor) || f.std !== major(rule.priceMinor);
-  const [min, max, std] = [Number(f.min), Number(f.max), Number(f.std)];
-  const problem = !f.min || !f.max || !f.std ? "Fill in all three prices." : min > max ? "Lowest is above highest." : std < min || std > max ? "Standard must be inside the range." : null;
-  async function save() {
-    setBusy(true);
-    try { await api("/admin/pricing", { method: "PUT", body: { level: rule.level, currency: rule.currency, minMinor: Math.round(min * 100), maxMinor: Math.round(max * 100), priceMinor: Math.round(std * 100) } }); onSaved(`${LEVEL_LABEL[rule.level]} · ${rule.currency === "PKR" ? "local" : "international"} range saved.`); }
-    catch (e) { onError(errMsg(e)); } finally { setBusy(false); }
-  }
-  const sym = rule.currency === "PKR" ? "Rs" : "£";
-  return (
-    <div className="py-4 first:pt-0 last:pb-0">
-      <div className="grid items-end gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto] xl:grid-cols-[120px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]">
-        <div className="sm:col-span-4 xl:col-span-1 xl:pb-2">
-          <p className="text-sm font-medium text-ink">{rule.currency === "PKR" ? "Local" : "International"}</p>
-          <p className="text-xs text-ink-soft">{rule.currency}</p>
-        </div>
-        {([["min", "Lowest"], ["max", "Highest"], ["std", "Standard"]] as const).map(([k, label]) => (
-          <label key={k} className="block min-w-0">
-            <span className="text-xs text-ink-soft">{label}</span>
-            <span className="mt-1 flex items-center gap-1.5 rounded-xl bg-paper px-3 ring-1 ring-line focus-within:ring-ink/40">
-              <span className="shrink-0 text-xs text-ink-soft">{sym}</span>
-              <input className="w-full min-w-0 bg-transparent py-2.5 text-sm tabular-nums text-ink outline-none" type="number" min={1} step="1" value={f[k]} onChange={(e) => setF({ ...f, [k]: e.target.value })} />
-            </span>
-          </label>
-        ))}
-        <Button size="sm" variant={dirty && !problem ? "primary" : "secondary"} className="sm:mb-1" disabled={!dirty || !!problem || busy} onClick={save}>{busy ? <Spinner /> : "Save"}</Button>
-      </div>
-      {((dirty && problem) || rule.isDefault) && <p className={`mt-2 text-xs ${dirty && problem ? "text-rust" : "text-ink-soft"}`}>{dirty && problem ? problem : "Provisional default"}</p>}
     </div>
   );
 }

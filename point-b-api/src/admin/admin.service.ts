@@ -336,7 +336,8 @@ export class AdminService {
     if (dto.status === 'ACTIVE' && !m.agreementAcceptedAt) throw new BadRequestException('Mentor has not accepted the agreement');
     if (dto.country !== undefined) dto.category = categoryFor(dto.country);
     // A mentor's own price must sit inside the range of the tier they end up in.
-    const override = dto.priceOverrideMinor !== undefined ? dto.priceOverrideMinor : m.priceOverrideMinor;
+    // Courses are priced per course now, so the old 1:1 price is only checked when someone actually sets one.
+    const override = dto.priceOverrideMinor;
     if (override != null) {
       const r = await tierRule(this.prisma, dto.level ?? m.level, currencyFor(dto.category ?? m.category));
       if (override < r.minMinor || override > r.maxMinor) {
@@ -416,6 +417,7 @@ export class AdminService {
         slot: { select: { startAt: true, endAt: true, kind: true, capacity: true } },
         student: { select: { id: true, name: true, email: true, phone: true } },
         mentor: { select: { id: true, slug: true, level: true, user: { select: { name: true, email: true } } } },
+        course: { select: { id: true, title: true, slug: true, mentorFeeMinor: true, mentorFeeCurrency: true } },
         payments: { orderBy: { createdAt: 'desc' }, include: { proof: { select: { createdAt: true } } } },
         payout: { select: { id: true, createdAt: true, reference: true, note: true, amountMinor: true, sessions: true } },
         review: { select: { rating: true, comment: true, status: true, createdAt: true } },
@@ -423,8 +425,10 @@ export class AdminService {
     });
     if (!b) throw new NotFoundException('Booking not found');
     const rules = await commissionRules(this.prisma);
-    const percent = b.commissionPercent ?? rules.tier[b.mentor.level];
-    const feeMinor = feeForBooking(b, percent);
+    // Course enrolments: the learner pays POINT B in full; the mentor is paid a fixed course fee separately.
+    const isCourse = !!b.courseId;
+    const percent = isCourse ? null : (b.commissionPercent ?? rules.tier[b.mentor.level]);
+    const feeMinor = isCourse ? b.priceMinor : feeForBooking(b, percent);
     const reviewerIds = [...new Set(b.payments.map((p) => p.reviewedBy).filter((x): x is string => !!x))];
     const [reviewers, history, promo] = await Promise.all([
       this.prisma.user.findMany({ where: { id: { in: reviewerIds } }, select: { id: true, name: true } }),
@@ -435,7 +439,12 @@ export class AdminService {
     return {
       ...rest,
       promo,
-      money: { listPriceMinor: b.listPriceMinor ?? b.priceMinor, discountMinor: b.discountMinor ?? 0, paidMinor: b.priceMinor, commissionPercent: percent, feeMinor, payoutMinor: feeMinor == null ? null : b.priceMinor - feeMinor, feeIsEstimate: b.platformFeeMinor == null },
+      money: {
+        listPriceMinor: b.listPriceMinor ?? b.priceMinor, discountMinor: b.discountMinor ?? 0, paidMinor: b.priceMinor,
+        commissionPercent: percent, feeMinor, payoutMinor: isCourse ? 0 : (feeMinor == null ? null : b.priceMinor - feeMinor),
+        feeIsEstimate: !isCourse && b.platformFeeMinor == null,
+        courseEnrolment: isCourse,
+      },
       payments: payments.map(({ proof, reviewedBy, ...p }) => ({ ...p, hasProof: !!proof, reviewedByName: reviewers.find((r) => r.id === reviewedBy)?.name ?? null })),
       history: history.map((h) => ({ action: h.action, detail: h.detail, at: h.createdAt, by: h.admin.name })),
     };
@@ -489,16 +498,42 @@ export class AdminService {
       this.prisma.booking.findMany({
         where: { status: { in: ['CONFIRMED', 'COMPLETED'] }, ...made },
         select: {
-          currency: true, priceMinor: true, platformFeeMinor: true, listPriceMinor: true, mentorPaidInFull: true, commissionPercent: true, discountMinor: true, repeatStudent: true, sessionKind: true, payoutId: true, createdAt: true,
+          currency: true, priceMinor: true, platformFeeMinor: true, listPriceMinor: true, mentorPaidInFull: true, commissionPercent: true, discountMinor: true, repeatStudent: true, sessionKind: true, payoutId: true, createdAt: true, courseId: true,
           payments: { where: { status: 'SUCCEEDED' }, select: { provider: true }, take: 1 },
           mentor: { select: { id: true, level: true, user: { select: { name: true } } } },
         },
       }),
     ]);
-    // Each booking's fee was fixed when it was made (tier rate, or the repeat-student rate); older ones use today's tier rate.
-    const feeFor = (b: (typeof paid)[number]) => feeForBooking(b, rules.tier[b.mentor.level]);
-    const rateFor = (b: (typeof paid)[number]) => b.commissionPercent ?? rules.tier[b.mentor.level];
-    const tally = (rows: typeof paid) => {
+
+    // Course enrolments use a fixed mentor fee; 1:1 sessions still use tier %. Never mix enrolments into BY TIER.
+    const isCourse = (b: { courseId: string | null }) => !!b.courseId;
+    const sessionPaid = paid.filter((b) => !isCourse(b));
+    const coursePaid = paid.filter(isCourse);
+    const courseIdsFromBookings = [...new Set(coursePaid.map((b) => b.courseId!).filter(Boolean))];
+    const [publishedCourses, courseFeePayouts] = await Promise.all([
+      this.prisma.course.findMany({
+        where: {
+          status: { in: ['LIVE', 'CLOSED'] },
+          ...(inRange
+            ? { OR: [{ id: { in: courseIdsFromBookings } }, { reviewedAt: inRange }] }
+            : {}),
+        },
+        select: {
+          id: true, title: true, mentorFeeMinor: true, mentorFeeCurrency: true, mentorId: true, reviewedAt: true,
+          mentor: { select: { id: true, level: true, user: { select: { name: true } } } },
+        },
+      }),
+      this.prisma.mentorPayout.findMany({
+        where: { courseId: { not: null } },
+        select: { courseId: true, amountMinor: true, currency: true, createdAt: true },
+      }),
+    ]);
+    const feePaidByCourse = new Map(courseFeePayouts.filter((p) => p.courseId).map((p) => [p.courseId!, p]));
+
+    // Each 1:1 booking's fee was fixed when it was made; older ones use today's tier rate.
+    const feeFor = (b: (typeof sessionPaid)[number]) => feeForBooking(b, rules.tier[b.mentor.level]);
+    const rateFor = (b: (typeof sessionPaid)[number]) => b.commissionPercent ?? rules.tier[b.mentor.level];
+    const tallySessions = (rows: typeof sessionPaid) => {
       const grossMinor = rows.reduce((a, b) => a + b.priceMinor, 0);
       const fees = rows.map(feeFor);
       const feeMinor = fees.some((f) => f == null) ? null : fees.reduce((a: number, f) => a + (f ?? 0), 0);
@@ -506,44 +541,114 @@ export class AdminService {
       const paidOutMinor = payoutMinor == null ? null : rows.filter((b) => b.payoutId).reduce((a, b) => a + b.priceMinor - feeFor(b)!, 0);
       return { sessions: rows.length, grossMinor, feeMinor, payoutMinor, paidOutMinor, dueMinor: payoutMinor == null ? null : payoutMinor - paidOutMinor!, unpaidSessions: rows.filter((b) => !b.payoutId).length };
     };
-    const groupRows = (rows: typeof paid, key: (b: (typeof paid)[number]) => string) => {
-      const groups = new Map<string, typeof paid>();
+    const groupRows = <T,>(rows: T[], key: (b: T) => string) => {
+      const groups = new Map<string, T[]>();
       for (const b of rows) groups.set(key(b), [...(groups.get(key(b)) ?? []), b]);
       return [...groups.values()];
     };
-    const configured = Object.values(rules.tier).some((v) => v != null);
-    const finance = reportCurrencies([...paid, ...cancelled]).map((currency) => {
-      const rows = paid.filter((b) => b.currency === currency);
-      const total = tally(rows);
+    const tierConfigured = Object.values(rules.tier).some((v) => v != null);
+
+    const finance = reportCurrencies([...paid, ...cancelled, ...publishedCourses.map((c) => ({ currency: c.mentorFeeCurrency }))]).map((currency) => {
+      const allRows = paid.filter((b) => b.currency === currency);
+      const sessions = sessionPaid.filter((b) => b.currency === currency);
+      const enrolments = coursePaid.filter((b) => b.currency === currency);
+      const coursesHere = publishedCourses.filter((c) => c.mentorFeeCurrency === currency);
+      const sessionTotal = tallySessions(sessions);
+      const courseGross = enrolments.reduce((a, b) => a + b.priceMinor, 0);
+      const courseFees = coursesHere.reduce((a, c) => a + c.mentorFeeMinor, 0);
+      const courseFeesPaid = coursesHere.reduce((a, c) => a + (feePaidByCourse.get(c.id)?.amountMinor ?? 0), 0);
+      const courseFeesDue = courseFees - courseFeesPaid;
+      const sessionConfigured = !sessions.length || sessionTotal.feeMinor != null;
+      // Courses always have a known fixed fee; 1:1 needs tier rates when sessions exist.
+      const configured = sessionConfigured && (tierConfigured || !sessions.length || !!coursesHere.length || !!enrolments.length);
+      const grossMinor = sessionTotal.grossMinor + courseGross;
+      const mentorPayoutsMinor = configured ? (sessionTotal.payoutMinor ?? 0) + courseFees : null;
+      const platformRevenueMinor = configured ? grossMinor - mentorPayoutsMinor! : null;
+      const payoutsPaidMinor = configured ? (sessionTotal.paidOutMinor ?? 0) + courseFeesPaid : null;
+      const payoutsDueMinor = configured ? (sessionTotal.dueMinor ?? 0) + courseFeesDue : null;
       const dropped = cancelled.filter((b) => b.currency === currency);
       const refunded = dropped.filter((b) => b.payments.length > 0);
       const sum = (list: { priceMinor: number }[]) => list.reduce((a, b) => a + b.priceMinor, 0);
+
+      const courseRows = coursesHere.map((c) => {
+        const mine = enrolments.filter((b) => b.courseId === c.id);
+        const gross = mine.reduce((a, b) => a + b.priceMinor, 0);
+        const paidFee = feePaidByCourse.get(c.id);
+        return {
+          id: c.id, title: c.title, mentorId: c.mentor.id, mentorName: c.mentor.user.name,
+          enrolments: mine.length, grossMinor: gross, mentorFeeMinor: c.mentorFeeMinor,
+          companyMinor: gross - c.mentorFeeMinor, feePaid: !!paidFee, feePaidAt: paidFee?.createdAt ?? null,
+        };
+      }).sort((a, b) => b.grossMinor - a.grossMinor || b.mentorFeeMinor - a.mentorFeeMinor);
+
+      // Mentors: 1:1 session tallies plus fixed course fees in this currency.
+      const mentorMap = new Map<string, { id: string; name: string; level: MentorLevel; sessions: number; grossMinor: number; payoutMinor: number; paidOutMinor: number; dueMinor: number; unpaidSessions: number; courses: number }>();
+      for (const g of groupRows(sessions, (b) => b.mentor.id)) {
+        const t = tallySessions(g);
+        mentorMap.set(g[0].mentor.id, {
+          id: g[0].mentor.id, name: g[0].mentor.user.name, level: g[0].mentor.level,
+          sessions: t.sessions, grossMinor: t.grossMinor, payoutMinor: t.payoutMinor ?? 0, paidOutMinor: t.paidOutMinor ?? 0,
+          dueMinor: t.dueMinor ?? 0, unpaidSessions: t.unpaidSessions, courses: 0,
+        });
+      }
+      for (const c of coursesHere) {
+        const mine = enrolments.filter((b) => b.courseId === c.id);
+        const paidFee = feePaidByCourse.get(c.id);
+        const m = mentorMap.get(c.mentorId) ?? {
+          id: c.mentor.id, name: c.mentor.user.name, level: c.mentor.level,
+          sessions: 0, grossMinor: 0, payoutMinor: 0, paidOutMinor: 0, dueMinor: 0, unpaidSessions: 0, courses: 0,
+        };
+        m.courses += 1;
+        m.grossMinor += mine.reduce((a, b) => a + b.priceMinor, 0);
+        m.payoutMinor += c.mentorFeeMinor;
+        m.paidOutMinor += paidFee?.amountMinor ?? 0;
+        m.dueMinor += paidFee ? 0 : c.mentorFeeMinor;
+        if (!paidFee) m.unpaidSessions += 1; // unpaid course fee counts as an open payout item
+        mentorMap.set(c.mentorId, m);
+      }
+
       return {
-        currency, grossMinor: total.grossMinor, refundedMinor: sum(refunded), refundedCount: refunded.length,
+        currency, grossMinor, refundedMinor: sum(refunded), refundedCount: refunded.length,
         unpaidCancelledMinor: sum(dropped) - sum(refunded), unpaidCancelledCount: dropped.length - refunded.length,
-        platformRevenueMinor: configured ? total.feeMinor : null, mentorPayoutsMinor: configured ? total.payoutMinor : null,
-        payoutsPaidMinor: configured ? total.paidOutMinor : null, payoutsDueMinor: configured ? total.dueMinor : null,
-        listValueMinor: rows.reduce((a, b) => a + (b.listPriceMinor ?? b.priceMinor), 0),
-        discountsMinor: rows.reduce((a, b) => a + (b.discountMinor ?? 0), 0), repeatSessions: rows.filter((b) => b.repeatStudent).length,
-        sessions: total.sessions,
+        platformRevenueMinor, mentorPayoutsMinor, payoutsPaidMinor, payoutsDueMinor,
+        listValueMinor: allRows.reduce((a, b) => a + (b.listPriceMinor ?? b.priceMinor), 0),
+        discountsMinor: allRows.reduce((a, b) => a + (b.discountMinor ?? 0), 0),
+        repeatSessions: sessions.filter((b) => b.repeatStudent).length,
+        sessions: allRows.length,
+        sessionCount: sessions.length, courseEnrolmentCount: enrolments.length,
+        courseGrossMinor: courseGross, courseMentorFeesMinor: courseFees,
+        courseCompanyMinor: courseGross - courseFees,
+        courses: courseRows,
+        // BY TIER is 1:1 only — course enrolments never appear here.
         tiers: (Object.keys(rules.tier) as MentorLevel[]).map((level) => {
-          const inTier = rows.filter((b) => b.mentor.level === level);
+          const inTier = sessions.filter((b) => b.mentor.level === level);
           return {
-            level, currentPercent: rules.tier[level], ...tally(inTier),
-            // Split by the rate actually charged, so a tier whose rate has changed still adds up.
+            level, currentPercent: rules.tier[level], ...tallySessions(inTier),
             rates: groupRows(inTier, (b) => `${b.repeatStudent ? 'r' : 's'}${rateFor(b)}`)
-              .map((g) => ({ returning: !!g[0].repeatStudent, percent: rateFor(g[0]), ...tally(g) }))
+              .map((g) => ({ returning: !!g[0].repeatStudent, percent: rateFor(g[0]), ...tallySessions(g) }))
               .sort((x, y) => (y.percent ?? 0) - (x.percent ?? 0)),
           };
         }),
-        kinds: (['ONE_TO_ONE', 'GROUP'] as const).map((kind) => ({ kind, ...tally(rows.filter((b) => b.sessionKind === kind)) })),
-        methods: groupRows(rows, (b) => b.payments[0]?.provider ?? 'unknown').map((g) => ({ method: g[0].payments[0]?.provider ?? 'unknown', ...tally(g) })).sort((x, y) => y.grossMinor - x.grossMinor),
-        trend: trendFor(rows, from, to),
-        mentors: groupRows(rows, (b) => b.mentor.id).map((g) => ({ id: g[0].mentor.id, name: g[0].mentor.user.name, level: g[0].mentor.level, ...tally(g) })).sort((x, y) => y.grossMinor - x.grossMinor),
+        kinds: (['ONE_TO_ONE', 'GROUP'] as const).map((kind) => {
+          const rows = allRows.filter((b) => b.sessionKind === kind);
+          return { kind, sessions: rows.length, grossMinor: rows.reduce((a, b) => a + b.priceMinor, 0), feeMinor: null as number | null, payoutMinor: null as number | null };
+        }),
+        methods: groupRows(allRows, (b) => b.payments[0]?.provider ?? 'unknown').map((g) => ({
+          method: g[0].payments[0]?.provider ?? 'unknown',
+          sessions: g.length, grossMinor: g.reduce((a, b) => a + b.priceMinor, 0), feeMinor: null as number | null, payoutMinor: null as number | null,
+        })).sort((x, y) => y.grossMinor - x.grossMinor),
+        trend: trendFor(allRows, from, to),
+        mentors: [...mentorMap.values()].map((m) => ({
+          id: m.id, name: m.name, level: m.level, sessions: m.sessions + m.courses, grossMinor: m.grossMinor,
+          payoutMinor: configured ? m.payoutMinor : null, paidOutMinor: configured ? m.paidOutMinor : null,
+          dueMinor: configured ? m.dueMinor : null, unpaidSessions: m.unpaidSessions, courses: m.courses,
+        })).sort((x, y) => (y.dueMinor ?? 0) - (x.dueMinor ?? 0) || y.grossMinor - x.grossMinor),
       };
     });
     const count = (rows: { status: string; _count: number }[], s: string) => rows.find((r) => r.status === s)?._count ?? 0;
     const totalBookings = bookings.reduce((s, b) => s + b._count, 0);
+    // Overview is ready whenever courses exist (fixed fees) or 1:1 tier rates are set.
+    const commissionConfigured = tierConfigured || publishedCourses.length > 0 || coursePaid.length > 0;
     return {
       applications: Object.fromEntries(apps.map((a) => [a.status, a._count])),
       applicationsOverall: Object.fromEntries(appsOverall.map((a) => [a.status, a._count])),
@@ -551,7 +656,7 @@ export class AdminService {
       bookings: Object.fromEntries(bookings.map((b) => [b.status, b._count])),
       bookingConversion: totalBookings ? (count(bookings, 'CONFIRMED') + count(bookings, 'COMPLETED')) / totalBookings : null,
       repeatStudents: repeat.length,
-      commissionConfigured: configured, commission: rules, finance, video, balancesHeld: await this.wallet.totalsHeld(),
+      commissionConfigured, commission: rules, finance, video, balancesHeld: await this.wallet.totalsHeld(),
     };
   }
 

@@ -22,7 +22,8 @@ interface BookingDetailData {
   student: { id: string; name: string; email: string; phone: string | null };
   mentor: { slug: string; level: Level; user: { name: string; email: string } };
   promo: { code: string; percentOff: number } | null;
-  money: { listPriceMinor: number; discountMinor: number; paidMinor: number; commissionPercent: number | null; feeMinor: number | null; payoutMinor: number | null; feeIsEstimate: boolean };
+  money: { listPriceMinor: number; discountMinor: number; paidMinor: number; commissionPercent: number | null; feeMinor: number | null; payoutMinor: number | null; feeIsEstimate: boolean; courseEnrolment?: boolean };
+  course?: { id: string; title: string; slug: string; mentorFeeMinor: number; mentorFeeCurrency: Currency } | null;
   payments: DetailPayment[];
   payout: { createdAt: string; reference: string | null; note: string | null; amountMinor: number; sessions: number } | null;
   review: { rating: number; comment: string; status: string | null; createdAt: string } | null;
@@ -162,19 +163,36 @@ export function BookingDetailModal({ reference, onClose, onChanged }: { referenc
 
           <section>
             <SectionTitle>Money</SectionTitle>
-            <Sum lines={[
-              ["Price before discounts", money(b.money.listPriceMinor)],
-              [b.promo ? `Promo ${b.promo.code} (${b.promo.percentOff}% off)` : "Promo discount", `− ${money(b.money.discountMinor)}`],
-              ["Mentee paid", money(b.money.paidMinor), true],
-              [`Company revenue${b.money.commissionPercent != null ? ` (${b.money.commissionPercent}%${b.repeatStudent ? ", returning mentee" : ""})` : ""}`, b.money.feeMinor == null ? "Not configured" : `− ${money(b.money.feeMinor)}`],
-              ["Mentor earns", money(b.money.payoutMinor), true],
-            ]} />
-            <p className="mt-2 text-xs text-ink-soft">
-              {b.payout ? <>Paid to the mentor on {short(b.payout.createdAt)}{b.payout.reference ? `, ref ${b.payout.reference}` : ""}{b.payout.sessions > 1 ? ` (part of a ${money(b.payout.amountMinor)} payout for ${b.payout.sessions} sessions)` : ""}.</>
-                : b.status === "CONFIRMED" || b.status === "COMPLETED" ? "Not paid to the mentor yet." : "No mentor payout for this booking."}
-              {b.walletAppliedMinor ? ` ${money(b.walletAppliedMinor)} of the price was paid from the mentee's POINT B balance.` : ""}
-              {b.money.feeIsEstimate && b.money.feeMinor != null ? " Commission uses today's tier rate, as this booking was made before rates were saved on bookings." : ""}
-            </p>
+            {b.money.courseEnrolment || b.course ? (
+              <>
+                <Sum lines={[
+                  ["Price before discounts", money(b.money.listPriceMinor)],
+                  [b.promo ? `Promo ${b.promo.code} (${b.promo.percentOff}% off)` : "Promo discount", `− ${money(b.money.discountMinor)}`],
+                  ["Learner paid", money(b.money.paidMinor), true],
+                  ["To POINT B (enrolment)", money(b.money.paidMinor), true],
+                ]} />
+                <p className="mt-2 text-xs text-ink-soft">
+                  This is a course enrolment. The learner pays POINT B in full; the mentor is owed a fixed course fee{b.course ? ` (${formatMoney(b.course.mentorFeeMinor, b.course.mentorFeeCurrency)} for ${b.course.title})` : ""}, settled separately — not a tier commission on this booking.
+                  {b.walletAppliedMinor ? ` ${money(b.walletAppliedMinor)} of the price was paid from the learner's POINT B balance.` : ""}
+                </p>
+              </>
+            ) : (
+              <>
+                <Sum lines={[
+                  ["Price before discounts", money(b.money.listPriceMinor)],
+                  [b.promo ? `Promo ${b.promo.code} (${b.promo.percentOff}% off)` : "Promo discount", `− ${money(b.money.discountMinor)}`],
+                  ["Mentee paid", money(b.money.paidMinor), true],
+                  [`Company revenue${b.money.commissionPercent != null ? ` (${b.money.commissionPercent}%${b.repeatStudent ? ", returning mentee" : ""})` : ""}`, b.money.feeMinor == null ? "Not configured" : `− ${money(b.money.feeMinor)}`],
+                  ["Mentor earns", money(b.money.payoutMinor), true],
+                ]} />
+                <p className="mt-2 text-xs text-ink-soft">
+                  {b.payout ? <>Paid to the mentor on {short(b.payout.createdAt)}{b.payout.reference ? `, ref ${b.payout.reference}` : ""}{b.payout.sessions > 1 ? ` (part of a ${money(b.payout.amountMinor)} payout for ${b.payout.sessions} sessions)` : ""}.</>
+                    : b.status === "CONFIRMED" || b.status === "COMPLETED" ? "Not paid to the mentor yet." : "No mentor payout for this booking."}
+                  {b.walletAppliedMinor ? ` ${money(b.walletAppliedMinor)} of the price was paid from the mentee's POINT B balance.` : ""}
+                  {b.money.feeIsEstimate && b.money.feeMinor != null ? " Commission uses today's tier rate, as this booking was made before rates were saved on bookings." : ""}
+                </p>
+              </>
+            )}
             {(b.status === "CONFIRMED" || b.status === "COMPLETED" || b.status === "NO_SHOW" || b.payments.some((p) => p.status === "REFUNDED")) && <a href={`/receipt/${b.reference}`} target="_blank" rel="noreferrer" className="mt-2 inline-block text-xs font-medium text-ink underline-offset-4 hover:underline">Mentee&rsquo;s receipt ↗</a>}
           </section>
 
