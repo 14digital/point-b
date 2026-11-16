@@ -43,7 +43,11 @@ function Dashboard() {
     api(`/payments/${returned}/sync`, { method: "POST" }).catch(() => undefined).finally(() => { reload(); router.replace("/dashboard/student"); });
   }, [returned, reload, router]);
   const now = useNow();
-  const upcoming = (data ?? []).filter((b) => b.status === "CONFIRMED" && new Date(b.endAt).getTime() > now).sort((a, b) => +new Date(a.startAt) - +new Date(b.startAt));
+  // Course enrolments stay upcoming until the final class ends (booking.endAt is only the first class).
+  const stillOn = (b: Booking) => b.course
+    ? new Date(b.course.endsAt).getTime() > now || !!b.course.nextClass || !!b.course.liveClass
+    : new Date(b.endAt).getTime() > now;
+  const upcoming = (data ?? []).filter((b) => b.status === "CONFIRMED" && stillOn(b)).sort((a, b) => +new Date(a.startAt) - +new Date(b.startAt));
   const pending = (data ?? []).filter((b) => b.status === "PENDING_PAYMENT");
   const past = (data ?? []).filter((b) => !upcoming.includes(b) && !pending.includes(b)).sort((a, b) => +new Date(b.startAt) - +new Date(a.startAt));
   const completed = past.filter((b) => b.status === "COMPLETED");
@@ -273,13 +277,24 @@ function PendingCard({ b, onChange }: { b: Booking; onChange: () => void }) {
   );
 }
 
+/** True while a course enrolment still has classes left (or the final class hasn’t ended). */
+function courseInProgress(b: Booking, now = Date.now()) {
+  if (!b.course || b.status !== "CONFIRMED") return false;
+  if (b.canReview || b.review) return false;
+  return !!b.course.nextClass || !!b.course.liveClass || new Date(b.course.endsAt).getTime() > now;
+}
+
 function PastCard({ b, onChange, onSupport }: { b: Booking; onChange: () => void; onSupport: () => void }) {
   // Open the form straight away when end-of-course (or session) feedback is due.
   const [reviewing, setReviewing] = useState(!!b.canReview);
   const [editing, setEditing] = useState(false);
+  const now = useNow();
+  const midCourse = courseInProgress(b, now);
   const tone = b.status === "COMPLETED" ? "forest" : b.status === "CANCELLED" || b.status === "NO_SHOW" ? "rust" : "neutral";
-  const status = b.status === "CONFIRMED" ? "Finished" : STATUS_LABEL[b.status];
+  const status = midCourse ? "Under way" : b.status === "CONFIRMED" ? "Finished" : STATUS_LABEL[b.status];
   const waitingForFinal = !!b.course && !b.canReview && !b.review && (b.status === "CONFIRMED" || b.status === "COMPLETED");
+  // Rebook only once the enrolment is done — not mid-series between classes.
+  const showBookAgain = !midCourse;
   return (
     <div className={`overflow-hidden rounded-3xl bg-white ring-1 sm:p-0 ${b.canReview ? "ring-brass/40 shadow-[0_18px_40px_-32px_rgba(17,17,17,0.35)]" : "ring-line"}`}>
       {b.canReview && !b.review && (
@@ -292,9 +307,9 @@ function PastCard({ b, onChange, onSupport }: { b: Booking; onChange: () => void
         <div className="flex flex-wrap items-center justify-between gap-4">
           <Who b={b} />
           <div className="flex flex-wrap items-center gap-2">
-            <Badge tone={tone}>{status}</Badge>
+            <Badge tone={midCourse ? "brass" : tone}>{status}</Badge>
             {b.canReview && !reviewing && <><Button size="sm" onClick={() => setReviewing(true)}>Leave feedback</Button><Button size="sm" variant="secondary" onClick={onSupport}>Support</Button></>}
-            <Button href={`/mentors/${b.mentor.slug}`} size="sm" variant="secondary">Book again</Button>
+            {showBookAgain && <Button href={`/mentors/${b.mentor.slug}`} size="sm" variant="secondary">Book again</Button>}
             {b.canReportMissing && <ReportMissing reference={b.reference} mentorName={b.mentor.name} onDone={onChange} />}
             {(b.status === "COMPLETED" || b.status === "CONFIRMED" || b.status === "NO_SHOW" || b.payment?.status === "REFUNDED") && <a href={`/receipt/${b.reference}`} className="px-2 text-xs font-medium text-ink-soft underline-offset-4 hover:text-ink hover:underline">Receipt</a>}
           </div>
