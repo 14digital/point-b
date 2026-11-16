@@ -71,7 +71,18 @@ export interface MyReview {
 }
 
 export type CourseStatus = "DRAFT" | "SUBMITTED" | "CHANGES_REQUESTED" | "LIVE" | "CLOSED" | "REJECTED";
-export interface CourseClass { number: number; startAt: string; endAt: string }
+export interface CourseClass {
+  number: number; startAt: string; endAt: string;
+  hostStartedAt?: string | null; completedAt?: string | null;
+}
+export type ClassRunStatus = "upcoming" | "live" | "ended" | "completed";
+export interface ClassAttendee { reference: string; name: string; joinedAt: string }
+export interface CourseClassDetail {
+  number: number; startAt: string; endAt: string;
+  hostStartedAt: string | null; completedAt: string | null;
+  status: ClassRunStatus; canComplete: boolean;
+  attendees: ClassAttendee[]; attended: number; enrolled: number;
+}
 export interface CourseMentor { id: string; slug: string; name: string; title: string; organization: string; photoUrl?: string | null; country: string }
 /** A course as anyone sees it. Prices are always in rupees. */
 export interface Course {

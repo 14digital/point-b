@@ -291,8 +291,9 @@ model AvailabilitySlot {
   // Set on the classes of a course. Enrolment seats are counted on the course's first class.
   courseId       String?     @db.ObjectId
   sessionNumber  Int?
-  // Per class: when the mentor first opened the room, and when its reminders went out.
+  // Per class: when the mentor first opened the room, when they marked it finished, and when its reminders went out.
   hostStartedAt  DateTime?
+  completedAt    DateTime?
   reminderSentAt DateTime?
   createdAt      DateTime    @default(now())
 

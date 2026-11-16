@@ -279,23 +279,37 @@ function PastCard({ b, onChange, onSupport }: { b: Booking; onChange: () => void
   const [editing, setEditing] = useState(false);
   const tone = b.status === "COMPLETED" ? "forest" : b.status === "CANCELLED" || b.status === "NO_SHOW" ? "rust" : "neutral";
   const status = b.status === "CONFIRMED" ? "Finished" : STATUS_LABEL[b.status];
+  const waitingForFinal = !!b.course && !b.canReview && !b.review && (b.status === "CONFIRMED" || b.status === "COMPLETED");
   return (
-    <div className={`rounded-3xl bg-white p-5 ring-1 sm:p-6 ${b.canReview ? "ring-brass/40 shadow-[0_18px_40px_-32px_rgba(17,17,17,0.35)]" : "ring-line"}`}>
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <Who b={b} />
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge tone={tone}>{status}</Badge>
-          {b.canReview && !reviewing && <><Button size="sm" onClick={() => setReviewing(true)}>Leave feedback</Button><Button size="sm" variant="secondary" onClick={onSupport}>Support</Button></>}
-          <Button href={`/mentors/${b.mentor.slug}`} size="sm" variant="secondary">Book again</Button>
-          {b.canReportMissing && <ReportMissing reference={b.reference} mentorName={b.mentor.name} onDone={onChange} />}
-          {(b.status === "COMPLETED" || b.status === "CONFIRMED" || b.status === "NO_SHOW" || b.payment?.status === "REFUNDED") && <a href={`/receipt/${b.reference}`} className="px-2 text-xs font-medium text-ink-soft underline-offset-4 hover:text-ink hover:underline">Receipt</a>}
+    <div className={`overflow-hidden rounded-3xl bg-white ring-1 sm:p-0 ${b.canReview ? "ring-brass/40 shadow-[0_18px_40px_-32px_rgba(17,17,17,0.35)]" : "ring-line"}`}>
+      {b.canReview && !b.review && (
+        <div className="border-b border-brass/20 bg-gradient-to-r from-lemon/50 via-white to-mint/40 px-5 py-3 sm:px-6">
+          <p className="text-xs font-medium uppercase tracking-[0.12em] text-ink-soft">Feedback due</p>
+          <p className="mt-0.5 text-sm text-ink">{b.course ? `How was ${b.course.title}?` : `How was your session with ${b.mentor.name.split(" ")[0]}?`}</p>
         </div>
+      )}
+      <div className="p-5 sm:p-6">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <Who b={b} />
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge tone={tone}>{status}</Badge>
+            {b.canReview && !reviewing && <><Button size="sm" onClick={() => setReviewing(true)}>Leave feedback</Button><Button size="sm" variant="secondary" onClick={onSupport}>Support</Button></>}
+            <Button href={`/mentors/${b.mentor.slug}`} size="sm" variant="secondary">Book again</Button>
+            {b.canReportMissing && <ReportMissing reference={b.reference} mentorName={b.mentor.name} onDone={onChange} />}
+            {(b.status === "COMPLETED" || b.status === "CONFIRMED" || b.status === "NO_SHOW" || b.payment?.status === "REFUNDED") && <a href={`/receipt/${b.reference}`} className="px-2 text-xs font-medium text-ink-soft underline-offset-4 hover:text-ink hover:underline">Receipt</a>}
+          </div>
+        </div>
+        {b.cancelReason && <p className="mt-3 text-xs text-ink-soft">{b.cancelReason}</p>}
+        <ReportStatus status={b.mentorReport} note={b.mentorReportNote} mentorName={b.mentor.name} />
+        {waitingForFinal && (
+          <p className="mt-4 rounded-2xl bg-paper-dim px-4 py-3 text-sm text-ink-soft ring-1 ring-line/70">
+            Feedback opens after the final class{b.course?.endsAt ? ` on ${fmtDay(b.course.endsAt)}` : ""}. You’ll get a form here once it’s done.
+          </p>
+        )}
+        {b.review && !editing && <div className="mt-4"><SubmittedFeedback review={b.review} onEdit={() => setEditing(true)} onSupport={onSupport} /></div>}
+        {b.review && editing && <div className="mt-4"><FeedbackForm b={b} existing={b.review} onDone={() => { setEditing(false); onChange(); }} onCancel={() => setEditing(false)} /></div>}
+        {reviewing && b.canReview && <div className="mt-4"><FeedbackForm b={b} onDone={() => { setReviewing(false); onChange(); }} onCancel={() => setReviewing(false)} /></div>}
       </div>
-      {b.cancelReason && <p className="mt-3 text-xs text-ink-soft">{b.cancelReason}</p>}
-      <ReportStatus status={b.mentorReport} note={b.mentorReportNote} mentorName={b.mentor.name} />
-      {b.review && !editing && <div className="mt-4"><SubmittedFeedback review={b.review} onEdit={() => setEditing(true)} onSupport={onSupport} /></div>}
-      {b.review && editing && <div className="mt-4"><FeedbackForm b={b} existing={b.review} onDone={() => { setEditing(false); onChange(); }} onCancel={() => setEditing(false)} /></div>}
-      {reviewing && b.canReview && <div className="mt-4"><FeedbackForm b={b} onDone={() => { setReviewing(false); onChange(); }} onCancel={() => setReviewing(false)} /></div>}
     </div>
   );
 }

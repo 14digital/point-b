@@ -9,7 +9,7 @@ import { formatPhone } from "./phone-input";
 import { api, errMsg } from "@/lib/api";
 import { useApi } from "@/lib/use-api";
 import { fmtDay, fmtDayShort, fmtTime, formatMoney } from "@/lib/format";
-import type { AdminCourse, CourseStatus } from "@/lib/types";
+import type { AdminCourse, CourseClassDetail, CourseStatus } from "@/lib/types";
 
 type Filter = "review" | "live" | "all" | "other";
 const FILTERS: [Filter, string][] = [["review", "Waiting for review"], ["live", "Published"], ["other", "Drafts & declined"], ["all", "All"]];
@@ -130,7 +130,12 @@ function CourseAdminRow({ c, onUpdate }: { c: AdminCourse; onUpdate: (c: AdminCo
               <ol className="mt-3 grid gap-2 sm:grid-cols-2">{c.classes.map((k) => <li key={k.number} className="flex items-center gap-3 rounded-2xl px-3 py-2 ring-1 ring-line"><span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${a.chip} text-xs font-medium text-ink`}>{k.number}</span><span><span className="block text-ink">{fmtDay(k.startAt)}</span><span className="block text-xs text-ink-soft">{fmtTime(k.startAt)}–{fmtTime(k.endAt)}</span></span></li>)}</ol>
             </div>
             {c.adminNote && <div className="rounded-2xl bg-paper px-4 py-3"><p className="text-xs font-medium text-ink-soft">Note sent to the mentor</p><p className="mt-1 whitespace-pre-line text-ink">{c.adminNote}</p></div>}
-            {published && <Roster id={c.id} />}
+            {published && (
+              <div className="space-y-3">
+                <AdminClassRuns id={c.id} onChanged={() => onUpdate(undefined)} />
+                <Roster id={c.id} />
+              </div>
+            )}
           </div>
           <aside className="space-y-4">
             <dl className="space-y-2 rounded-2xl bg-paper p-4 text-sm">
@@ -260,6 +265,47 @@ function LiveActions({ c, onUpdate }: { c: AdminCourse; onUpdate: (c: AdminCours
         )}
       </div>
       {error && <Alert>{error}</Alert>}
+    </div>
+  );
+}
+
+function AdminClassRuns({ id, onChanged }: { id: string; onChanged: () => void }) {
+  const [show, setShow] = useState(false);
+  const { data, loading, reload } = useApi<CourseClassDetail[]>(show ? `/admin/courses/${id}/classes` : null);
+  const [busy, setBusy] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  async function complete(n: number) {
+    setBusy(n); setError(null);
+    try {
+      await api(`/admin/courses/${id}/classes/${n}/complete`, { method: "POST", body: {} });
+      await reload();
+      onChanged();
+    } catch (e) { setError(errMsg(e)); } finally { setBusy(null); }
+  }
+  return (
+    <div>
+      <button type="button" onClick={() => setShow((v) => !v)} className="font-medium text-ink underline underline-offset-4">{show ? "Hide classes" : "Show classes & attendance"}</button>
+      {show && (loading ? <Skeleton className="mt-3 h-20 rounded-2xl" /> : !data?.length ? <p className="mt-3 text-ink-soft">No class dates yet.</p> : (
+        <ul className="mt-3 space-y-2">
+          {error && <Alert>{error}</Alert>}
+          {data.map((k) => (
+            <li key={k.number} className="rounded-2xl bg-paper/70 px-4 py-3 ring-1 ring-line">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="font-medium text-ink">Class {k.number} · <span className="capitalize text-ink-soft">{k.status}</span></p>
+                  <p className="text-xs text-ink-soft">{fmtDay(k.startAt)} · {fmtTime(k.startAt)}–{fmtTime(k.endAt)} · {k.attended}/{k.enrolled} joined</p>
+                </div>
+                {k.canComplete && <Button size="sm" variant="secondary" disabled={busy === k.number} onClick={() => complete(k.number)}>{busy === k.number ? <Spinner /> : "Mark class complete"}</Button>}
+              </div>
+              {!!k.attendees.length && (
+                <ul className="mt-2 space-y-1 text-xs text-ink-soft">
+                  {k.attendees.map((a) => <li key={a.reference}>{a.name} · joined {fmtTime(a.joinedAt)}</li>)}
+                </ul>
+              )}
+            </li>
+          ))}
+        </ul>
+      ))}
     </div>
   );
 }

@@ -29,7 +29,7 @@ const NO_REMINDER = { OR: [{ reminderSentAt: null }, { reminderSentAt: { isSet: 
 
 const include = {
   slot: true,
-  course: { select: { id: true, slug: true, title: true, sessionsCount: true, sessionMinutes: true, weekdays: true, startTime: true, slots: { select: { id: true, sessionNumber: true, startAt: true, endAt: true, hostStartedAt: true }, orderBy: { startAt: 'asc' } } } },
+  course: { select: { id: true, slug: true, title: true, sessionsCount: true, sessionMinutes: true, weekdays: true, startTime: true, slots: { select: { id: true, sessionNumber: true, startAt: true, endAt: true, hostStartedAt: true, completedAt: true }, orderBy: { startAt: 'asc' } } } },
   mentor: { select: { id: true, slug: true, title: true, photoUrl: true, user: { select: { name: true, email: true } } } },
   student: { select: { id: true, name: true, email: true } },
   review: true,
@@ -76,13 +76,17 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     }
     // Course enrolments finish shortly after the final class (grace), then we ask for one end-of-course review.
     const COURSE_FEEDBACK_GRACE_MS = 15 * 60_000;
-    const finished = await this.prisma.course.findMany({ where: { status: { in: ['LIVE', 'CLOSED'] }, bookings: { some: { status: 'CONFIRMED' } } }, select: { id: true, slots: { select: { endAt: true }, orderBy: { startAt: 'desc' }, take: 1 } } });
-    for (const c of finished.filter((c) => c.slots[0] && c.slots[0].endAt.getTime() < now - COURSE_FEEDBACK_GRACE_MS)) {
-      const open = await this.prisma.booking.findMany({ where: { courseId: c.id, status: 'CONFIRMED' }, include, take: 500 });
-      for (const b of open) {
-        const claimed = await this.prisma.booking.updateMany({ where: { id: b.id, status: 'CONFIRMED' }, data: { status: 'COMPLETED', completedAt: new Date() } });
-        if (claimed.count && !b.review && lastClass(b).endAt.getTime() > now - REPORT_WINDOW_DAYS * 86400_000) await this.askForFeedback(b);
-      }
+    const finished = await this.prisma.course.findMany({
+      where: { status: { in: ['LIVE', 'CLOSED'] }, bookings: { some: { status: 'CONFIRMED' } } },
+      select: { id: true, slots: { select: { endAt: true, completedAt: true }, orderBy: { startAt: 'desc' }, take: 1 } },
+    });
+    for (const c of finished.filter((c) => {
+      const last = c.slots[0];
+      if (!last) return false;
+      if (last.completedAt) return true;
+      return last.endAt.getTime() < now - COURSE_FEEDBACK_GRACE_MS;
+    })) {
+      await this.finishCourseEnrolments(c.id);
     }
   }
 
@@ -154,9 +158,9 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
         const last = b.course.slots[b.course.slots.length - 1];
         return {
           id: b.course.id, slug: b.course.slug, title: b.course.title, sessionsCount: b.course.sessionsCount,
-          classes: b.course.slots.map((k) => ({ number: k.sessionNumber ?? 1, startAt: k.startAt, endAt: k.endAt })),
-          liveClass: live ? { number: live.sessionNumber ?? 1, startAt: live.startAt, endAt: live.endAt } : null,
-          nextClass: next ? { number: next.sessionNumber ?? 1, startAt: next.startAt, endAt: next.endAt } : null,
+          classes: b.course.slots.map((k) => ({ number: k.sessionNumber ?? 1, startAt: k.startAt, endAt: k.endAt, completedAt: k.completedAt ?? null })),
+          liveClass: live ? { number: live.sessionNumber ?? 1, startAt: live.startAt, endAt: live.endAt, completedAt: live.completedAt ?? null } : null,
+          nextClass: next ? { number: next.sessionNumber ?? 1, startAt: next.startAt, endAt: next.endAt, completedAt: next.completedAt ?? null } : null,
           endsAt: last?.endAt ?? b.slot.endAt,
         };
       })() : null,
@@ -643,9 +647,26 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     if (b.status === 'COMPLETED') return true;
     if (b.status !== 'CONFIRMED') return false;
     const now = Date.now();
-    // One feedback per course enrolment, after the final class has finished.
-    if (b.course) return lastClass(b).endAt.getTime() <= now;
+    // One feedback per course enrolment, after the final class has finished (or the mentor marked it complete).
+    if (b.course) {
+      const last = lastClass(b);
+      return last.endAt.getTime() <= now || !!last.completedAt;
+    }
     return b.slot.endAt.getTime() <= now || (!!b.hostStartedAt && b.slot.startAt.getTime() <= now);
+  }
+
+  /**
+   * Marks every open enrolment on a course as completed and asks for end-of-course feedback.
+   * Used when the mentor (or admin) marks the final class complete, and by the nightly closer.
+   */
+  async finishCourseEnrolments(courseId: string) {
+    const open = await this.prisma.booking.findMany({ where: { courseId, status: 'CONFIRMED' }, include, take: 500 });
+    const now = Date.now();
+    for (const b of open) {
+      const claimed = await this.prisma.booking.updateMany({ where: { id: b.id, status: 'CONFIRMED' }, data: { status: 'COMPLETED', completedAt: new Date() } });
+      if (claimed.count && !b.review && lastClass(b).endAt.getTime() > now - REPORT_WINDOW_DAYS * 86400_000) await this.askForFeedback(b);
+    }
+    return { completed: open.length };
   }
 
   private reviewScores(b: FullBooking, dto: CreateReviewDto) {

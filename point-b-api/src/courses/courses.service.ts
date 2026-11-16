@@ -76,23 +76,28 @@ export class CoursesService {
   /** Everything about a course that anyone may see. */
   private shapePublic(c: CourseWithMentor, enrolled: number) {
     const now = Date.now();
-    const classes = (c.slots.length ? [...c.slots].sort((a, b) => a.startAt.getTime() - b.startAt.getTime()) : classTimes(c).map((t, i) => ({ ...t, sessionNumber: i + 1, id: null as string | null })))
-      .map((s, i) => ({ number: s.sessionNumber ?? i + 1, startAt: s.startAt, endAt: s.endAt }));
+    const classes = (c.slots.length ? [...c.slots].sort((a, b) => a.startAt.getTime() - b.startAt.getTime()) : classTimes(c).map((t, i) => ({ ...t, sessionNumber: i + 1, id: null as string | null, hostStartedAt: null as Date | null, completedAt: null as Date | null })))
+      .map((s, i) => ({
+        number: s.sessionNumber ?? i + 1, startAt: s.startAt, endAt: s.endAt,
+        hostStartedAt: 'hostStartedAt' in s ? s.hostStartedAt ?? null : null,
+        completedAt: 'completedAt' in s ? s.completedAt ?? null : null,
+      }));
     const last = classes[classes.length - 1];
-    const next = classes.find((s) => s.endAt.getTime() > now) ?? null;
+    const next = classes.find((s) => !s.completedAt && s.endAt.getTime() > now) ?? null;
     const full = c.capacity != null && enrolled >= c.capacity;
     // Learners can join until the final class begins; the classes they missed are listed so they know.
     const open = c.status === 'LIVE' && !!last && last.startAt.getTime() > now && !full;
+    const held = classes.filter((s) => !!s.completedAt || s.endAt.getTime() <= now).length;
     return {
       id: c.id, slug: c.slug, title: c.title, summary: c.summary, topics: c.topics, audience: c.audience,
       schedule: scheduleLabel(c), startDate: c.startDate, startTime: c.startTime, weekdays: c.weekdays,
       sessionsCount: c.sessionsCount, sessionMinutes: c.sessionMinutes,
       firstClassAt: classes[0]?.startAt ?? null, lastClassAt: last?.startAt ?? null, nextClass: next,
-      classesHeld: classes.filter((s) => s.startAt.getTime() <= now).length,
+      classesHeld: held,
       classes,
       priceMinor: c.priceMinor, currency: 'PKR' as Currency,
       capacity: c.capacity, seatsLeft: c.capacity == null ? null : Math.max(0, c.capacity - enrolled),
-      open, full, ended: !!last && last.endAt.getTime() <= now,
+      open, full, ended: !!last && (last.endAt.getTime() <= now || !!last.completedAt),
       mentor: { id: c.mentor.id, slug: c.mentor.slug, name: c.mentor.user.name, title: c.mentor.title, organization: c.mentor.organization, photoUrl: c.mentor.photoUrl, country: c.mentor.country },
     };
   }
@@ -189,6 +194,97 @@ export class CoursesService {
   private async rosterOf(courseId: string) {
     const rows = await this.prisma.booking.findMany({ where: { courseId, status: { in: [...PAID] } }, orderBy: { createdAt: 'asc' }, select: { reference: true, createdAt: true, status: true, student: { select: { name: true } } } });
     return rows.map((r) => ({ reference: r.reference, name: r.student.name, enrolledAt: r.createdAt, status: r.status }));
+  }
+
+  /** Per-class attendance for a mentor's course: who joined each room and when. */
+  async classes(userId: string, id: string) {
+    const { c } = await this.ownCourse(userId, id);
+    return this.classesOf(c);
+  }
+
+  async adminClasses(id: string) {
+    if (!isObjectId(id)) throw new NotFoundException('Course not found');
+    const c = await this.prisma.course.findUnique({ where: { id }, include: this.include });
+    if (!c) throw new NotFoundException('Course not found');
+    return this.classesOf(c);
+  }
+
+  private async classesOf(c: CourseWithMentor) {
+    const slots = [...c.slots].sort((a, b) => a.startAt.getTime() - b.startAt.getTime());
+    const roster = await this.prisma.booking.findMany({
+      where: { courseId: c.id, status: { in: [...PAID] } },
+      select: { reference: true, studentId: true, student: { select: { name: true } } },
+    });
+    const refs = roster.map((r) => r.reference);
+    const joins = refs.length
+      ? await this.prisma.activityEvent.findMany({
+          where: { type: 'session_joined', reference: { in: refs } },
+          select: { reference: true, label: true, userId: true, createdAt: true },
+          orderBy: { createdAt: 'asc' },
+        })
+      : [];
+    const byRef = new Map(roster.map((r) => [r.reference, r]));
+    const now = Date.now();
+    return slots.map((s, i) => {
+      const number = s.sessionNumber ?? i + 1;
+      const needle = `class ${number}`;
+      const seen = new Map<string, { reference: string; name: string; joinedAt: string }>();
+      for (const j of joins) {
+        if (!j.reference || !byRef.has(j.reference)) continue;
+        const label = (j.label ?? '').toLowerCase();
+        // Older joins may lack a class label; count them only for class 1.
+        const match = label.includes(needle) || (!label.includes('class ') && number === 1);
+        if (!match) continue;
+        if (seen.has(j.reference)) continue;
+        const r = byRef.get(j.reference)!;
+        seen.set(j.reference, { reference: j.reference, name: r.student.name, joinedAt: j.createdAt.toISOString() });
+      }
+      const attendees = [...seen.values()];
+      const completed = !!s.completedAt;
+      const ended = s.endAt.getTime() <= now;
+      const started = !!s.hostStartedAt || s.startAt.getTime() <= now;
+      const canComplete = !completed && started && (ended || !!s.hostStartedAt || s.startAt.getTime() <= now);
+      return {
+        number, startAt: s.startAt, endAt: s.endAt,
+        hostStartedAt: s.hostStartedAt ?? null, completedAt: s.completedAt ?? null,
+        status: completed ? 'completed' as const : ended ? 'ended' as const : s.hostStartedAt || (s.startAt.getTime() <= now && s.endAt.getTime() > now) ? 'live' as const : 'upcoming' as const,
+        canComplete, attendees, attended: attendees.length, enrolled: roster.length,
+      };
+    });
+  }
+
+  /** Mentor or admin marks a class finished. The final class completes enrolments and opens feedback. */
+  async completeClass(actor: { userId?: string; admin?: boolean }, courseId: string, sessionNumber: number) {
+    const n = Math.floor(Number(sessionNumber));
+    if (!Number.isFinite(n) || n < 1) throw new BadRequestException('Class number is required');
+    let c: CourseWithMentor;
+    if (actor.admin) {
+      if (!isObjectId(courseId)) throw new NotFoundException('Course not found');
+      const row = await this.prisma.course.findUnique({ where: { id: courseId }, include: this.include });
+      if (!row) throw new NotFoundException('Course not found');
+      c = row;
+    } else {
+      ({ c } = await this.ownCourse(actor.userId!, courseId));
+    }
+    if (c.status !== 'LIVE' && c.status !== 'CLOSED') throw new BadRequestException('Only a live course has classes to complete.');
+    const slots = [...c.slots].sort((a, b) => a.startAt.getTime() - b.startAt.getTime());
+    const slot = slots.find((s, i) => (s.sessionNumber ?? i + 1) === n);
+    if (!slot) throw new NotFoundException('Class not found');
+    if (slot.completedAt) return this.classesOf(await this.reloadCourse(c.id));
+    if (slot.startAt.getTime() > Date.now() && !slot.hostStartedAt) {
+      throw new BadRequestException('This class has not started yet. Open the room first, or wait until the scheduled start.');
+    }
+    await this.prisma.availabilitySlot.update({ where: { id: slot.id }, data: { completedAt: new Date(), hostStartedAt: slot.hostStartedAt ?? new Date() } });
+    const last = slots[slots.length - 1];
+    const isLast = last && last.id === slot.id;
+    if (isLast) await this.bookings.finishCourseEnrolments(c.id);
+    return this.classesOf(await this.reloadCourse(c.id));
+  }
+
+  private async reloadCourse(id: string) {
+    const c = await this.prisma.course.findUnique({ where: { id }, include: this.include });
+    if (!c) throw new NotFoundException('Course not found');
+    return c;
   }
 
   /** Checks a schedule the mentor wants to submit: in the future, with enough notice, and not clashing with their other courses. */

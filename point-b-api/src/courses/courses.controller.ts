@@ -23,6 +23,8 @@ export class CoursesController {
   @ApiBearerAuth() @Roles('MENTOR') @HttpCode(200) @Post('me/:id/withdraw') withdraw(@CurrentUser() u: AuthUser, @Param('id') id: string) { return this.courses.withdraw(u.id, id); }
   @ApiBearerAuth() @Roles('MENTOR') @Delete('me/:id') remove(@CurrentUser() u: AuthUser, @Param('id') id: string) { return this.courses.remove(u.id, id); }
   @ApiBearerAuth() @Roles('MENTOR') @Get('me/:id/roster') roster(@CurrentUser() u: AuthUser, @Param('id') id: string) { return this.courses.roster(u.id, id); }
+  @ApiBearerAuth() @Roles('MENTOR') @Get('me/:id/classes') classes(@CurrentUser() u: AuthUser, @Param('id') id: string) { return this.courses.classes(u.id, id); }
+  @ApiBearerAuth() @Roles('MENTOR') @HttpCode(200) @Post('me/:id/classes/:n/complete') completeClass(@CurrentUser() u: AuthUser, @Param('id') id: string, @Param('n') n: string) { return this.courses.completeClass({ userId: u.id }, id, Number(n)); }
 
   /** A learner takes a seat; pay for it at /bookings/:reference as with any booking. */
   @ApiBearerAuth() @Roles('STUDENT') @Post(':id/enrol') enrol(@CurrentUser() u: AuthUser, @Param('id') id: string, @Body() dto: EnrolDto) { return this.bookings.enrol(u, id, dto.expectedPriceMinor); }
@@ -39,6 +41,8 @@ export class AdminCoursesController {
 
   @Staff('OPERATIONS', 'FINANCE') @Get() list(@Query('status') status?: string) { return this.courses.adminList(status); }
   @Staff('OPERATIONS', 'FINANCE') @Get(':id/roster') roster(@Param('id') id: string) { return this.courses.adminRoster(id); }
+  @Staff('OPERATIONS') @Get(':id/classes') classes(@Param('id') id: string) { return this.courses.adminClasses(id); }
+  @Staff('OPERATIONS') @HttpCode(200) @Post(':id/classes/:n/complete') completeClass(@Param('id') id: string, @Param('n') n: string) { return this.courses.completeClass({ admin: true }, id, Number(n)); }
   @Staff('OPERATIONS') @HttpCode(200) @Post(':id/approve') approve(@CurrentUser() u: AuthUser, @Param('id') id: string, @Body() dto: ApproveCourseDto) { return this.courses.approve(u.id, id, dto); }
   @Staff('OPERATIONS') @HttpCode(200) @Post(':id/return') sendBack(@CurrentUser() u: AuthUser, @Param('id') id: string, @Body() dto: ReturnCourseDto) { return this.courses.sendBack(u.id, id, dto); }
   @Staff('OPERATIONS') @Patch(':id') update(@CurrentUser() u: AuthUser, @Param('id') id: string, @Body() dto: UpdateLiveCourseDto) { return this.courses.updateLive(u.id, id, dto); }

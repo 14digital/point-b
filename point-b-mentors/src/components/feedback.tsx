@@ -48,40 +48,49 @@ export function FeedbackForm({ b, existing, onDone, onCancel }: {
   }
 
   return (
-    <div className="space-y-4 rounded-2xl bg-paper-dim p-4 sm:p-5">
+    <div className="space-y-5 rounded-2xl bg-gradient-to-b from-paper-dim to-white p-4 ring-1 ring-line/80 sm:p-5">
       <div>
         <p className="text-sm font-medium text-ink">{existing ? "Edit your feedback" : isCourse ? `How was ${b.course!.title}?` : `How was your session with ${b.mentor.name.split(" ")[0]}?`}</p>
-        {isCourse && !existing && <p className="mt-1 text-xs text-ink-soft">One short review for the whole course — after the final class.</p>}
+        {isCourse && !existing && <p className="mt-1 text-xs text-ink-soft">One short review for the whole course — stars, three quick ratings, and a comment.</p>}
       </div>
-      <div className="flex items-center gap-3">
-        <div className="flex gap-1" role="radiogroup" aria-label="Overall rating">
-          {[1, 2, 3, 4, 5].map((n) => <button key={n} type="button" role="radio" aria-checked={rating === n} aria-label={`${n} star${n > 1 ? "s" : ""}`} onClick={() => setRating(n)} className={`text-3xl leading-none transition-transform hover:scale-110 ${n <= rating ? "text-brass" : "text-line"}`}>★</button>)}
+      <div>
+        <p className="mb-2 text-xs font-medium uppercase tracking-[0.12em] text-ink-soft">Overall</p>
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex gap-1" role="radiogroup" aria-label="Overall rating">
+            {[1, 2, 3, 4, 5].map((n) => <button key={n} type="button" role="radio" aria-checked={rating === n} aria-label={`${n} star${n > 1 ? "s" : ""}`} onClick={() => setRating(n)} className={`text-3xl leading-none transition-transform hover:scale-110 ${n <= rating ? "text-brass" : "text-line"}`}>★</button>)}
+          </div>
+          <span className="text-sm text-ink-soft">{WORDS[rating] || "Tap a star"}</span>
         </div>
-        <span className="text-sm text-ink-soft">{WORDS[rating]}</span>
       </div>
       {isCourse && (
-        <ul className="space-y-3">
-          {LIKERT.map((item) => (
-            <li key={item.key} className="rounded-2xl bg-white/70 px-3 py-3 ring-1 ring-line/70">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-ink">{item.label}</p>
-                  <p className="text-xs text-ink-soft">{item.hint}</p>
+        <div>
+          <p className="mb-2 text-xs font-medium uppercase tracking-[0.12em] text-ink-soft">Quick ratings</p>
+          <ul className="space-y-2.5">
+            {LIKERT.map((item) => (
+              <li key={item.key} className="rounded-2xl bg-white px-3 py-3 ring-1 ring-line/70">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-ink">{item.label}</p>
+                    <p className="text-xs text-ink-soft">{item.hint}</p>
+                  </div>
+                  <div className="flex gap-1" role="radiogroup" aria-label={item.label}>
+                    {[1, 2, 3, 4, 5].map((n) => (
+                      <button key={n} type="button" role="radio" aria-checked={scores[item.key] === n} aria-label={`${n}`}
+                        onClick={() => setScores((s) => ({ ...s, [item.key]: n }))}
+                        className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-medium tabular-nums transition-colors ${scores[item.key] === n ? "bg-ink text-white" : "bg-paper text-ink ring-1 ring-line hover:ring-ink/30"}`}>{n}</button>
+                    ))}
+                  </div>
                 </div>
-                <div className="flex gap-1" role="radiogroup" aria-label={item.label}>
-                  {[1, 2, 3, 4, 5].map((n) => (
-                    <button key={n} type="button" role="radio" aria-checked={scores[item.key] === n} aria-label={`${n}`}
-                      onClick={() => setScores((s) => ({ ...s, [item.key]: n }))}
-                      className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-medium tabular-nums transition-colors ${scores[item.key] === n ? "bg-ink text-white" : "bg-paper text-ink ring-1 ring-line hover:ring-ink/30"}`}>{n}</button>
-                  ))}
-                </div>
-              </div>
-            </li>
-          ))}
-        </ul>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
-      <textarea className="input min-h-24" maxLength={1000} placeholder={isCourse ? "What will you take into your next role? Anything we should improve?" : "What was useful? What will you do next?"} value={comment} onChange={(e) => setComment(e.target.value)} />
-      <p className="text-xs text-ink-soft">{existing ? "You can only edit your feedback once, so please check it before saving. Our team will review it again." : "Your teacher can read this. The POINT B team reviews feedback before anything appears on a public profile."}</p>
+      <div>
+        <p className="mb-2 text-xs font-medium uppercase tracking-[0.12em] text-ink-soft">Comment</p>
+        <textarea className="input min-h-28" maxLength={1000} placeholder={isCourse ? "What will you take into your next role? Anything we should improve?" : "What was useful? What will you do next?"} value={comment} onChange={(e) => setComment(e.target.value)} />
+        <p className="mt-1.5 text-xs text-ink-soft">{existing ? "You can only edit your feedback once, so please check it before saving. Our team will review it again." : "Your teacher can read this. The POINT B team reviews feedback before anything appears on a public profile."}</p>
+      </div>
       {error && <Alert>{error}</Alert>}
       <div className="flex gap-2">
         <Button size="sm" disabled={busy || !rating || !likertReady || comment.trim().length < 5 || unchanged} onClick={submit}>{busy ? <Spinner /> : existing ? "Save changes" : "Submit feedback"}</Button>

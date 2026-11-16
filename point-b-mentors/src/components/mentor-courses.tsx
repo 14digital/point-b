@@ -7,7 +7,7 @@ import { classesLabel, courseAccent } from "./course-card";
 import { api, errMsg } from "@/lib/api";
 import { useApi, useNow } from "@/lib/use-api";
 import { fmtDay, fmtDayShort, fmtTime, formatMoney, TZ_LABEL } from "@/lib/format";
-import type { Currency, CourseStatus, OwnCourse } from "@/lib/types";
+import type { Currency, CourseClassDetail, CourseStatus, OwnCourse } from "@/lib/types";
 
 export type MyCourse = OwnCourse & { roomReference: string | null };
 
@@ -93,13 +93,15 @@ function CourseRow({ c, onEdit, reload }: { c: MyCourse; onEdit: () => void; rel
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showRoster, setShowRoster] = useState(false);
+  const [showClasses, setShowClasses] = useState(false);
   const st = STATUS[c.status];
   const a = accentOf(c.slug);
   const editable = c.status === "DRAFT" || c.status === "CHANGES_REQUESTED";
   const published = c.status === "LIVE" || c.status === "CLOSED";
-  const roomOpen = c.classes.find((k) => now >= new Date(k.startAt).getTime() - 10 * 60_000 && now <= new Date(k.endAt).getTime() + 60 * 60_000);
-  const held = c.classes.filter((k) => new Date(k.endAt).getTime() <= now).length;
-  const until = c.nextClass ? relativeShort(c.nextClass.startAt, now) : null;
+  const roomOpen = c.classes.find((k) => !k.completedAt && now >= new Date(k.startAt).getTime() - 10 * 60_000 && now <= new Date(k.endAt).getTime() + 60 * 60_000);
+  const held = c.classes.filter((k) => !!k.completedAt || new Date(k.endAt).getTime() <= now).length;
+  const pendingComplete = c.classes.find((k) => !k.completedAt && (new Date(k.endAt).getTime() <= now || !!k.hostStartedAt || new Date(k.startAt).getTime() <= now));
+  const until = c.nextClass ? relativeShort(c.nextClass.startAt, c.nextClass.endAt, now) : null;
 
   async function act(path: string, method = "POST") {
     setBusy(path); setError(null);
@@ -130,6 +132,11 @@ function CourseRow({ c, onEdit, reload }: { c: MyCourse; onEdit: () => void; rel
           </div>
           <div className="flex flex-wrap gap-2">
             {roomOpen && c.roomReference && <Button size="sm" href={`/session/${c.roomReference}`}>Open class {roomOpen.number}</Button>}
+            {pendingComplete && !roomOpen && (
+              <Button size="sm" variant="secondary" disabled={!!busy} onClick={() => { setShowClasses(true); void act(`/courses/me/${c.id}/classes/${pendingComplete.number}/complete`); }}>
+                {busy?.includes("/complete") ? <Spinner /> : `Mark class ${pendingComplete.number} complete`}
+              </Button>
+            )}
             {editable && <Button size="sm" onClick={onEdit}>Edit course</Button>}
             {c.status === "SUBMITTED" && <Button size="sm" variant="secondary" disabled={!!busy} onClick={() => act(`/courses/me/${c.id}/withdraw`)}>{busy ? <Spinner /> : "Withdraw to edit"}</Button>}
             {published && <Button size="sm" variant="secondary" href={`/courses/${c.slug}`}>View on site <span aria-hidden>↗</span></Button>}
@@ -141,7 +148,7 @@ function CourseRow({ c, onEdit, reload }: { c: MyCourse; onEdit: () => void; rel
           <div className="mt-6">
             <div className="flex gap-1.5" aria-hidden>
               {c.classes.map((k) => {
-                const done = new Date(k.endAt).getTime() <= now;
+                const done = !!k.completedAt || new Date(k.endAt).getTime() <= now;
                 const next = c.nextClass?.number === k.number;
                 return <span key={k.number} title={`Class ${k.number}: ${fmtDayShort(k.startAt)}, ${fmtTime(k.startAt)}`} className={`h-2 flex-1 rounded-full transition-colors ${done ? a.dot : next ? `${a.dot} opacity-40` : "bg-ink/10"}`} />;
               })}
@@ -168,12 +175,19 @@ function CourseRow({ c, onEdit, reload }: { c: MyCourse; onEdit: () => void; rel
       {published && (
         <div className="border-t border-line bg-paper/50 px-6 py-4 sm:px-8">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <button type="button" aria-expanded={showRoster} onClick={() => setShowRoster((v) => !v)} className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-medium text-ink ring-1 ring-line transition-colors hover:ring-ink/30">
-              {ICONS.people}{showRoster ? "Hide learners" : `Learners (${c.enrolled})`}
-              <svg width="12" height="12" viewBox="0 0 20 20" fill="none" aria-hidden className={`transition-transform ${showRoster ? "rotate-180" : ""}`}><path d="M5 8l5 5 5-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
-            </button>
-            <p className="text-xs text-ink-soft">Open each class here 10 minutes before it starts. Learners join once you&rsquo;re in.</p>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" aria-expanded={showClasses} onClick={() => setShowClasses((v) => !v)} className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-medium text-ink ring-1 ring-line transition-colors hover:ring-ink/30">
+                {ICONS.classes}{showClasses ? "Hide classes" : `Classes (${held}/${c.classes.length})`}
+                <svg width="12" height="12" viewBox="0 0 20 20" fill="none" aria-hidden className={`transition-transform ${showClasses ? "rotate-180" : ""}`}><path d="M5 8l5 5 5-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
+              </button>
+              <button type="button" aria-expanded={showRoster} onClick={() => setShowRoster((v) => !v)} className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-medium text-ink ring-1 ring-line transition-colors hover:ring-ink/30">
+                {ICONS.people}{showRoster ? "Hide learners" : `Learners (${c.enrolled})`}
+                <svg width="12" height="12" viewBox="0 0 20 20" fill="none" aria-hidden className={`transition-transform ${showRoster ? "rotate-180" : ""}`}><path d="M5 8l5 5 5-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
+              </button>
+            </div>
+            <p className="text-xs text-ink-soft">Open a class 10 minutes before it starts. Mark it complete when you&rsquo;re done.</p>
           </div>
+          {showClasses && <ClassRuns courseId={c.id} roomReference={c.roomReference} onChanged={reload} />}
           {showRoster && <Roster id={c.id} />}
         </div>
       )}
@@ -181,14 +195,108 @@ function CourseRow({ c, onEdit, reload }: { c: MyCourse; onEdit: () => void; rel
   );
 }
 
-/** "in 3 days", "in 5 hours", "starting now". */
-function relativeShort(iso: string, now: number) {
-  const ms = new Date(iso).getTime() - now;
+/** Relative label for the next/current class: under way, starting soon, or in N hours/days. */
+function relativeShort(startIso: string, endIso: string, now: number) {
+  const start = new Date(startIso).getTime();
+  const end = new Date(endIso).getTime();
+  if (now >= start && now <= end) return "under way";
+  if (now > end) return "just finished";
+  const ms = start - now;
   if (ms <= 10 * 60_000) return "starting now";
   const h = Math.round(ms / 3_600_000);
   if (h < 24) return `in ${Math.max(1, h)} hour${h === 1 ? "" : "s"}`;
   const d = Math.round(h / 24);
   return `in ${d} day${d === 1 ? "" : "s"}`;
+}
+
+const CLASS_STATUS: Record<CourseClassDetail["status"], { label: string; tone: string }> = {
+  upcoming: { label: "Upcoming", tone: "bg-ink/8 text-ink/70" },
+  live: { label: "Live now", tone: "bg-forest/15 text-forest" },
+  ended: { label: "Ended", tone: "bg-amber/20 text-ink" },
+  completed: { label: "Complete", tone: "bg-mint text-ink" },
+};
+
+function ClassRuns({ courseId, roomReference, onChanged }: { courseId: string; roomReference: string | null; onChanged: () => Promise<void> | void }) {
+  const { data, loading, error, reload } = useApi<CourseClassDetail[]>(`/courses/me/${courseId}/classes`);
+  const [busy, setBusy] = useState<number | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [open, setOpen] = useState<number | null>(null);
+
+  async function complete(n: number) {
+    setBusy(n); setErr(null);
+    try {
+      await api(`/courses/me/${courseId}/classes/${n}/complete`, { method: "POST", body: {} });
+      await reload();
+      await onChanged();
+      setOpen(n);
+    } catch (e) { setErr(errMsg(e)); } finally { setBusy(null); }
+  }
+
+  if (loading) return <Skeleton className="mt-4 h-28 rounded-2xl" />;
+  if (error) return <div className="mt-4"><Alert>{error}</Alert></div>;
+  if (!data?.length) return <p className="mt-4 text-sm text-ink-soft">No class dates yet.</p>;
+
+  return (
+    <div className="mt-4 space-y-3">
+      {err && <Alert>{err}</Alert>}
+      <ul className="space-y-2">
+        {data.map((k) => {
+          const st = CLASS_STATUS[k.status];
+          const expanded = open === k.number;
+          return (
+            <li key={k.number} className="overflow-hidden rounded-2xl bg-white ring-1 ring-line">
+              <div className="flex flex-wrap items-center gap-3 px-4 py-3 sm:px-5">
+                <button type="button" aria-expanded={expanded} onClick={() => setOpen(expanded ? null : k.number)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-paper font-display text-lg text-ink">{k.number}</span>
+                  <span className="min-w-0">
+                    <span className="flex flex-wrap items-center gap-2">
+                      <span className="font-medium text-ink">Class {k.number}</span>
+                      <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${st.tone}`}>{st.label}</span>
+                    </span>
+                    <span className="mt-0.5 block text-xs text-ink-soft">{fmtDay(k.startAt)} · {fmtTime(k.startAt)}–{fmtTime(k.endAt)} · {k.attended} of {k.enrolled} joined</span>
+                  </span>
+                </button>
+                <div className="flex flex-wrap gap-2">
+                  {(k.status === "live" || k.status === "upcoming") && roomReference && (
+                    <Button size="sm" href={`/session/${roomReference}`}>Open class {k.number}</Button>
+                  )}
+                  {k.canComplete && (
+                    <Button size="sm" variant="secondary" disabled={busy === k.number} onClick={() => complete(k.number)}>
+                      {busy === k.number ? <Spinner /> : "Mark class complete"}
+                    </Button>
+                  )}
+                </div>
+              </div>
+              {expanded && (
+                <div className="border-t border-line bg-paper/60 px-4 py-4 sm:px-5">
+                  <div className="grid gap-3 text-xs text-ink-soft sm:grid-cols-3">
+                    <p><span className="font-medium text-ink">Mentor joined</span><br />{k.hostStartedAt ? `${fmtDayShort(k.hostStartedAt)} · ${fmtTime(k.hostStartedAt)}` : "Not yet"}</p>
+                    <p><span className="font-medium text-ink">Marked complete</span><br />{k.completedAt ? `${fmtDayShort(k.completedAt)} · ${fmtTime(k.completedAt)}` : "—"}</p>
+                    <p><span className="font-medium text-ink">Attendance</span><br />{k.attended} learner{k.attended === 1 ? "" : "s"} of {k.enrolled}</p>
+                  </div>
+                  {k.attendees.length === 0 ? (
+                    <p className="mt-3 text-sm text-ink-soft">No join times recorded for this class yet.</p>
+                  ) : (
+                    <ul className="mt-3 grid gap-2 sm:grid-cols-2">
+                      {k.attendees.map((a) => (
+                        <li key={a.reference} className="flex items-center gap-3 rounded-xl bg-white px-3 py-2.5 text-sm ring-1 ring-line">
+                          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-mint text-xs font-medium text-ink">{a.name.split(" ").map((w) => w[0]).slice(0, 2).join("")}</span>
+                          <span className="min-w-0">
+                            <span className="block truncate font-medium text-ink">{a.name}</span>
+                            <span className="block text-xs text-ink-soft">Joined {fmtTime(a.joinedAt)} · {fmtDayShort(a.joinedAt)}</span>
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
 }
 
 function Roster({ id }: { id: string }) {
