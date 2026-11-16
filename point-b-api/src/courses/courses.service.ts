@@ -310,17 +310,35 @@ export class CoursesService {
 
   async adminList(status?: string) {
     const rows = await this.prisma.course.findMany({ where: status ? { status: status as CourseStatus } : {}, include: this.include, orderBy: [{ submittedAt: 'desc' }, { createdAt: 'desc' }] });
-    const counts = await this.enrolled(rows.map((r) => r.id));
-    const paid = await this.prisma.mentorPayout.findMany({ where: { courseId: { in: rows.map((r) => r.id) } }, select: { courseId: true, createdAt: true, amountMinor: true, currency: true, reference: true } });
-    const revenue = await this.prisma.booking.groupBy({ by: ['courseId'], where: { courseId: { in: rows.map((r) => r.id) }, status: { in: [...PAID] } }, _sum: { priceMinor: true } });
+    const ids = rows.map((r) => r.id);
+    const counts = await this.enrolled(ids);
+    const [paid, revenue, feedback] = await Promise.all([
+      this.prisma.mentorPayout.findMany({ where: { courseId: { in: ids } }, select: { courseId: true, createdAt: true, amountMinor: true, currency: true, reference: true } }),
+      this.prisma.booking.groupBy({ by: ['courseId'], where: { courseId: { in: ids }, status: { in: [...PAID] } }, _sum: { priceMinor: true } }),
+      this.prisma.review.findMany({
+        where: { booking: { courseId: { in: ids } } },
+        select: { rating: true, clarity: true, usefulness: true, recommend: true, status: true, booking: { select: { courseId: true } } },
+      }),
+    ]);
+    const avg = (vals: number[]) => (vals.length ? Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 10) / 10 : null);
     return rows.map((r) => {
       const revenueMinor = revenue.find((x) => x.courseId === r.id)?._sum.priceMinor ?? 0;
       // Company share = learner gross − fixed mentor fee when both are the same currency (learner price is always PKR).
       const companyRevenueMinor = r.mentorFeeCurrency === 'PKR' ? revenueMinor - r.mentorFeeMinor : null;
+      const mine = feedback.filter((f) => f.booking.courseId === r.id);
+      const published = mine.filter((f) => (f.status ?? 'APPROVED') === 'APPROVED');
       return {
         ...this.shapeFull(r, counts.get(r.id) ?? 0),
         revenueMinor, companyRevenueMinor,
         feePaid: paid.find((x) => x.courseId === r.id) ?? null,
+        feedback: {
+          count: mine.length,
+          pending: mine.filter((f) => f.status === 'PENDING').length,
+          rating: avg(published.map((f) => f.rating)),
+          clarity: avg(published.map((f) => f.clarity).filter((n): n is number => n != null)),
+          usefulness: avg(published.map((f) => f.usefulness).filter((n): n is number => n != null)),
+          recommend: avg(published.map((f) => f.recommend).filter((n): n is number => n != null)),
+        },
       };
     });
   }

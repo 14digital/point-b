@@ -10,7 +10,6 @@ import { Alert, Badge, Button, Container, EmptyState, Mark, MentorPhoto, Skeleto
 import { DashboardHero, DateTile, StatTile, Tabs, greeting, relative } from "@/components/dashboard";
 import { Reveal } from "@/components/motion";
 import { CheckoutDialog } from "@/components/checkout";
-import { RescheduleDialog } from "@/components/reschedule-dialog";
 import { api, errMsg } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { STATUS_LABEL } from "@/lib/constants";
@@ -133,7 +132,13 @@ function Dashboard() {
             {needsFeedback.length > 0 && tab !== "Past" && (
               <div className="rounded-3xl bg-mint p-6">
                 <p className="font-display text-2xl text-ink">How did it go?</p>
-                <p className="mt-2 text-sm text-ink/70">You have {needsFeedback.length} session{needsFeedback.length > 1 ? "s" : ""} waiting for feedback. It takes a minute and helps other students and professionals choose.</p>
+                <p className="mt-2 text-sm text-ink/70">
+                  {needsFeedback.length === 1
+                    ? needsFeedback[0].course
+                      ? `Your course ${needsFeedback[0].course.title} has finished — leave one short review.`
+                      : "You have a session waiting for feedback."
+                    : `You have ${needsFeedback.length} courses or sessions waiting for feedback.`} It takes a minute and helps us improve.
+                </p>
                 <Button size="sm" className="mt-4" onClick={() => setTab("Past")}>Leave feedback</Button>
               </div>
             )}
@@ -170,14 +175,21 @@ function NextSession({ b, now }: { b: Booking; now: number }) {
 }
 
 function Who({ b }: { b: Booking }) {
+  const when = b.course?.endsAt ?? b.startAt;
   return (
     <div className="flex min-w-0 items-center gap-4">
-      <DateTile iso={b.startAt} />
+      <DateTile iso={when} />
       <div className="hidden h-12 w-12 shrink-0 overflow-hidden rounded-full sm:block"><MentorPhoto name={b.mentor.name} photoUrl={b.mentor.photoUrl} className="h-full w-full" initialsClass="text-base" /></div>
       <div className="min-w-0">
-        <Link href={`/mentors/${b.mentor.slug}`} className="font-display text-xl text-ink hover:underline">{b.mentor.name}</Link>
-        <p className="text-sm text-ink-soft">{fmtTime(b.startAt)}–{fmtTime(b.endAt)} · {b.agenda}</p>
-        <p className="text-xs text-ink-soft">{b.sessionKind === "GROUP" ? "Group session" : "1:1 session"} · <span className="whitespace-nowrap">{b.reference}</span></p>
+        {b.course
+          ? <Link href={`/courses/${b.course.slug}`} className="font-display text-xl text-ink hover:underline">{b.course.title}</Link>
+          : <Link href={`/mentors/${b.mentor.slug}`} className="font-display text-xl text-ink hover:underline">{b.mentor.name}</Link>}
+        <p className="text-sm text-ink-soft">
+          {b.course
+            ? <>with <Link href={`/mentors/${b.mentor.slug}`} className="hover:underline">{b.mentor.name}</Link> · {b.course.sessionsCount} classes</>
+            : <>{fmtTime(b.startAt)}–{fmtTime(b.endAt)} · {b.agenda}</>}
+        </p>
+        <p className="text-xs text-ink-soft">{b.course ? "Course" : b.sessionKind === "GROUP" ? "Group session" : "1:1 session"} · <span className="whitespace-nowrap">{b.reference}</span></p>
       </div>
     </div>
   );
@@ -194,28 +206,31 @@ function useAction(onDone: () => void) {
 }
 
 function UpcomingCard({ b, onChange }: { b: Booking; onChange: () => void }) {
-  const [moving, setMoving] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const { busy, error, run } = useAction(onChange);
   const now = useNow();
-  const canMove = !!b.rescheduleBy && new Date(b.rescheduleBy).getTime() > now;
-  const moved = useCallback(() => { setMoving(false); onChange(); }, [onChange]);
+  const canCancel = !!b.cancelBy && new Date(b.cancelBy).getTime() > now;
+  const detail = b.course
+    ? `Class ${(b.course.liveClass ?? b.course.nextClass)?.number ?? 1} of ${b.course.sessionsCount}`
+    : `${b.sessionKind === "GROUP" ? "Group" : "1:1"} · ${b.agenda}`;
+  const joinAt = b.course?.liveClass?.startAt ?? b.course?.nextClass?.startAt ?? b.startAt;
+  const joinEnd = b.course?.liveClass?.endAt ?? b.course?.nextClass?.endAt ?? b.endAt;
   return (
     <div className="rounded-3xl bg-white p-5 ring-1 ring-line transition-shadow hover:shadow-[0_12px_32px_-20px_rgba(17,17,17,0.35)] sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <Who b={b} />
         <div className="flex flex-wrap items-center gap-2">
-          {b.meetingLink && <SessionButton link={b.meetingLink} startAt={b.startAt} endAt={b.endAt} withName={b.mentor.name} detail={`${b.sessionKind === "GROUP" ? "Group" : "1:1"} · ${b.agenda}`} joinClass="rounded-full bg-forest px-5 py-2.5 text-sm font-medium text-white" waitClass="rounded-full bg-ink px-5 py-2.5 text-sm font-medium text-white" />}
-          {canMove && <Button size="sm" variant="secondary" onClick={() => setMoving(true)}>Reschedule</Button>}
-          {canMove && <Button size="sm" variant="ghost" onClick={() => setCancelling(true)}>Cancel</Button>}
+          {b.meetingLink && <SessionButton link={b.meetingLink} startAt={joinAt} endAt={joinEnd} withName={b.mentor.name} detail={detail} joinClass="rounded-full bg-forest px-5 py-2.5 text-sm font-medium text-white" waitClass="rounded-full bg-ink px-5 py-2.5 text-sm font-medium text-white" />}
+          {canCancel && !b.course && <Button size="sm" variant="ghost" onClick={() => setCancelling(true)}>Cancel</Button>}
           <a href={`/receipt/${b.reference}`} className="px-2 text-xs font-medium text-ink-soft underline-offset-4 hover:text-ink hover:underline">Receipt</a>
         </div>
       </div>
       <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-line pt-4">
-        <Badge tone="forest">Confirmed</Badge><Badge>{formatMoney(b.priceMinor, b.currency)} paid</Badge>{!!b.rescheduleCount && <Badge tone="brass">Rescheduled</Badge>}
-        {b.rescheduleBy && (
+        <Badge tone="forest">Confirmed</Badge><Badge>{formatMoney(b.priceMinor, b.currency)} paid</Badge>
+        {b.course && <Badge tone="brass">{b.course.sessionsCount} classes</Badge>}
+        {b.cancelBy && !b.course && (
           <span className="ml-auto text-xs text-ink-soft">
-            {canMove ? <>Cancel or move until {fmtDayShort(b.rescheduleBy)}, {fmtTime(b.rescheduleBy)}</> : <NoticeText text="Less than {notice} to go: no changes or refund" />}
+            {canCancel ? <>Cancel until {fmtDayShort(b.cancelBy)}, {fmtTime(b.cancelBy)}</> : <NoticeText text="Less than {notice} to go: no changes or refund" />}
           </span>
         )}
       </div>
@@ -230,7 +245,6 @@ function UpcomingCard({ b, onChange }: { b: Booking; onChange: () => void }) {
         </div>
       )}
       <ReportStatus status={b.mentorReport} note={b.mentorReportNote} mentorName={b.mentor.name} />
-      {moving && <RescheduleDialog b={b} onClose={() => setMoving(false)} onDone={moved} />}
     </div>
   );
 }
@@ -260,12 +274,13 @@ function PendingCard({ b, onChange }: { b: Booking; onChange: () => void }) {
 }
 
 function PastCard({ b, onChange, onSupport }: { b: Booking; onChange: () => void; onSupport: () => void }) {
-  const [reviewing, setReviewing] = useState(false);
+  // Open the form straight away when end-of-course (or session) feedback is due.
+  const [reviewing, setReviewing] = useState(!!b.canReview);
   const [editing, setEditing] = useState(false);
   const tone = b.status === "COMPLETED" ? "forest" : b.status === "CANCELLED" || b.status === "NO_SHOW" ? "rust" : "neutral";
   const status = b.status === "CONFIRMED" ? "Finished" : STATUS_LABEL[b.status];
   return (
-    <div className="rounded-3xl bg-white p-5 ring-1 ring-line sm:p-6">
+    <div className={`rounded-3xl bg-white p-5 ring-1 sm:p-6 ${b.canReview ? "ring-brass/40 shadow-[0_18px_40px_-32px_rgba(17,17,17,0.35)]" : "ring-line"}`}>
       <div className="flex flex-wrap items-center justify-between gap-4">
         <Who b={b} />
         <div className="flex flex-wrap items-center gap-2">
@@ -280,7 +295,7 @@ function PastCard({ b, onChange, onSupport }: { b: Booking; onChange: () => void
       <ReportStatus status={b.mentorReport} note={b.mentorReportNote} mentorName={b.mentor.name} />
       {b.review && !editing && <div className="mt-4"><SubmittedFeedback review={b.review} onEdit={() => setEditing(true)} onSupport={onSupport} /></div>}
       {b.review && editing && <div className="mt-4"><FeedbackForm b={b} existing={b.review} onDone={() => { setEditing(false); onChange(); }} onCancel={() => setEditing(false)} /></div>}
-      {reviewing && <div className="mt-4"><FeedbackForm b={b} onDone={() => { setReviewing(false); onChange(); }} onCancel={() => setReviewing(false)} /></div>}
+      {reviewing && b.canReview && <div className="mt-4"><FeedbackForm b={b} onDone={() => { setReviewing(false); onChange(); }} onCancel={() => setReviewing(false)} /></div>}
     </div>
   );
 }

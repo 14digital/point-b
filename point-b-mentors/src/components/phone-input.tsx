@@ -26,6 +26,12 @@ export const toE164 = (value: string) => parsePhoneNumberFromString(value, "PK")
 
 export const isValidPhone = (value: string) => !!parsePhoneNumberFromString(value)?.isValid();
 
+/** Learners enrol with a Pakistani mobile number (for WhatsApp alerts). */
+export const isPakistaniPhone = (value: string) => {
+  const p = parsePhoneNumberFromString(value, "PK");
+  return !!p?.isValid() && p.country === "PK";
+};
+
 /** "+923326070801" -> "+92 332 6070801", for display. */
 export const formatPhone = (value: string) => parsePhoneNumberFromString(value, "PK")?.formatInternational() ?? value;
 

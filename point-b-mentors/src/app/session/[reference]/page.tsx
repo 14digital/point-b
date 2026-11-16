@@ -108,12 +108,12 @@ function FeedbackPanel({ reference, mentorName, home, bare }: { reference: strin
       {sent && <p className="text-sm text-ink">Thank you, your feedback is in.</p>}
       <SubmittedFeedback review={b.review} />
     </div>
-  ) : b.canReview ? <FeedbackForm b={b} onDone={() => { setSent(true); load(); }} /> : <p className="text-sm text-ink-soft">Feedback opens once your session has finished.</p>;
+  ) : b.canReview ? <FeedbackForm b={b} onDone={() => { setSent(true); load(); }} /> : <p className="text-sm text-ink-soft">{b.course ? "Feedback opens once the final class has finished." : "Feedback opens once your session has finished."}</p>;
   if (bare) return <div className="rounded-3xl border border-line bg-white p-6 sm:p-8"><h2 className="font-display text-xl text-ink">Leave feedback</h2><div className="mt-4">{body}</div></div>;
   return (
     <div className="mx-auto max-w-lg rounded-3xl border border-line bg-white p-6 sm:p-8">
       <h1 className="font-display text-3xl text-ink">How did it go?</h1>
-      <p className="mt-2 text-sm text-ink-soft">Your session with {mentorName} has finished. A minute of feedback helps your mentor, and others choosing who to talk to.</p>
+      <p className="mt-2 text-sm text-ink-soft">{b?.course ? `Your course with ${mentorName} has finished. One short review helps us plan the next season.` : `Your session with ${mentorName} has finished. A minute of feedback helps your mentor, and others choosing who to talk to.`}</p>
       <div className="mt-5">{body}</div>
       <Link href={home}><Button variant="secondary" className="mt-6">Back to dashboard</Button></Link>
     </div>

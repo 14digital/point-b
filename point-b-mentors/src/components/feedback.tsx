@@ -8,32 +8,83 @@ import type { Booking } from "@/lib/types";
 export const Stars = ({ n }: { n: number }) => <span className="text-brass" aria-label={`${n} out of 5`}>{"★".repeat(n)}<span className="text-line">{"★".repeat(5 - n)}</span></span>;
 
 const WORDS = ["", "Not helpful", "Could be better", "Good", "Very good", "Excellent"];
+const LIKERT = [
+  { key: "clarity" as const, label: "Teaching clarity", hint: "How clear was the teaching?" },
+  { key: "usefulness" as const, label: "Usefulness", hint: "How useful was this for your work or studies?" },
+  { key: "recommend" as const, label: "Would recommend", hint: "Would you recommend this course to a peer?" },
+];
 
-/** Rating and comment form. Submitted feedback stays private until the POINT B team approves it. Pass `existing` to use the student's one edit. */
-export function FeedbackForm({ b, existing, onDone, onCancel }: { b: Pick<Booking, "reference" | "mentor">; existing?: { rating: number; comment: string }; onDone: () => void; onCancel?: () => void }) {
+type Scores = { clarity: number; usefulness: number; recommend: number };
+
+/** Rating and comment form. Course enrolments also ask three short Likert items. Submitted feedback stays private until the POINT B team approves it. */
+export function FeedbackForm({ b, existing, onDone, onCancel }: {
+  b: Pick<Booking, "reference" | "mentor" | "course">;
+  existing?: { rating: number; comment: string; clarity?: number | null; usefulness?: number | null; recommend?: number | null };
+  onDone: () => void; onCancel?: () => void;
+}) {
+  const isCourse = !!b.course;
   const [rating, setRating] = useState(existing?.rating ?? 0);
   const [comment, setComment] = useState(existing?.comment ?? "");
+  const [scores, setScores] = useState<Scores>({
+    clarity: existing?.clarity ?? 0,
+    usefulness: existing?.usefulness ?? 0,
+    recommend: existing?.recommend ?? 0,
+  });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const unchanged = !!existing && rating === existing.rating && comment.trim() === existing.comment;
+  const likertReady = !isCourse || (scores.clarity > 0 && scores.usefulness > 0 && scores.recommend > 0);
+  const unchanged = !!existing && rating === existing.rating && comment.trim() === existing.comment
+    && (!isCourse || (scores.clarity === (existing.clarity ?? 0) && scores.usefulness === (existing.usefulness ?? 0) && scores.recommend === (existing.recommend ?? 0)));
+
   async function submit() {
     setBusy(true); setError(null);
-    try { await api(`/bookings/${b.reference}/review`, { method: existing ? "PATCH" : "POST", body: { rating, comment: comment.trim() } }); onDone(); } catch (e) { setError(errMsg(e)); } finally { setBusy(false); }
+    try {
+      await api(`/bookings/${b.reference}/review`, {
+        method: existing ? "PATCH" : "POST",
+        body: { rating, comment: comment.trim(), ...(isCourse ? scores : {}) },
+      });
+      onDone();
+    } catch (e) { setError(errMsg(e)); } finally { setBusy(false); }
   }
+
   return (
-    <div className="space-y-3 rounded-2xl bg-paper-dim p-4 sm:p-5">
-      <p className="text-sm font-medium text-ink">{existing ? "Edit your feedback" : `How was your session with ${b.mentor.name.split(" ")[0]}?`}</p>
+    <div className="space-y-4 rounded-2xl bg-paper-dim p-4 sm:p-5">
+      <div>
+        <p className="text-sm font-medium text-ink">{existing ? "Edit your feedback" : isCourse ? `How was ${b.course!.title}?` : `How was your session with ${b.mentor.name.split(" ")[0]}?`}</p>
+        {isCourse && !existing && <p className="mt-1 text-xs text-ink-soft">One short review for the whole course — after the final class.</p>}
+      </div>
       <div className="flex items-center gap-3">
-        <div className="flex gap-1" role="radiogroup" aria-label="Rating">
+        <div className="flex gap-1" role="radiogroup" aria-label="Overall rating">
           {[1, 2, 3, 4, 5].map((n) => <button key={n} type="button" role="radio" aria-checked={rating === n} aria-label={`${n} star${n > 1 ? "s" : ""}`} onClick={() => setRating(n)} className={`text-3xl leading-none transition-transform hover:scale-110 ${n <= rating ? "text-brass" : "text-line"}`}>★</button>)}
         </div>
         <span className="text-sm text-ink-soft">{WORDS[rating]}</span>
       </div>
-      <textarea className="input min-h-24" maxLength={1000} placeholder="What was useful? What will you do next?" value={comment} onChange={(e) => setComment(e.target.value)} />
-      <p className="text-xs text-ink-soft">{existing ? "You can only edit your feedback once, so please check it before saving. Our team will review it again." : "Your mentor reviews feedback before it appears on their public profile. Only your first name and initial are shown."}</p>
+      {isCourse && (
+        <ul className="space-y-3">
+          {LIKERT.map((item) => (
+            <li key={item.key} className="rounded-2xl bg-white/70 px-3 py-3 ring-1 ring-line/70">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-ink">{item.label}</p>
+                  <p className="text-xs text-ink-soft">{item.hint}</p>
+                </div>
+                <div className="flex gap-1" role="radiogroup" aria-label={item.label}>
+                  {[1, 2, 3, 4, 5].map((n) => (
+                    <button key={n} type="button" role="radio" aria-checked={scores[item.key] === n} aria-label={`${n}`}
+                      onClick={() => setScores((s) => ({ ...s, [item.key]: n }))}
+                      className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-medium tabular-nums transition-colors ${scores[item.key] === n ? "bg-ink text-white" : "bg-paper text-ink ring-1 ring-line hover:ring-ink/30"}`}>{n}</button>
+                  ))}
+                </div>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      <textarea className="input min-h-24" maxLength={1000} placeholder={isCourse ? "What will you take into your next role? Anything we should improve?" : "What was useful? What will you do next?"} value={comment} onChange={(e) => setComment(e.target.value)} />
+      <p className="text-xs text-ink-soft">{existing ? "You can only edit your feedback once, so please check it before saving. Our team will review it again." : "Your teacher can read this. The POINT B team reviews feedback before anything appears on a public profile."}</p>
       {error && <Alert>{error}</Alert>}
       <div className="flex gap-2">
-        <Button size="sm" disabled={busy || !rating || comment.trim().length < 5 || unchanged} onClick={submit}>{busy ? <Spinner /> : existing ? "Save changes" : "Submit feedback"}</Button>
+        <Button size="sm" disabled={busy || !rating || !likertReady || comment.trim().length < 5 || unchanged} onClick={submit}>{busy ? <Spinner /> : existing ? "Save changes" : "Submit feedback"}</Button>
         {onCancel && <Button size="sm" variant="ghost" onClick={onCancel}>Cancel</Button>}
       </div>
     </div>
@@ -41,18 +92,27 @@ export function FeedbackForm({ b, existing, onDone, onCancel }: { b: Pick<Bookin
 }
 
 const STATE = {
-  PENDING: "Thank you. Our team reviews feedback before it appears on your mentor’s public profile.",
-  APPROVED: "Shared with your mentor.",
-  HIDDEN: "Shared with your mentor.",
+  PENDING: "Thank you. Our team reviews feedback before it appears on the teacher’s public profile.",
+  APPROVED: "Shared with your teacher.",
+  HIDDEN: "Shared with your teacher.",
 } as const;
 
 /** What the student sees after submitting: their words, where the feedback stands, and any actions the page offers. */
-export function SubmittedFeedback({ review, onEdit, onSupport }: { review: NonNullable<Booking["review"]>; onEdit?: () => void; onSupport?: () => void }) {
+export function SubmittedFeedback({ review, onEdit, onSupport }: {
+  review: NonNullable<Booking["review"]>;
+  onEdit?: () => void; onSupport?: () => void;
+}) {
   const canEdit = !!onEdit && review.canEdit;
+  const likert = [
+    review.clarity != null && `Clarity ${review.clarity}/5`,
+    review.usefulness != null && `Usefulness ${review.usefulness}/5`,
+    review.recommend != null && `Recommend ${review.recommend}/5`,
+  ].filter(Boolean);
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-paper-dim px-4 py-3 text-sm text-ink-soft">
       <div className="min-w-0 flex-1 basis-60">
         <Stars n={review.rating} /> <span className="ml-1 break-words">&ldquo;{review.comment}&rdquo;</span>
+        {!!likert.length && <p className="mt-1 text-xs">{likert.join(" · ")}</p>}
         <p className="mt-1.5 text-xs">{STATE[review.status ?? "APPROVED"]}</p>
       </div>
       {(canEdit || onSupport) && (

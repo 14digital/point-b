@@ -86,10 +86,31 @@ function CourseAdminRow({ c, onUpdate }: { c: AdminCourse; onUpdate: (c: AdminCo
             </span>
           </span>
         </span>
-        <span className="flex items-center gap-4">
-          <span className="hidden text-right sm:block">
-            <span className="block font-display text-xl leading-none text-ink tabular-nums">{c.priceMinor != null ? formatMoney(c.priceMinor, "PKR") : "—"}</span>
-            <span className="mt-1 block text-[11px] text-ink-soft">{published ? `${c.enrolled} enrolled` : "price not set"}</span>
+        <span className="flex flex-wrap items-center justify-end gap-3 sm:gap-4">
+          {published ? (
+            <span className="hidden min-w-[16rem] grid-cols-3 gap-2 md:grid lg:min-w-[20rem]">
+              <EarnCell label="Learner gross" value={formatMoney(c.revenueMinor, "PKR")} />
+              <EarnCell label="Mentor fee" value={formatMoney(c.mentorFeeMinor, c.mentorFeeCurrency)} muted />
+              <EarnCell label="Company share" value={c.companyRevenueMinor == null ? "—" : formatMoney(c.companyRevenueMinor, "PKR")} strong />
+            </span>
+          ) : (
+            <span className="hidden text-right sm:block">
+              <span className="block font-display text-xl leading-none text-ink tabular-nums">{c.priceMinor != null ? formatMoney(c.priceMinor, "PKR") : "—"}</span>
+              <span className="mt-1 block text-[11px] text-ink-soft">price not set</span>
+            </span>
+          )}
+          <span className="text-right sm:hidden">
+            {published ? (
+              <>
+                <span className="block font-display text-lg leading-none text-ink tabular-nums">{c.companyRevenueMinor == null ? formatMoney(c.revenueMinor, "PKR") : formatMoney(c.companyRevenueMinor, "PKR")}</span>
+                <span className="mt-1 block text-[11px] text-ink-soft">{c.enrolled} enrolled · company</span>
+              </>
+            ) : (
+              <>
+                <span className="block font-display text-lg leading-none text-ink tabular-nums">{c.priceMinor != null ? formatMoney(c.priceMinor, "PKR") : "—"}</span>
+                <span className="mt-1 block text-[11px] text-ink-soft">price not set</span>
+              </>
+            )}
           </span>
           <span className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-1 text-xs font-medium text-ink shadow-sm ring-1 ring-ink/5"><span className={`h-2 w-2 rounded-full ${STATUS_DOT[c.status]}`} />{st.label}</span>
           <span className={`flex h-9 w-9 items-center justify-center rounded-full ring-1 ring-line transition-all ${open ? "rotate-180 bg-ink text-white" : "bg-white text-ink"}`}><svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden><path d="M5 8l5 5 5-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg></span>
@@ -113,13 +134,38 @@ function CourseAdminRow({ c, onUpdate }: { c: AdminCourse; onUpdate: (c: AdminCo
           </div>
           <aside className="space-y-4">
             <dl className="space-y-2 rounded-2xl bg-paper p-4 text-sm">
-              <Row l="Mentor’s fee" v={formatMoney(c.mentorFeeMinor, c.mentorFeeCurrency)} />
               <Row l="Learners pay" v={c.priceMinor != null ? formatMoney(c.priceMinor, "PKR") : "Not set"} />
               {published && <Row l="Enrolled" v={`${c.enrolled}${c.capacity ? ` of ${c.capacity}` : " · no limit"}`} />}
-              {published && <Row l="Learner revenue" v={formatMoney(c.revenueMinor, "PKR")} />}
-              {published && <Row l="Company share" v={c.companyRevenueMinor == null ? "Fee not in PKR" : formatMoney(c.companyRevenueMinor, "PKR")} />}
               {c.submittedAt && <Row l="Sent for review" v={fmtDayShort(c.submittedAt)} />}
             </dl>
+            {published && (
+              <div className="overflow-hidden rounded-2xl ring-1 ring-line">
+                <div className="bg-ink px-4 py-3 text-white">
+                  <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-white/60">Earnings from this course</p>
+                  <p className="mt-1 font-display text-2xl tabular-nums">{c.companyRevenueMinor == null ? "—" : formatMoney(c.companyRevenueMinor, "PKR")}</p>
+                  <p className="text-xs text-white/65">Company share · learner gross − mentor fee</p>
+                </div>
+                <dl className="grid grid-cols-3 divide-x divide-line bg-paper/80 text-center">
+                  <div className="px-2 py-3"><dt className="text-[10px] uppercase tracking-[0.1em] text-ink-soft">Learner gross</dt><dd className="mt-1 text-sm font-medium tabular-nums text-ink">{formatMoney(c.revenueMinor, "PKR")}</dd></div>
+                  <div className="px-2 py-3"><dt className="text-[10px] uppercase tracking-[0.1em] text-ink-soft">Mentor fee</dt><dd className="mt-1 text-sm font-medium tabular-nums text-ink">{formatMoney(c.mentorFeeMinor, c.mentorFeeCurrency)}</dd></div>
+                  <div className="px-2 py-3"><dt className="text-[10px] uppercase tracking-[0.1em] text-ink-soft">Company</dt><dd className="mt-1 text-sm font-medium tabular-nums text-ink">{c.companyRevenueMinor == null ? "—" : formatMoney(c.companyRevenueMinor, "PKR")}</dd></div>
+                </dl>
+                {c.feedback && (
+                  <div className="space-y-1.5 border-t border-line px-4 py-3 text-xs text-ink-soft">
+                    <p>
+                      Feedback {c.feedback.count
+                        ? <>{c.feedback.rating != null ? `${c.feedback.rating} ★ avg` : "—"} · {c.feedback.count} review{c.feedback.count === 1 ? "" : "s"}{c.feedback.pending ? ` · ${c.feedback.pending} waiting` : ""}</>
+                        : "No reviews yet — invited after the final class"}
+                    </p>
+                    {c.feedback.count > 0 && (c.feedback.clarity != null || c.feedback.usefulness != null || c.feedback.recommend != null) && (
+                      <p>
+                        {[c.feedback.clarity != null && `Clarity ${c.feedback.clarity}`, c.feedback.usefulness != null && `Usefulness ${c.feedback.usefulness}`, c.feedback.recommend != null && `Recommend ${c.feedback.recommend}`].filter(Boolean).join(" · ")}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
             {c.status === "SUBMITTED" && <ReviewActions c={c} onUpdate={onUpdate} />}
             {published && <LiveActions c={c} onUpdate={onUpdate} />}
             <div className="flex flex-wrap gap-2">
@@ -235,6 +281,15 @@ function Roster({ id }: { id: string }) {
         </div>
       ))}
     </div>
+  );
+}
+
+function EarnCell({ label, value, muted, strong }: { label: string; value: string; muted?: boolean; strong?: boolean }) {
+  return (
+    <span className={`rounded-2xl px-2.5 py-2 text-left ring-1 ring-ink/5 ${strong ? "bg-ink text-white" : "bg-white/90 text-ink"}`}>
+      <span className={`block text-[10px] uppercase tracking-[0.1em] ${strong ? "text-white/55" : "text-ink-soft"}`}>{label}</span>
+      <span className={`mt-0.5 block truncate text-sm tabular-nums ${strong ? "font-semibold" : muted ? "font-medium text-ink-soft" : "font-medium"}`}>{value}</span>
+    </span>
   );
 }
 

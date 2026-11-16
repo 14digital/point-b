@@ -521,6 +521,10 @@ model Review {
   bookingId   String        @unique @db.ObjectId
   rating      Int
   comment     String
+  // Course feedback Likert items (1–5). Unset on older 1:1 session reviews.
+  clarity     Int?
+  usefulness  Int?
+  recommend   Int?
   // Unset on reviews created before moderation existed; those count as approved. New reviews start PENDING until an admin approves or keeps them private.
   status      ReviewStatus?
   moderatedAt DateTime?

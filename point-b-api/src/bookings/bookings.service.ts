@@ -74,9 +74,10 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
       // An email about a session from weeks ago would only confuse people.
       if (claimed.count && !b.review && b.slot.endAt.getTime() > now - REPORT_WINDOW_DAYS * 86400_000) await this.askForFeedback(b);
     }
-    // Course enrolments finish a day after the final class.
+    // Course enrolments finish shortly after the final class (grace), then we ask for one end-of-course review.
+    const COURSE_FEEDBACK_GRACE_MS = 15 * 60_000;
     const finished = await this.prisma.course.findMany({ where: { status: { in: ['LIVE', 'CLOSED'] }, bookings: { some: { status: 'CONFIRMED' } } }, select: { id: true, slots: { select: { endAt: true }, orderBy: { startAt: 'desc' }, take: 1 } } });
-    for (const c of finished.filter((c) => c.slots[0] && c.slots[0].endAt.getTime() < now - 24 * 3600_000)) {
+    for (const c of finished.filter((c) => c.slots[0] && c.slots[0].endAt.getTime() < now - COURSE_FEEDBACK_GRACE_MS)) {
       const open = await this.prisma.booking.findMany({ where: { courseId: c.id, status: 'CONFIRMED' }, include, take: 500 });
       for (const b of open) {
         const claimed = await this.prisma.booking.updateMany({ where: { id: b.id, status: 'CONFIRMED' }, data: { status: 'COMPLETED', completedAt: new Date() } });
@@ -134,7 +135,10 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
       mentor: { id: b.mentor.id, slug: b.mentor.slug, name: b.mentor.user.name, title: b.mentor.title, photoUrl: b.mentor.photoUrl },
       student: viewer?.role === 'STUDENT' ? undefined : { id: b.student.id, name: b.student.name },
       meetingLink: showLink ? sessionUrl(b.reference) : null,
-      review: b.review ? { rating: b.review.rating, comment: b.review.comment, status: b.review.status ?? 'APPROVED', canEdit: !b.review.editedAt } : null,
+      review: b.review ? {
+        rating: b.review.rating, comment: b.review.comment, status: b.review.status ?? 'APPROVED', canEdit: !b.review.editedAt,
+        clarity: b.review.clarity ?? null, usefulness: b.review.usefulness ?? null, recommend: b.review.recommend ?? null,
+      } : null,
       canReview: !b.review && this.reviewable(b),
       canReportMissing: viewer?.id === b.studentId && this.mentorMissing(b),
       mentorReport: b.mentorReportStatus ?? null, mentorReportNote: b.mentorReportNote ?? null,
@@ -633,25 +637,38 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     return this.get(user, reference);
   }
 
-  /** Feedback opens the moment the call is over: marked completed, past its end time, or the mentor has opened the room. */
+  /** Feedback opens once the session/course has finished (or the mentor opened the 1:1 room). */
   private reviewable(b: FullBooking) {
+    if (b.status === 'CANCELLED' || b.status === 'NO_SHOW' || b.status === 'PENDING_PAYMENT') return false;
     if (b.status === 'COMPLETED') return true;
     if (b.status !== 'CONFIRMED') return false;
     const now = Date.now();
-    // A course can be reviewed once its final class has started.
-    if (b.course) return lastClass(b).startAt.getTime() <= now;
+    // One feedback per course enrolment, after the final class has finished.
+    if (b.course) return lastClass(b).endAt.getTime() <= now;
     return b.slot.endAt.getTime() <= now || (!!b.hostStartedAt && b.slot.startAt.getTime() <= now);
+  }
+
+  private reviewScores(b: FullBooking, dto: CreateReviewDto) {
+    if (b.course) {
+      if (dto.clarity == null || dto.usefulness == null || dto.recommend == null) {
+        throw new BadRequestException('Please rate teaching clarity, usefulness, and whether you would recommend this course.');
+      }
+      return { clarity: dto.clarity, usefulness: dto.usefulness, recommend: dto.recommend };
+    }
+    return { clarity: dto.clarity ?? null, usefulness: dto.usefulness ?? null, recommend: dto.recommend ?? null };
   }
 
   async review(user: AuthUser, reference: string, dto: CreateReviewDto) {
     const b = await this.load(user, reference);
     if (b.studentId !== user.id) throw new ForbiddenException('Only the person who booked can review this session');
     if (b.review) throw new ConflictException('You have already reviewed this session');
-    if (!this.reviewable(b)) throw new BadRequestException('You can leave feedback once the session has finished');
+    if (!this.reviewable(b)) throw new BadRequestException(b.course ? 'You can leave feedback once the final class has finished' : 'You can leave feedback once the session has finished');
+    const scores = this.reviewScores(b, dto);
     // Private until the POINT B team approves it; mentors can read it but not change it.
-    await this.prisma.review.create({ data: { bookingId: b.id, rating: dto.rating, comment: dto.comment, status: 'PENDING' } });
+    await this.prisma.review.create({ data: { bookingId: b.id, rating: dto.rating, comment: dto.comment, ...scores, status: 'PENDING' } });
     const mentorUserId = (await this.prisma.mentorProfile.findUnique({ where: { id: b.mentorId }, select: { userId: true } }))?.userId;
-    await this.notify.send(b.mentor.user.email, `New feedback from ${b.student.name.split(' ')[0]}`, `Hi ${b.mentor.user.name.split(' ')[0]},\n\n${b.student.name} has left feedback on your session. You can read it on your dashboard. The POINT B team reviews all feedback before it appears on your public profile.`, mentorUserId, { cta: { label: 'Read the feedback', url: `${webUrl()}/dashboard/mentor?tab=feedback` }, facts: [['Rating', `${dto.rating} out of 5`], ['Session', emailDate(b.slot.startAt)]] });
+    const what = b.course ? b.course.title : 'your session';
+    await this.notify.send(b.mentor.user.email, `New feedback from ${b.student.name.split(' ')[0]}`, `Hi ${b.mentor.user.name.split(' ')[0]},\n\n${b.student.name} has left feedback on ${what}. You can read it on your dashboard. The POINT B team reviews all feedback before it appears on your public profile.`, mentorUserId, { cta: { label: 'Read the feedback', url: `${webUrl()}/dashboard/mentor?tab=feedback` }, facts: [['Rating', `${dto.rating} out of 5`], [b.course ? 'Course' : 'Session', b.course ? b.course.title : emailDate(b.slot.startAt)]] });
     this.activity.record(user.id, 'review_left', { reference: b.reference });
     return this.get(user, reference);
   }
@@ -661,10 +678,11 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
     const b = await this.load(user, reference);
     if (b.studentId !== user.id) throw new ForbiddenException('Only the person who booked can edit this feedback');
     if (!b.review) throw new BadRequestException('You haven’t left feedback on this session yet');
+    const scores = this.reviewScores(b, dto);
     // A single conditional update, so two edits sent at once can't both succeed.
     const claimed = await this.prisma.review.updateMany({
       where: { id: b.review.id, OR: [{ editedAt: null }, { editedAt: { isSet: false } }] },
-      data: { rating: dto.rating, comment: dto.comment, status: 'PENDING', moderatedAt: null, moderatedBy: null, editedAt: new Date() },
+      data: { rating: dto.rating, comment: dto.comment, ...scores, status: 'PENDING', moderatedAt: null, moderatedBy: null, editedAt: new Date() },
     });
     if (!claimed.count) throw new ConflictException('You have already used your one edit on this feedback');
     this.activity.record(user.id, 'review_edited', { reference: b.reference });

@@ -34,6 +34,10 @@ export class CancelBookingDto {
 export class CreateReviewDto {
   @IsInt() @Min(1) @Max(5) rating: number;
   @IsString() @MinLength(5) @MaxLength(1000) comment: string;
+  /** Course feedback Likert items (1–5). Required when reviewing a course enrolment. */
+  @IsOptional() @IsInt() @Min(1) @Max(5) clarity?: number;
+  @IsOptional() @IsInt() @Min(1) @Max(5) usefulness?: number;
+  @IsOptional() @IsInt() @Min(1) @Max(5) recommend?: number;
 }
 
 export class DecideMentorReportDto {

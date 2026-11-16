@@ -23,6 +23,9 @@ export const countryName = (code: string) => new Intl.DisplayNames(["en"], { typ
 
 export const localTz = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
 
+/** Courses and classes run on Pakistan Standard Time. */
+export const TZ_LABEL = "Pakistan time";
+
 export const fmtTime = (iso: string) =>
   new Date(iso).toLocaleTimeString("en-GB", { hour: "numeric", minute: "2-digit", hour12: true }).replace(" ", " ");
 
@@ -31,6 +34,10 @@ export const fmtDay = (iso: string) =>
 
 export const fmtDayShort = (iso: string) =>
   new Date(iso).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+
+/** Short calendar date, e.g. "16 Nov 2026". */
+export const fmtDate = (iso: string) =>
+  new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 
 export const dayKey = (iso: string) => {
   const d = new Date(iso);
