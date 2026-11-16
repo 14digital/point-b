@@ -7,6 +7,7 @@ import { classesLabel, courseAccent } from "./course-card";
 import { api, errMsg } from "@/lib/api";
 import { useApi, useNow } from "@/lib/use-api";
 import { fmtDay, fmtDayShort, fmtTime, formatMoney, TZ_LABEL } from "@/lib/format";
+import { ClassSessionAction, classWindow } from "@/components/class-session-action";
 import type { Currency, CourseClassDetail, CourseStatus, OwnCourse } from "@/lib/types";
 
 export type MyCourse = OwnCourse & { roomReference: string | null };
@@ -26,7 +27,7 @@ export const STATUS: Record<CourseStatus, { label: string; tone: "forest" | "bra
   REJECTED: { label: "Not going ahead", tone: "neutral" },
 };
 
-interface Draft { title: string; summary: string; topics: string[]; audience: string; startDate: string; weekdays: number[]; startTime: string; sessionsCount: number; sessionMinutes: number; fee: string; mentorFeeCurrency: Currency }
+interface Draft { title: string; summary: string; topics: string[]; classOutlines: string[]; audience: string; startDate: string; weekdays: number[]; startTime: string; sessionsCount: number; sessionMinutes: number; fee: string; mentorFeeCurrency: Currency }
 
 /** Same rule as the API: each chosen weekday from the first class date, until there are enough classes. Pakistan time. */
 function previewDates(d: Pick<Draft, "startDate" | "weekdays" | "startTime" | "sessionsCount" | "sessionMinutes">) {
@@ -43,9 +44,14 @@ function previewDates(d: Pick<Draft, "startDate" | "weekdays" | "startTime" | "s
 
 const blank = (): Draft => {
   const d = new Date(Date.now() + 14 * 86400_000);
-  return { title: "", summary: "", topics: [""], audience: "", startDate: d.toLocaleDateString("en-CA", { timeZone: "Asia/Karachi" }), weekdays: [6], startTime: "14:00", sessionsCount: 4, sessionMinutes: 90, fee: "", mentorFeeCurrency: "USD" };
+  return { title: "", summary: "", topics: [""], classOutlines: ["", "", "", ""], audience: "", startDate: d.toLocaleDateString("en-CA", { timeZone: "Asia/Karachi" }), weekdays: [6], startTime: "14:00", sessionsCount: 4, sessionMinutes: 90, fee: "", mentorFeeCurrency: "USD" };
 };
-const fromCourse = (c: OwnCourse): Draft => ({ title: c.title, summary: c.summary, topics: c.topics.length ? c.topics : [""], audience: c.audience, startDate: c.startDate, weekdays: c.weekdays, startTime: c.startTime, sessionsCount: c.sessionsCount, sessionMinutes: c.sessionMinutes, fee: String(c.mentorFeeMinor / 100), mentorFeeCurrency: c.mentorFeeCurrency });
+const fromCourse = (c: OwnCourse): Draft => ({
+  title: c.title, summary: c.summary, topics: c.topics.length ? c.topics : [""],
+  classOutlines: Array.from({ length: c.sessionsCount }, (_, i) => c.classOutlines?.[i] ?? c.classes[i]?.outline ?? ""),
+  audience: c.audience, startDate: c.startDate, weekdays: c.weekdays, startTime: c.startTime,
+  sessionsCount: c.sessionsCount, sessionMinutes: c.sessionMinutes, fee: String(c.mentorFeeMinor / 100), mentorFeeCurrency: c.mentorFeeCurrency,
+});
 
 /** The mentor's courses: write one, send it for approval, and see who has enrolled once it is live. */
 export function MentorCourses({ courses, loading, reload, live }: { courses: MyCourse[] | null; loading: boolean; reload: () => Promise<void> | void; live: boolean }) {
@@ -98,7 +104,10 @@ function CourseRow({ c, onEdit, reload }: { c: MyCourse; onEdit: () => void; rel
   const a = accentOf(c.slug);
   const editable = c.status === "DRAFT" || c.status === "CHANGES_REQUESTED";
   const published = c.status === "LIVE" || c.status === "CLOSED";
-  const roomOpen = c.classes.find((k) => !k.completedAt && now >= new Date(k.startAt).getTime() - 10 * 60_000 && now <= new Date(k.endAt).getTime() + 60 * 60_000);
+  const focusClass = c.classes.find((k) => !k.completedAt && classWindow(k.startAt, k.endAt, now).joinable)
+    ?? c.nextClass
+    ?? c.classes.find((k) => !k.completedAt && new Date(k.endAt).getTime() > now)
+    ?? null;
   const held = c.classes.filter((k) => !!k.completedAt || new Date(k.endAt).getTime() <= now).length;
   const pendingComplete = c.classes.find((k) => !k.completedAt && (new Date(k.endAt).getTime() <= now || !!k.hostStartedAt || new Date(k.startAt).getTime() <= now));
   const until = c.nextClass ? relativeShort(c.nextClass.startAt, c.nextClass.endAt, now) : null;
@@ -131,18 +140,42 @@ function CourseRow({ c, onEdit, reload }: { c: MyCourse; onEdit: () => void; rel
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            {roomOpen && c.roomReference && <Button size="sm" href={`/session/${c.roomReference}`}>Open class {roomOpen.number}</Button>}
-            {pendingComplete && !roomOpen && (
-              <Button size="sm" variant="secondary" disabled={!!busy} onClick={() => { setShowClasses(true); void act(`/courses/me/${c.id}/classes/${pendingComplete.number}/complete`); }}>
-                {busy?.includes("/complete") ? <Spinner /> : `Mark class ${pendingComplete.number} complete`}
-              </Button>
-            )}
             {editable && <Button size="sm" onClick={onEdit}>Edit course</Button>}
             {c.status === "SUBMITTED" && <Button size="sm" variant="secondary" disabled={!!busy} onClick={() => act(`/courses/me/${c.id}/withdraw`)}>{busy ? <Spinner /> : "Withdraw to edit"}</Button>}
             {published && <Button size="sm" variant="secondary" href={`/courses/${c.slug}`}>View on site <span aria-hidden>↗</span></Button>}
             {(editable || c.status === "REJECTED") && <Button size="sm" variant="ghost" disabled={!!busy} onClick={() => act(`/courses/me/${c.id}`, "DELETE")}>Delete</Button>}
           </div>
         </div>
+
+        {published && focusClass && c.roomReference && (
+          <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-white/90 px-4 py-3 ring-1 ring-ink/5 sm:px-5">
+            <div className="min-w-0">
+              <p className="text-xs font-medium uppercase tracking-[0.12em] text-ink/50">
+                {classWindow(focusClass.startAt, focusClass.endAt, now).joinable ? "Start here" : "Next class"}
+              </p>
+              <p className="mt-0.5 font-medium text-ink">Class {focusClass.number} · {fmtDayShort(focusClass.startAt)}, {fmtTime(focusClass.startAt)}–{fmtTime(focusClass.endAt)}</p>
+              {focusClass.outline && <p className="mt-0.5 truncate text-xs text-ink-soft">{focusClass.outline}</p>}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <ClassSessionAction
+                role="mentor"
+                href={`/session/${c.roomReference}`}
+                startAt={focusClass.startAt}
+                endAt={focusClass.endAt}
+                classNumber={focusClass.number}
+                sessionsCount={c.sessionsCount}
+                courseTitle={c.title}
+                mentorName="your learners"
+                outline={focusClass.outline}
+              />
+              {pendingComplete && !classWindow(focusClass.startAt, focusClass.endAt, now).joinable && pendingComplete.number === focusClass.number && (
+                <Button size="sm" variant="secondary" disabled={!!busy} onClick={() => { setShowClasses(true); void act(`/courses/me/${c.id}/classes/${pendingComplete.number}/complete`); }}>
+                  {busy?.includes("/complete") ? <Spinner /> : "Mark class complete"}
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
 
         {c.classes.length > 0 && (
           <div className="mt-6">
@@ -258,7 +291,16 @@ function ClassRuns({ courseId, roomReference, onChanged }: { courseId: string; r
                 </button>
                 <div className="flex flex-wrap gap-2">
                   {(k.status === "live" || k.status === "upcoming") && roomReference && (
-                    <Button size="sm" href={`/session/${roomReference}`}>Open class {k.number}</Button>
+                    <ClassSessionAction
+                      role="mentor"
+                      href={`/session/${roomReference}`}
+                      startAt={k.startAt}
+                      endAt={k.endAt}
+                      classNumber={k.number}
+                      sessionsCount={data.length}
+                      courseTitle={`Class ${k.number}`}
+                      mentorName="your learners"
+                    />
                   )}
                   {k.canComplete && (
                     <Button size="sm" variant="secondary" disabled={busy === k.number} onClick={() => complete(k.number)}>
@@ -316,7 +358,15 @@ function CourseEditor({ course, onCancel, onSaved }: { course: MyCourse | null; 
   const [busy, setBusy] = useState<"save" | "submit" | "suggest" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [idea, setIdea] = useState("");
-  const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setD((x) => ({ ...x, [k]: v }));
+  const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setD((x) => {
+    if (k === "sessionsCount") {
+      const n = v as number;
+      const outlines = [...x.classOutlines];
+      while (outlines.length < n) outlines.push("");
+      return { ...x, sessionsCount: n, classOutlines: outlines.slice(0, n) };
+    }
+    return { ...x, [k]: v };
+  });
   const dates = useMemo(() => previewDates(d), [d]);
   const topics = d.topics.map((t) => t.trim()).filter(Boolean);
   const feeMinor = Math.round(Number(d.fee.replace(/,/g, "")) * 100);
@@ -338,7 +388,8 @@ function CourseEditor({ course, onCancel, onSaved }: { course: MyCourse | null; 
 
   async function save(submit: boolean) {
     setBusy(submit ? "submit" : "save"); setError(null);
-    const body = { title: d.title.trim(), summary: d.summary.trim(), topics, audience: d.audience.trim(), startDate: d.startDate, weekdays: d.weekdays, startTime: d.startTime, sessionsCount: d.sessionsCount, sessionMinutes: d.sessionMinutes, mentorFeeMinor: feeMinor, mentorFeeCurrency: d.mentorFeeCurrency, submit };
+    const classOutlines = Array.from({ length: d.sessionsCount }, (_, i) => (d.classOutlines[i] ?? "").trim());
+    const body = { title: d.title.trim(), summary: d.summary.trim(), topics, classOutlines, audience: d.audience.trim(), startDate: d.startDate, weekdays: d.weekdays, startTime: d.startTime, sessionsCount: d.sessionsCount, sessionMinutes: d.sessionMinutes, mentorFeeMinor: feeMinor, mentorFeeCurrency: d.mentorFeeCurrency, submit };
     try {
       await api(course ? `/courses/me/${course.id}` : "/courses/me", { method: course ? "PUT" : "POST", body });
       onSaved(submit ? "Sent to the POINT B team. We’ll email you once it’s reviewed." : "Saved as a draft.");
@@ -401,6 +452,24 @@ function CourseEditor({ course, onCancel, onSaved }: { course: MyCourse | null; 
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Number of classes"><input className="input" type="number" min={1} max={24} value={d.sessionsCount} onChange={(e) => set("sessionsCount", Math.max(1, Math.min(24, Number(e.target.value) || 1)))} /></Field>
             <Field label="Each class lasts"><select className="input" value={d.sessionMinutes} onChange={(e) => set("sessionMinutes", Number(e.target.value))}>{LENGTHS.map((m) => <option key={m} value={m}>{m >= 60 && m % 60 === 0 ? `${m / 60} hour${m === 60 ? "" : "s"}` : m === 90 ? "1½ hours" : `${m} minutes`}</option>)}</select></Field>
+          </div>
+          <div>
+            <p className="mb-1.5 text-sm font-medium text-ink">What each class covers</p>
+            <p className="mb-3 text-xs text-ink-soft">Optional one-line outline per class. Learners see this on their dashboard.</p>
+            <div className="space-y-2">
+              {Array.from({ length: d.sessionsCount }, (_, i) => (
+                <div key={i} className="flex gap-2">
+                  <span className="flex w-8 shrink-0 items-center justify-center font-display text-lg text-ink-soft">{i + 1}</span>
+                  <input
+                    className="input flex-1"
+                    maxLength={240}
+                    value={d.classOutlines[i] ?? ""}
+                    onChange={(e) => set("classOutlines", Array.from({ length: d.sessionsCount }, (_, j) => (j === i ? e.target.value : d.classOutlines[j] ?? "")))}
+                    placeholder={dates[i] ? `Class ${i + 1} · ${fmtDayShort(dates[i].startAt)}` : `Class ${i + 1} outline`}
+                  />
+                </div>
+              ))}
+            </div>
           </div>
         </section>
 

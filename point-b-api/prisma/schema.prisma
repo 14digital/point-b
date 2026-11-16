@@ -291,6 +291,8 @@ model AvailabilitySlot {
   // Set on the classes of a course. Enrolment seats are counted on the course's first class.
   courseId       String?     @db.ObjectId
   sessionNumber  Int?
+  // Optional short outline for this class (copied from the course plan when the schedule is published).
+  outline        String?
   // Per class: when the mentor first opened the room, when they marked it finished, and when its reminders went out.
   hostStartedAt  DateTime?
   completedAt    DateTime?
@@ -385,6 +387,8 @@ model Course {
   // What the course covers, one point per line, and who it is for.
   topics            String[]
   audience          String       @default("")
+  // Optional one-line outline per class (index 0 = class 1). Learners see these on their dashboard.
+  classOutlines     String[]     @default([])
   // Schedule, in Pakistan time: the first class date (YYYY-MM-DD), the weekdays it runs (0 = Sunday), the start time (HH:mm).
   startDate         String
   weekdays          Int[]

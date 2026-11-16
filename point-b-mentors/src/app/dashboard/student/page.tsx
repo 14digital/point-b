@@ -19,9 +19,11 @@ import { isValidPhone, type CountryCode } from "@/components/phone-input";
 import { fmtDay, fmtDayShort, fmtTime, formatMoney } from "@/lib/format";
 import { useUrlTab } from "@/lib/use-url-tab";
 import { useApi, useNow } from "@/lib/use-api";
-import type { Booking, Currency } from "@/lib/types";
+import type { Booking, CourseClass, Currency } from "@/lib/types";
 import { NoticeText } from "@/lib/policy";
 import { MySupport, type SupportPreset } from "@/components/my-support";
+import { ClassSessionAction } from "@/components/class-session-action";
+import { FinanceModal } from "@/components/finance-modal";
 import { SessionButton } from "@/components/session-button";
 
 const TABS = ["Upcoming", "Awaiting payment", "Past"] as const;
@@ -45,13 +47,20 @@ function Dashboard() {
   const now = useNow();
   // Course enrolments stay upcoming until the final class ends (booking.endAt is only the first class).
   const stillOn = (b: Booking) => b.course
-    ? new Date(b.course.endsAt).getTime() > now || !!b.course.nextClass || !!b.course.liveClass
+    ? remainingClasses(b, now).length > 0 || !!b.course.nextClass || !!b.course.liveClass
     : new Date(b.endAt).getTime() > now;
-  const upcoming = (data ?? []).filter((b) => b.status === "CONFIRMED" && stillOn(b)).sort((a, b) => +new Date(a.startAt) - +new Date(b.startAt));
+  const upcoming = (data ?? []).filter((b) => b.status === "CONFIRMED" && stillOn(b)).sort((a, b) => +new Date(nextAt(a)) - +new Date(nextAt(b)));
   const pending = (data ?? []).filter((b) => b.status === "PENDING_PAYMENT");
-  const past = (data ?? []).filter((b) => !upcoming.includes(b) && !pending.includes(b)).sort((a, b) => +new Date(b.startAt) - +new Date(a.startAt));
-  const completed = past.filter((b) => b.status === "COMPLETED");
-  const needsFeedback = past.filter((b) => b.canReview);
+  const pastEnrolments = (data ?? []).filter((b) => !upcoming.includes(b) && !pending.includes(b)).sort((a, b) => +new Date(b.startAt) - +new Date(a.startAt));
+  // Held classes from courses still under way — shown on Past without moving the enrolment off Upcoming.
+  const activeCoursePast = upcoming
+    .filter((b) => b.course && heldClasses(b, now).length > 0)
+    .map((b) => ({ b, classes: heldClasses(b, now) }))
+    .sort((a, c) => +new Date(c.classes[c.classes.length - 1].endAt) - +new Date(a.classes[a.classes.length - 1].endAt));
+  const pastCount = pastEnrolments.length + activeCoursePast.reduce((n, x) => n + x.classes.length, 0);
+  const completed = pastEnrolments.filter((b) => b.status === "COMPLETED");
+  const heldClassCount = activeCoursePast.reduce((n, x) => n + x.classes.length, 0);
+  const needsFeedback = pastEnrolments.filter((b) => b.canReview);
   const [tab, setTab] = useUrlTab(TABS, "Upcoming");
   const [asking, setAsking] = useState<SupportPreset | null>(null);
   // Opened from the chat's "Talk to the team": start a support request, then tidy the URL.
@@ -64,12 +73,13 @@ function Dashboard() {
   }, [wantsSupport, router]);
   const tabs = TABS.filter((t) => t !== "Awaiting payment" || pending.length > 0);
   const next = upcoming[0];
+  const nextFocus = next ? focusClass(next) : null;
   const show = (t: (typeof TABS)[number]) => { setTab(t); setTimeout(() => document.getElementById("sessions")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50); };
   const stats = (
     <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
       <StatTile label="Upcoming" value={loading ? "–" : upcoming.length} tone="sky" onClick={() => show("Upcoming")} />
-      <StatTile label="Completed" value={loading ? "–" : completed.length} tone="mint" delay={60} onClick={() => show("Past")} />
-      <StatTile label="Mentors met" value={loading ? "–" : new Set(completed.map((b) => b.mentor.id)).size} tone="peach" delay={120} />
+      <StatTile label="Completed" value={loading ? "–" : completed.length + heldClassCount} tone="mint" delay={60} onClick={() => show("Past")} />
+      <StatTile label="Mentors met" value={loading ? "–" : new Set([...completed, ...upcoming.filter((b) => heldClasses(b, now).length > 0)].map((b) => b.mentor.id)).size} tone="peach" delay={120} />
       <StatTile label="Feedback to give" value={loading ? "–" : needsFeedback.length} tone="lemon" delay={180} onClick={() => show("Past")} />
     </div>
   );
@@ -79,7 +89,11 @@ function Dashboard() {
       <DashboardHero
         eyebrow={<><span>Student &amp; professional dashboard</span><span aria-hidden>·</span><span>{user?.timezone}</span></>}
         title={<>{greeting()}, <Mark>{user?.name.split(" ")[0]}</Mark></>}
-        subtitle={next ? `Your next session is ${relative(next.startAt, now)}, with ${next.mentor.name}.` : "Find a mentor who has been where you're going, and book a 30-minute conversation."}
+        subtitle={next && nextFocus
+          ? next.course
+            ? `Your next class is ${relative(nextFocus.startAt, now)} — ${next.course.title} with ${next.mentor.name}.`
+            : `Your next session is ${relative(nextFocus.startAt, now)}, with ${next.mentor.name}.`
+          : "Find a mentor who has been where you're going, and book a 30-minute conversation."}
         actions={<><Button href="/mentors">Book a session</Button><Button variant="secondary" onClick={() => setAsking({})}>Get help</Button></>}
       >
         <div className="mt-10 hidden lg:block">{stats}</div>
@@ -113,19 +127,32 @@ function Dashboard() {
 
             <div id="sessions" className="flex scroll-mt-24 flex-wrap items-center justify-between gap-4">
               <h2 className="font-display text-3xl text-ink">Your sessions</h2>
-              <Tabs tabs={tabs} value={tabs.includes(tab) ? tab : "Upcoming"} onChange={setTab} counts={{ Upcoming: upcoming.length, "Awaiting payment": pending.length, Past: past.length }} />
+              <Tabs tabs={tabs} value={tabs.includes(tab) ? tab : "Upcoming"} onChange={setTab} counts={{ Upcoming: upcoming.length, "Awaiting payment": pending.length, Past: pastCount }} />
             </div>
 
-            <div className="space-y-3">
+            <div className="space-y-4">
               {loading ? <><Skeleton className="h-28 rounded-3xl" /><Skeleton className="h-28 rounded-3xl" /></> : (
                 <>
                   {tab === "Upcoming" && (upcoming.length === 0
                     ? <EmptyState title="No upcoming sessions" description="Book a mentor and your confirmed session will appear here, with a button to join the call." />
-                    : upcoming.map((b, i) => <Reveal key={b.id} delay={i * 60}><UpcomingCard b={b} onChange={reload} /></Reveal>))}
+                    : upcoming.map((b, i) => <Reveal key={b.id} delay={i * 60}>{b.course ? <CourseUpcomingCard b={b} now={now} /> : <UpcomingCard b={b} onChange={reload} />}</Reveal>))}
                   {tab === "Awaiting payment" && pending.map((b) => <PendingCard key={b.id} b={b} onChange={reload} />)}
-                  {tab === "Past" && (past.length === 0
-                    ? <EmptyState title="No past sessions yet" description="Your completed sessions will appear here." />
-                    : past.map((b, i) => <Reveal key={b.id} delay={i * 50}><PastCard b={b} onChange={reload} onSupport={() => setAsking({ topic: "Reviews", reference: b.reference })} /></Reveal>))}
+                  {tab === "Past" && (pastCount === 0
+                    ? <EmptyState title="No past sessions yet" description="Your completed sessions and classes will appear here." />
+                    : (
+                      <div className="space-y-4">
+                        {activeCoursePast.map(({ b, classes }, i) => (
+                          <Reveal key={`held-${b.id}`} delay={i * 50}>
+                            <CoursePastClasses b={b} classes={classes} />
+                          </Reveal>
+                        ))}
+                        {pastEnrolments.map((b, i) => (
+                          <Reveal key={b.id} delay={(activeCoursePast.length + i) * 50}>
+                            <PastCard b={b} onChange={reload} onSupport={() => setAsking({ topic: "Reviews", reference: b.reference })} />
+                          </Reveal>
+                        ))}
+                      </div>
+                    ))}
                 </>
               )}
             </div>
@@ -154,21 +181,50 @@ function Dashboard() {
   );
 }
 
-/** Highlighted card for the soonest confirmed session. */
+/** Live or next class for a course enrolment; otherwise the booking slot. */
+function focusClass(b: Booking): { startAt: string; endAt: string; number?: number } {
+  if (b.course) {
+    const k = b.course.liveClass ?? b.course.nextClass;
+    if (k) return k;
+    const last = b.course.classes[b.course.classes.length - 1];
+    if (last) return last;
+  }
+  return { startAt: b.startAt, endAt: b.endAt };
+}
+function nextAt(b: Booking) { return focusClass(b).startAt; }
+function isClassHeld(k: CourseClass, now: number) {
+  return !!k.completedAt || new Date(k.endAt).getTime() <= now;
+}
+function heldClasses(b: Booking, now: number) {
+  return (b.course?.classes ?? []).filter((k) => isClassHeld(k, now));
+}
+function remainingClasses(b: Booking, now: number) {
+  return (b.course?.classes ?? []).filter((k) => !isClassHeld(k, now));
+}
+
+/** Highlighted card for the soonest confirmed session or class. */
 function NextSession({ b, now }: { b: Booking; now: number }) {
-  const open = new Date(b.startAt).getTime() - now <= 10 * 60_000;
+  const focus = focusClass(b);
+  const open = new Date(focus.startAt).getTime() - now <= 10 * 60_000 && now <= new Date(focus.endAt).getTime() + 60 * 60_000;
+  const detail = b.course
+    ? `${b.course.title} · Class ${focus.number ?? 1} of ${b.course.sessionsCount}`
+    : `${b.sessionKind === "GROUP" ? "Group" : "1:1"} · ${b.agenda}`;
   return (
     <div className="animate-rise overflow-hidden rounded-[2rem] bg-ink p-6 text-white sm:p-8">
       <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-4 sm:flex sm:gap-5">
-        <DateTile iso={b.startAt} dark />
+        <DateTile iso={focus.startAt} dark />
         <div className="hidden h-16 w-16 shrink-0 overflow-hidden rounded-full ring-2 ring-white/20 sm:block"><MentorPhoto name={b.mentor.name} photoUrl={b.mentor.photoUrl} className="h-full w-full" initialsClass="text-xl" /></div>
         <div className="min-w-0 sm:flex-1">
-          <p className="text-sm text-white/60">Your next session · {relative(b.startAt, now)}</p>
-          <p className="mt-1 font-display text-3xl leading-tight">{b.mentor.name}</p>
-          <p className="text-sm text-white/70">{fmtTime(b.startAt)}–{fmtTime(b.endAt)} · {b.sessionKind === "GROUP" ? "Group" : "1:1"} · {b.agenda}</p>
+          <p className="text-sm text-white/60">{b.course ? "Your next class" : "Your next session"} · {relative(focus.startAt, now)}</p>
+          <p className="mt-1 font-display text-3xl leading-tight">{b.course ? b.course.title : b.mentor.name}</p>
+          <p className="text-sm text-white/70">
+            {b.course
+              ? <>with {b.mentor.name} · Class {focus.number ?? 1} of {b.course.sessionsCount} · {fmtTime(focus.startAt)}–{fmtTime(focus.endAt)}</>
+              : <>{fmtTime(focus.startAt)}–{fmtTime(focus.endAt)} · {b.sessionKind === "GROUP" ? "Group" : "1:1"} · {b.agenda}</>}
+          </p>
         </div>
         {b.meetingLink && (
-          <SessionButton link={b.meetingLink} startAt={b.startAt} endAt={b.endAt} withName={b.mentor.name} detail={`${b.sessionKind === "GROUP" ? "Group" : "1:1"} · ${b.agenda}`}
+          <SessionButton link={b.meetingLink} startAt={focus.startAt} endAt={focus.endAt} withName={b.mentor.name} detail={detail}
             joinClass="col-span-2 whitespace-nowrap rounded-full bg-mint px-6 py-3 text-center text-sm font-medium text-ink transition-colors hover:bg-white"
             waitClass="col-span-2 whitespace-nowrap rounded-full bg-white px-6 py-3 text-center text-sm font-medium text-ink transition-colors hover:bg-white/90" />
         )}
@@ -178,11 +234,11 @@ function NextSession({ b, now }: { b: Booking; now: number }) {
   );
 }
 
-function Who({ b }: { b: Booking }) {
-  const when = b.course?.endsAt ?? b.startAt;
+function Who({ b, when }: { b: Booking; when?: string }) {
+  const tile = when ?? (b.course ? (b.course.liveClass ?? b.course.nextClass)?.startAt ?? b.course.endsAt : b.startAt);
   return (
     <div className="flex min-w-0 items-center gap-4">
-      <DateTile iso={when} />
+      <DateTile iso={tile} />
       <div className="hidden h-12 w-12 shrink-0 overflow-hidden rounded-full sm:block"><MentorPhoto name={b.mentor.name} photoUrl={b.mentor.photoUrl} className="h-full w-full" initialsClass="text-base" /></div>
       <div className="min-w-0">
         {b.course
@@ -214,25 +270,20 @@ function UpcomingCard({ b, onChange }: { b: Booking; onChange: () => void }) {
   const { busy, error, run } = useAction(onChange);
   const now = useNow();
   const canCancel = !!b.cancelBy && new Date(b.cancelBy).getTime() > now;
-  const detail = b.course
-    ? `Class ${(b.course.liveClass ?? b.course.nextClass)?.number ?? 1} of ${b.course.sessionsCount}`
-    : `${b.sessionKind === "GROUP" ? "Group" : "1:1"} · ${b.agenda}`;
-  const joinAt = b.course?.liveClass?.startAt ?? b.course?.nextClass?.startAt ?? b.startAt;
-  const joinEnd = b.course?.liveClass?.endAt ?? b.course?.nextClass?.endAt ?? b.endAt;
+  const detail = `${b.sessionKind === "GROUP" ? "Group" : "1:1"} · ${b.agenda}`;
   return (
     <div className="rounded-3xl bg-white p-5 ring-1 ring-line transition-shadow hover:shadow-[0_12px_32px_-20px_rgba(17,17,17,0.35)] sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <Who b={b} />
+        <Who b={b} when={b.startAt} />
         <div className="flex flex-wrap items-center gap-2">
-          {b.meetingLink && <SessionButton link={b.meetingLink} startAt={joinAt} endAt={joinEnd} withName={b.mentor.name} detail={detail} joinClass="rounded-full bg-forest px-5 py-2.5 text-sm font-medium text-white" waitClass="rounded-full bg-ink px-5 py-2.5 text-sm font-medium text-white" />}
-          {canCancel && !b.course && <Button size="sm" variant="ghost" onClick={() => setCancelling(true)}>Cancel</Button>}
+          {b.meetingLink && <SessionButton link={b.meetingLink} startAt={b.startAt} endAt={b.endAt} withName={b.mentor.name} detail={detail} joinClass="rounded-full bg-forest px-5 py-2.5 text-sm font-medium text-white" waitClass="rounded-full bg-ink px-5 py-2.5 text-sm font-medium text-white" />}
+          {canCancel && <Button size="sm" variant="ghost" onClick={() => setCancelling(true)}>Cancel</Button>}
           <a href={`/receipt/${b.reference}`} className="px-2 text-xs font-medium text-ink-soft underline-offset-4 hover:text-ink hover:underline">Receipt</a>
         </div>
       </div>
       <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-line pt-4">
         <Badge tone="forest">Confirmed</Badge><Badge>{formatMoney(b.priceMinor, b.currency)} paid</Badge>
-        {b.course && <Badge tone="brass">{b.course.sessionsCount} classes</Badge>}
-        {b.cancelBy && !b.course && (
+        {b.cancelBy && (
           <span className="ml-auto text-xs text-ink-soft">
             {canCancel ? <>Cancel until {fmtDayShort(b.cancelBy)}, {fmtTime(b.cancelBy)}</> : <NoticeText text="Less than {notice} to go: no changes or refund" />}
           </span>
@@ -250,6 +301,149 @@ function UpcomingCard({ b, onChange }: { b: Booking; onChange: () => void }) {
       )}
       <ReportStatus status={b.mentorReport} note={b.mentorReportNote} mentorName={b.mentor.name} />
     </div>
+  );
+}
+
+/** One course enrolment: remaining classes listed under a clear course header. */
+function CourseUpcomingCard({ b, now }: { b: Booking; now: number }) {
+  const course = b.course!;
+  const remaining = remainingClasses(b, now);
+  const held = heldClasses(b, now).length;
+  const next = course.liveClass ?? course.nextClass ?? remaining[0] ?? null;
+  const [syllabus, setSyllabus] = useState(false);
+  return (
+    <article className="overflow-hidden rounded-[1.75rem] bg-white ring-1 ring-line transition-shadow hover:shadow-[0_12px_32px_-20px_rgba(17,17,17,0.35)]">
+      <div className="flex flex-wrap items-start justify-between gap-4 bg-gradient-to-br from-mint/40 via-white to-sky/30 px-5 py-5 sm:px-6">
+        <Who b={b} when={next?.startAt} />
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge tone="forest">Confirmed</Badge>
+          <Badge tone="brass">{held} of {course.sessionsCount} held</Badge>
+          <Button size="sm" variant="secondary" onClick={() => setSyllabus(true)}>Course outline</Button>
+          <a href={`/receipt/${b.reference}`} className="px-2 text-xs font-medium text-ink-soft underline-offset-4 hover:text-ink hover:underline">Receipt</a>
+        </div>
+      </div>
+      <div className="border-t border-line px-5 py-4 sm:px-6">
+        <p className="text-xs font-medium uppercase tracking-[0.12em] text-ink-soft">Upcoming classes</p>
+        {remaining.length === 0 ? (
+          <p className="mt-3 text-sm text-ink-soft">No classes left on this course.</p>
+        ) : (
+          <ul className="mt-3 space-y-2">
+            {remaining.map((k) => {
+              const isNext = next?.number === k.number;
+              return (
+                <li key={k.number} className={`flex flex-wrap items-center gap-3 rounded-2xl px-3 py-3 sm:px-4 ${isNext ? "bg-paper ring-1 ring-ink/10" : "bg-paper/50"}`}>
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white font-display text-lg text-ink ring-1 ring-line">{k.number}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex flex-wrap items-center gap-2">
+                      <span className="font-medium text-ink">Class {k.number}</span>
+                      {isNext && <Badge tone="brass">Next</Badge>}
+                    </span>
+                    <span className="mt-0.5 block text-xs text-ink-soft">{fmtDay(k.startAt)} · {fmtTime(k.startAt)}–{fmtTime(k.endAt)}</span>
+                    {k.outline && <span className="mt-0.5 block text-xs text-ink">{k.outline}</span>}
+                  </span>
+                  {b.meetingLink && (
+                    <ClassSessionAction
+                      href={b.meetingLink}
+                      startAt={k.startAt}
+                      endAt={k.endAt}
+                      classNumber={k.number}
+                      sessionsCount={course.sessionsCount}
+                      courseTitle={course.title}
+                      mentorName={b.mentor.name}
+                      outline={k.outline}
+                    />
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        {held > 0 && (
+          <p className="mt-3 text-xs text-ink-soft">{held} earlier class{held === 1 ? "" : "es"} are under Past while this course continues.</p>
+        )}
+      </div>
+      {syllabus && <CourseSyllabusModal b={b} onClose={() => setSyllabus(false)} />}
+    </article>
+  );
+}
+
+function CourseSyllabusModal({ b, onClose }: { b: Booking; onClose: () => void }) {
+  const course = b.course!;
+  const topics = course.topics ?? [];
+  return (
+    <FinanceModal
+      label="Course outline"
+      eyebrow="Your course"
+      title={<span className="font-display text-2xl leading-tight text-ink">{course.title}</span>}
+      onClose={onClose}
+      wide
+      footer={<Button size="sm" variant="secondary" onClick={onClose}>Close</Button>}
+    >
+      {course.summary && <p className="text-sm leading-relaxed text-ink-soft">{course.summary}</p>}
+      {!!topics.length && (
+        <div>
+          <p className="text-xs font-medium uppercase tracking-[0.12em] text-ink-soft">What the course covers</p>
+          <ol className="mt-3 space-y-2">
+            {topics.map((t, i) => (
+              <li key={`${t}-${i}`} className="flex gap-3 rounded-2xl bg-paper px-3.5 py-2.5 text-sm">
+                <span className="font-display text-base text-brass-dark">{String(i + 1).padStart(2, "0")}</span>
+                <span className="text-ink">{t}</span>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+      <div>
+        <p className="text-xs font-medium uppercase tracking-[0.12em] text-ink-soft">Classes</p>
+        <ol className="mt-3 space-y-2">
+          {course.classes.map((k) => (
+            <li key={k.number} className="rounded-2xl px-4 py-3 ring-1 ring-line">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <p className="font-medium text-ink">Class {k.number}</p>
+                <p className="text-xs text-ink-soft">{fmtDay(k.startAt)} · {fmtTime(k.startAt)}–{fmtTime(k.endAt)}</p>
+              </div>
+              <p className="mt-1 text-sm text-ink-soft">{k.outline || "Outline to be confirmed by your teacher."}</p>
+            </li>
+          ))}
+        </ol>
+      </div>
+      <p className="text-xs text-ink-soft">Taught by {b.mentor.name}. Feedback opens after the final class.</p>
+    </FinanceModal>
+  );
+}
+
+/** Held classes from a course that is still under way. */
+function CoursePastClasses({ b, classes }: { b: Booking; classes: CourseClass[] }) {
+  const course = b.course!;
+  const [syllabus, setSyllabus] = useState(false);
+  return (
+    <article className="overflow-hidden rounded-[1.75rem] bg-white ring-1 ring-line">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-paper/60 px-5 py-4 sm:px-6">
+        <div className="min-w-0">
+          <p className="text-xs font-medium uppercase tracking-[0.12em] text-ink-soft">Past classes</p>
+          <Link href={`/courses/${course.slug}`} className="mt-1 block font-display text-xl text-ink hover:underline">{course.title}</Link>
+          <p className="text-sm text-ink-soft">with {b.mentor.name} · course continues</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge tone="brass">{classes.length} held</Badge>
+          <Button size="sm" variant="secondary" onClick={() => setSyllabus(true)}>Course outline</Button>
+        </div>
+      </div>
+      <ul className="divide-y divide-line">
+        {[...classes].reverse().map((k) => (
+          <li key={k.number} className="flex flex-wrap items-center gap-3 px-5 py-3.5 sm:px-6">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-mint/70 font-display text-lg text-ink">{k.number}</span>
+            <span className="min-w-0 flex-1">
+              <span className="font-medium text-ink">Class {k.number} of {course.sessionsCount}</span>
+              <span className="mt-0.5 block text-xs text-ink-soft">{fmtDay(k.startAt)} · {fmtTime(k.startAt)}–{fmtTime(k.endAt)}{k.completedAt ? " · marked complete" : ""}</span>
+              {k.outline && <span className="mt-0.5 block text-xs text-ink">{k.outline}</span>}
+            </span>
+            <Badge tone="forest">Held</Badge>
+          </li>
+        ))}
+      </ul>
+      {syllabus && <CourseSyllabusModal b={b} onClose={() => setSyllabus(false)} />}
+    </article>
   );
 }
 
@@ -320,6 +514,16 @@ function PastCard({ b, onChange, onSupport }: { b: Booking; onChange: () => void
           <p className="mt-4 rounded-2xl bg-paper-dim px-4 py-3 text-sm text-ink-soft ring-1 ring-line/70">
             Feedback opens after the final class{b.course?.endsAt ? ` on ${fmtDay(b.course.endsAt)}` : ""}. You’ll get a form here once it’s done.
           </p>
+        )}
+        {b.course && b.course.classes.length > 0 && !midCourse && (
+          <ul className="mt-4 space-y-1.5 border-t border-line pt-4 text-sm">
+            {b.course.classes.map((k) => (
+              <li key={k.number} className="flex justify-between gap-3 text-ink-soft">
+                <span>Class {k.number}</span>
+                <span>{fmtDayShort(k.startAt)} · {fmtTime(k.startAt)}</span>
+              </li>
+            ))}
+          </ul>
         )}
         {b.review && !editing && <div className="mt-4"><SubmittedFeedback review={b.review} onEdit={() => setEditing(true)} onSupport={onSupport} /></div>}
         {b.review && editing && <div className="mt-4"><FeedbackForm b={b} existing={b.review} onDone={() => { setEditing(false); onChange(); }} onCancel={() => setEditing(false)} /></div>}

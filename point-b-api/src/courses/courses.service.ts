@@ -76,12 +76,19 @@ export class CoursesService {
   /** Everything about a course that anyone may see. */
   private shapePublic(c: CourseWithMentor, enrolled: number) {
     const now = Date.now();
-    const classes = (c.slots.length ? [...c.slots].sort((a, b) => a.startAt.getTime() - b.startAt.getTime()) : classTimes(c).map((t, i) => ({ ...t, sessionNumber: i + 1, id: null as string | null, hostStartedAt: null as Date | null, completedAt: null as Date | null })))
-      .map((s, i) => ({
-        number: s.sessionNumber ?? i + 1, startAt: s.startAt, endAt: s.endAt,
-        hostStartedAt: 'hostStartedAt' in s ? s.hostStartedAt ?? null : null,
-        completedAt: 'completedAt' in s ? s.completedAt ?? null : null,
-      }));
+    const outlines = c.classOutlines ?? [];
+    const classes = (c.slots.length ? [...c.slots].sort((a, b) => a.startAt.getTime() - b.startAt.getTime()) : classTimes(c).map((t, i) => ({ ...t, sessionNumber: i + 1, id: null as string | null, hostStartedAt: null as Date | null, completedAt: null as Date | null, outline: null as string | null })))
+      .map((s, i) => {
+        const number = s.sessionNumber ?? i + 1;
+        const fromSlot = 'outline' in s ? (s.outline ?? null) : null;
+        const fromCourse = outlines[number - 1]?.trim() || null;
+        return {
+          number, startAt: s.startAt, endAt: s.endAt,
+          outline: fromSlot || fromCourse,
+          hostStartedAt: 'hostStartedAt' in s ? s.hostStartedAt ?? null : null,
+          completedAt: 'completedAt' in s ? s.completedAt ?? null : null,
+        };
+      });
     const last = classes[classes.length - 1];
     const next = classes.find((s) => !s.completedAt && s.endAt.getTime() > now) ?? null;
     const full = c.capacity != null && enrolled >= c.capacity;
@@ -90,6 +97,7 @@ export class CoursesService {
     const held = classes.filter((s) => !!s.completedAt || s.endAt.getTime() <= now).length;
     return {
       id: c.id, slug: c.slug, title: c.title, summary: c.summary, topics: c.topics, audience: c.audience,
+      classOutlines: Array.from({ length: c.sessionsCount }, (_, i) => outlines[i]?.trim() || classes[i]?.outline || ''),
       schedule: scheduleLabel(c), startDate: c.startDate, startTime: c.startTime, weekdays: c.weekdays,
       sessionsCount: c.sessionsCount, sessionMinutes: c.sessionMinutes,
       firstClassAt: classes[0]?.startAt ?? null, lastClassAt: last?.startAt ?? null, nextClass: next,
@@ -300,9 +308,12 @@ export class CoursesService {
 
   private draftData(dto: CourseDraftDto) {
     const clean = (s: string) => s.replace(/\s+/g, ' ').trim();
+    const outlines = (dto.classOutlines ?? []).map((s) => clean(s)).slice(0, dto.sessionsCount);
+    while (outlines.length < dto.sessionsCount) outlines.push('');
     return {
       title: clean(dto.title), summary: dto.summary.trim(), audience: clean(dto.audience ?? ''),
       topics: [...new Set(dto.topics.map(clean).filter(Boolean))],
+      classOutlines: outlines,
       startDate: dto.startDate, weekdays: [...new Set(dto.weekdays)].sort(), startTime: dto.startTime,
       sessionsCount: dto.sessionsCount, sessionMinutes: dto.sessionMinutes,
       mentorFeeMinor: dto.mentorFeeMinor, mentorFeeCurrency: dto.mentorFeeCurrency as Currency,
@@ -472,7 +483,13 @@ export class CoursesService {
       // Open 1:1 times left over from before courses would block a class at the same start time, so they go.
       await this.prisma.availabilitySlot.deleteMany({ where: { mentorId: c.mentorId, startAt: { in: times.map((t) => t.startAt) }, OR: [{ courseId: null }, { courseId: { isSet: false } }], seatsTaken: 0, bookings: { none: {} } } });
       const seats = dto.capacity ?? OPEN_SEATS;
-      await this.prisma.availabilitySlot.createMany({ data: times.map((t, i) => ({ mentorId: c.mentorId, courseId: c.id, sessionNumber: i + 1, startAt: t.startAt, endAt: t.endAt, kind: 'GROUP' as const, capacity: seats })) });
+      const outlines = c.classOutlines ?? [];
+      await this.prisma.availabilitySlot.createMany({
+        data: times.map((t, i) => ({
+          mentorId: c.mentorId, courseId: c.id, sessionNumber: i + 1, startAt: t.startAt, endAt: t.endAt,
+          kind: 'GROUP' as const, capacity: seats, outline: outlines[i]?.trim() || null,
+        })),
+      });
     } catch (e) {
       await this.prisma.course.update({ where: { id: c.id }, data: { status: c.status } });
       throw e;
@@ -516,9 +533,30 @@ export class CoursesService {
       const seats = dto.capacity ?? OPEN_SEATS;
       if (first) await this.prisma.availabilitySlot.update({ where: { id: first.id }, data: { capacity: seats, isBooked: first.seatsTaken >= seats } });
     }
+    if (dto.classOutlines) await this.writeOutlines(c.id, c.sessionsCount, dto.classOutlines, c.slots);
     await this.prisma.course.update({ where: { id: c.id }, data });
-    await this.audit(adminId, 'COURSE_UPDATED', c, [dto.priceMinor !== undefined && `price ${money(dto.priceMinor, 'PKR')}`, dto.capacity !== undefined && `seats ${dto.capacity ?? 'no limit'}`].filter(Boolean).join(', '));
+    await this.audit(adminId, 'COURSE_UPDATED', c, [dto.priceMinor !== undefined && `price ${money(dto.priceMinor, 'PKR')}`, dto.capacity !== undefined && `seats ${dto.capacity ?? 'no limit'}`, dto.classOutlines && 'class outlines'].filter(Boolean).join(', '));
     return (await this.adminList()).find((x) => x.id === c.id);
+  }
+
+  /** Mentor updates what each class covers — available on drafts and published courses. */
+  async setOutlines(userId: string, id: string, classOutlines: string[]) {
+    const { c } = await this.ownCourse(userId, id);
+    if (['REJECTED'].includes(c.status)) throw new BadRequestException('This course can’t be edited.');
+    await this.writeOutlines(c.id, c.sessionsCount, classOutlines, c.slots);
+    return this.mine(userId, c.id);
+  }
+
+  private async writeOutlines(courseId: string, sessionsCount: number, raw: string[], slots: { id: string; sessionNumber: number | null }[]) {
+    const clean = (s: string) => s.replace(/\s+/g, ' ').trim();
+    const outlines = raw.map(clean).slice(0, sessionsCount);
+    while (outlines.length < sessionsCount) outlines.push('');
+    await this.prisma.course.update({ where: { id: courseId }, data: { classOutlines: outlines } });
+    const ordered = [...slots].sort((a, b) => (a.sessionNumber ?? 0) - (b.sessionNumber ?? 0));
+    for (let i = 0; i < ordered.length; i++) {
+      const n = ordered[i].sessionNumber ?? i + 1;
+      await this.prisma.availabilitySlot.update({ where: { id: ordered[i].id }, data: { outline: outlines[n - 1] || null } });
+    }
   }
 
   /** Stops (or restarts) new enrolments. Classes still run for everyone already enrolled. */

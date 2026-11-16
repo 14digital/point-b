@@ -73,6 +73,7 @@ export interface MyReview {
 export type CourseStatus = "DRAFT" | "SUBMITTED" | "CHANGES_REQUESTED" | "LIVE" | "CLOSED" | "REJECTED";
 export interface CourseClass {
   number: number; startAt: string; endAt: string;
+  outline?: string | null;
   hostStartedAt?: string | null; completedAt?: string | null;
 }
 export type ClassRunStatus = "upcoming" | "live" | "ended" | "completed";
@@ -87,6 +88,7 @@ export interface CourseMentor { id: string; slug: string; name: string; title: s
 /** A course as anyone sees it. Prices are always in rupees. */
 export interface Course {
   id: string; slug: string; title: string; summary: string; topics: string[]; audience: string;
+  classOutlines?: string[];
   schedule: string; startDate: string; startTime: string; weekdays: number[]; sessionsCount: number; sessionMinutes: number;
   firstClassAt: string | null; lastClassAt: string | null; nextClass: CourseClass | null; classesHeld: number; classes: CourseClass[];
   priceMinor: number | null; currency: Currency; capacity: number | null; seatsLeft: number | null;
@@ -114,4 +116,7 @@ export interface FacultyMember {
   courses: Omit<Course, "mentor" | "classes">[];
 }
 /** The course part of a learner's enrolment (a booking with a course). */
-export interface BookingCourse { id: string; slug: string; title: string; sessionsCount: number; classes: CourseClass[]; liveClass: CourseClass | null; nextClass: CourseClass | null; endsAt: string }
+export interface BookingCourse {
+  id: string; slug: string; title: string; summary?: string; topics?: string[];
+  sessionsCount: number; classes: CourseClass[]; liveClass: CourseClass | null; nextClass: CourseClass | null; endsAt: string;
+}

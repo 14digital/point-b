@@ -11,6 +11,8 @@ export class CourseDraftDto {
   @IsString() @MinLength(5) @MaxLength(120) title: string;
   @IsString() @MinLength(30) @MaxLength(1500) summary: string;
   @IsArray() @ArrayMinSize(1) @ArrayMaxSize(15) @IsString({ each: true }) @MinLength(3, { each: true }) @MaxLength(160, { each: true }) topics: string[];
+  /** Optional: what each class covers, in order (class 1 first). Empty strings are fine for classes not yet planned. */
+  @IsOptional() @IsArray() @ArrayMaxSize(MAX_SESSIONS) @IsString({ each: true }) @MaxLength(240, { each: true }) classOutlines?: string[];
   @IsOptional() @IsString() @MaxLength(400) audience?: string;
   /** First class, YYYY-MM-DD, Pakistan time. */
   @Matches(/^\d{4}-\d{2}-\d{2}$/) startDate: string;
@@ -38,6 +40,7 @@ export class ApproveCourseDto {
 export class UpdateLiveCourseDto {
   @IsOptional() @IsInt() @Min(100) @Max(100_000_000_00) priceMinor?: number;
   @IsOptional() @ValidateIf((_, v) => v !== null) @IsInt() @Min(1) @Max(5000) capacity?: number | null;
+  @IsOptional() @IsArray() @ArrayMaxSize(MAX_SESSIONS) @IsString({ each: true }) @MaxLength(240, { each: true }) classOutlines?: string[];
 }
 
 export class ReturnCourseDto {

@@ -25,6 +25,7 @@ export class CoursesController {
   @ApiBearerAuth() @Roles('MENTOR') @Get('me/:id/roster') roster(@CurrentUser() u: AuthUser, @Param('id') id: string) { return this.courses.roster(u.id, id); }
   @ApiBearerAuth() @Roles('MENTOR') @Get('me/:id/classes') classes(@CurrentUser() u: AuthUser, @Param('id') id: string) { return this.courses.classes(u.id, id); }
   @ApiBearerAuth() @Roles('MENTOR') @HttpCode(200) @Post('me/:id/classes/:n/complete') completeClass(@CurrentUser() u: AuthUser, @Param('id') id: string, @Param('n') n: string) { return this.courses.completeClass({ userId: u.id }, id, Number(n)); }
+  @ApiBearerAuth() @Roles('MENTOR') @Patch('me/:id/outlines') outlines(@CurrentUser() u: AuthUser, @Param('id') id: string, @Body() body: { classOutlines: string[] }) { return this.courses.setOutlines(u.id, id, body.classOutlines ?? []); }
 
   /** A learner takes a seat; pay for it at /bookings/:reference as with any booking. */
   @ApiBearerAuth() @Roles('STUDENT') @Post(':id/enrol') enrol(@CurrentUser() u: AuthUser, @Param('id') id: string, @Body() dto: EnrolDto) { return this.bookings.enrol(u, id, dto.expectedPriceMinor); }

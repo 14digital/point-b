@@ -29,7 +29,7 @@ const NO_REMINDER = { OR: [{ reminderSentAt: null }, { reminderSentAt: { isSet: 
 
 const include = {
   slot: true,
-  course: { select: { id: true, slug: true, title: true, sessionsCount: true, sessionMinutes: true, weekdays: true, startTime: true, slots: { select: { id: true, sessionNumber: true, startAt: true, endAt: true, hostStartedAt: true, completedAt: true }, orderBy: { startAt: 'asc' } } } },
+  course: { select: { id: true, slug: true, title: true, summary: true, topics: true, classOutlines: true, sessionsCount: true, sessionMinutes: true, weekdays: true, startTime: true, slots: { select: { id: true, sessionNumber: true, startAt: true, endAt: true, hostStartedAt: true, completedAt: true, outline: true }, orderBy: { startAt: 'asc' } } } },
   mentor: { select: { id: true, slug: true, title: true, photoUrl: true, user: { select: { name: true, email: true } } } },
   student: { select: { id: true, name: true, email: true } },
   review: true,
@@ -41,10 +41,11 @@ type FullBooking = Prisma.BookingGetPayload<{ include: typeof include }>;
 /** Bookings that are a single session rather than a course enrolment. */
 const NOT_COURSE = { OR: [{ courseId: null }, { courseId: { isSet: false } }] } satisfies Prisma.BookingWhereInput;
 const UNREMINDED_SLOT = { OR: [{ reminderSentAt: null }, { reminderSentAt: { isSet: false } }] } satisfies Prisma.AvailabilitySlotWhereInput;
-/** The class of a course that is on now (the room is open from 10 minutes before to an hour after), or else the next one. */
-export function currentClass<T extends { startAt: Date; endAt: Date }>(classes: T[], now = Date.now()): { live: T | null; next: T | null } {
-  const live = classes.find((c) => now >= c.startAt.getTime() - 10 * 60_000 && now <= c.endAt.getTime() + 60 * 60_000) ?? null;
-  return { live, next: classes.find((c) => c.startAt.getTime() > now) ?? null };
+/** The class of a course that is on now (the room is open from 10 minutes before to an hour after), or else the next one. Skips classes the mentor has marked complete. */
+export function currentClass<T extends { startAt: Date; endAt: Date; completedAt?: Date | null }>(classes: T[], now = Date.now()): { live: T | null; next: T | null } {
+  const open = (c: T) => !c.completedAt;
+  const live = classes.find((c) => open(c) && now >= c.startAt.getTime() - 10 * 60_000 && now <= c.endAt.getTime() + 60 * 60_000) ?? null;
+  return { live, next: classes.find((c) => open(c) && c.startAt.getTime() > now) ?? null };
 }
 const lastClass = (b: FullBooking) => b.course?.slots[b.course.slots.length - 1] ?? b.slot;
 
@@ -156,11 +157,20 @@ export class BookingsService implements OnModuleInit, OnModuleDestroy {
       course: b.course ? (() => {
         const { live, next } = currentClass(b.course.slots);
         const last = b.course.slots[b.course.slots.length - 1];
+        const outlines = b.course.classOutlines ?? [];
+        const classOf = (k: (typeof b.course.slots)[number], i = 0) => {
+          const number = k.sessionNumber ?? i + 1;
+          return {
+            number, startAt: k.startAt, endAt: k.endAt, completedAt: k.completedAt ?? null,
+            outline: (k.outline ?? outlines[number - 1] ?? '').trim() || null,
+          };
+        };
         return {
-          id: b.course.id, slug: b.course.slug, title: b.course.title, sessionsCount: b.course.sessionsCount,
-          classes: b.course.slots.map((k) => ({ number: k.sessionNumber ?? 1, startAt: k.startAt, endAt: k.endAt, completedAt: k.completedAt ?? null })),
-          liveClass: live ? { number: live.sessionNumber ?? 1, startAt: live.startAt, endAt: live.endAt, completedAt: live.completedAt ?? null } : null,
-          nextClass: next ? { number: next.sessionNumber ?? 1, startAt: next.startAt, endAt: next.endAt, completedAt: next.completedAt ?? null } : null,
+          id: b.course.id, slug: b.course.slug, title: b.course.title, summary: b.course.summary, topics: b.course.topics,
+          sessionsCount: b.course.sessionsCount,
+          classes: b.course.slots.map((k, i) => classOf(k, i)),
+          liveClass: live ? classOf(live) : null,
+          nextClass: next ? classOf(next) : null,
           endsAt: last?.endAt ?? b.slot.endAt,
         };
       })() : null,
