@@ -36,7 +36,8 @@ After a code update: pull, then `npm install`, `npm run build`, and restart.
 
 ## Notes
 
-- WhatsApp alerts to students need `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` and an approved template (see `.env.example`). Without them everything else works and WhatsApp messages are only logged.
+- WhatsApp alerts to students need `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_ACCESS_TOKEN` (or `WHATSAPP_TOKEN`), and approved Utility templates (see `.env.example` and `agent-notes/docs/whatsapp-meta-official-number.md`). Without them everything else works and WhatsApp messages are only logged.
+- WhatsApp delivery webhook: `https://<your-domain>/api/whatsapp/webhook` (Meta: subscribe to `messages`; set `WHATSAPP_VERIFY_TOKEN` + `WHATSAPP_APP_SECRET` in the same place as other secrets — root `.env` / host env).
 
 - Stripe webhook endpoint: `https://<your-domain>/api/payments/stripe/webhook` (event `payment_intent.succeeded`).
 - If `npm run build` runs out of memory on shared hosting, build on another machine and upload `point-b-mentors/.next` and `point-b-api/dist`, then restart.
