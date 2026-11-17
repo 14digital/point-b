@@ -1,6 +1,16 @@
 # WhatsApp: wire official Meta number
 
-**Status:** Audit only — do **not** put production secrets in chat or commit them. Wait for the user’s official number + Meta credentials before changing live env.
+**Status:** Official display number recorded — do **not** change any `WHATSAPP_*` secrets yet. Still waiting for Meta **Phone number ID** + **access token** (and WABA confirmation) before env cutover. Do not put secrets in chat or commit them.
+
+## Official number (recorded)
+
+| Field | Value |
+|-------|--------|
+| Display (local PK) | `03001065161` |
+| E.164 | `+923001065161` |
+| Env cutover | **Blocked** — no `WHATSAPP_PHONE_NUMBER_ID` / token update until Meta credentials arrive |
+
+This is the intended send-from business number once it is registered on the POINT B WABA and wired via env.
 
 ## Verdict
 
@@ -61,11 +71,25 @@ Used by code:
 
 **Not used:** Twilio SID/Auth, MessageBird, etc.
 
+## Finding Phone number ID (local docs + Meta UI)
+
+Repo docs (`WHATSAPP_TEMPLATES.md`, `DEPLOY.md`, `.env.example`, code comments) only say you need `WHATSAPP_PHONE_NUMBER_ID` and that it comes from Meta **API Setup** — they do **not** document a click-path beyond that, and they do **not** map a dial number (e.g. `+923001065161`) to an ID automatically. There is no in-repo script to look it up.
+
+Until credentials are provided, use Meta’s console (do not invent an ID):
+
+1. [Meta for Developers](https://developers.facebook.com/) → the POINT B app → **WhatsApp** → **API Setup** (or **WhatsApp** → **Configuration**).  
+2. Under **From** / phone numbers, select the number whose display matches **`+923001065161`** (`03001065161`).  
+3. Copy **Phone number ID** (numeric Graph id — **not** the E.164 dial string).  
+4. Confirm the number sits on the same **WABA** that owns the `pointb_*` templates (or plan template re-approval on the new WABA).
+
+Optional Graph check (only after a valid token exists; do not run against production with guessed values):  
+`GET https://graph.facebook.com/{version}/{WABA_ID}/phone_numbers` with the system-user token, then match `display_phone_number` to `+92 300 1065161` / `+923001065161` and read `id`.
+
 ## What to change for the official number
 
 1. **Meta Business / WhatsApp Manager**  
-   - Add or migrate the official business phone onto the **WhatsApp Business Account (WABA)** that owns POINT B’s templates (or move templates to the WABA that owns the new number).  
-   - Note the new **Phone number ID** (API Setup) and confirm display name / quality rating.
+   - Add or migrate **`+923001065161`** onto the **WhatsApp Business Account (WABA)** that owns POINT B’s templates (or move templates to the WABA that owns the new number).  
+   - Note the new **Phone number ID** (API Setup — see above) and confirm display name / quality rating.
 
 2. **Token**  
    - Prefer a **System User** permanent token on the same Meta app + WABA, with `whatsapp_business_messaging` (and usually `whatsapp_business_management`).  
@@ -96,10 +120,13 @@ Used by code:
 
 ## Wait for user
 
-Before changing production/local secrets, collect:
+| Item | Status |
+|------|--------|
+| Official WhatsApp **E.164** | **Received:** `+923001065161` (display `03001065161`) |
+| Confirmation number is registered on Meta / WABA | **Pending** |
+| **Phone number ID** from Meta API Setup | **Pending** — do not guess; see “Finding Phone number ID” |
+| **WABA** id / templates live on that WABA | **Pending** |
+| **Access token** (system user) + Meta **App** (for `APP_SECRET` / webhook) | **Pending** |
+| Replace current send-from id vs second number | **Pending** (code supports **one** `WHATSAPP_PHONE_NUMBER_ID` today) |
 
-1. Official WhatsApp **E.164** number (and confirmation it is registered on Meta).  
-2. **Phone number ID** from Meta API Setup.  
-3. **WABA** id / confirmation templates live on that WABA.  
-4. **Access token** (system user) + confirmation of Meta **App** (for `APP_SECRET` / webhook).  
-5. Whether this replaces the current `PHONE_NUMBER_ID` or is a second number (product decision: code supports one send-from id today).
+**Hold:** Do **not** edit local or production `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_ACCESS_TOKEN` / `WHATSAPP_TOKEN`, `WHATSAPP_APP_SECRET`, or `WHATSAPP_VERIFY_TOKEN` until Phone number ID + token are provided.
