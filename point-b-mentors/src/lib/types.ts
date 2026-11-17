@@ -34,11 +34,12 @@ export interface Booking {
   priceMinor: number; currency: Currency; startAt: string; endAt: string;
   mentor: { id: string; slug: string; name: string; title: string; photoUrl?: string | null };
   student?: { id: string; name: string };
-  meetingLink: string | null; review: { rating: number; comment: string; status: ReviewStatus; canEdit?: boolean } | null; canReview?: boolean; canReportMissing?: boolean; mentorReport?: string | null; mentorReportNote?: string | null;
+  meetingLink: string | null; review: { rating: number; comment: string; status: ReviewStatus; canEdit?: boolean; clarity?: number | null; usefulness?: number | null; recommend?: number | null } | null; canReview?: boolean; canReportMissing?: boolean; mentorReport?: string | null; mentorReportNote?: string | null;
   payment: { providerRef: string; provider: string; status: string; processedAt?: string | null; bankSubmittedAt?: string | null; bankTxnRef?: string | null } | null;
   listPriceMinor?: number; discountMinor?: number; walletAppliedMinor?: number;
   holdExpiresAt: string | null; awaitingVerification?: boolean; cancelReason: string | null; createdAt: string;
   rescheduleCount?: number; rescheduledAt?: string | null; rescheduleBy?: string | null;
+  cancelBy?: string | null; course?: BookingCourse | null;
 }
 
 export type AppStatus =
@@ -63,4 +64,59 @@ export interface Interview { id: string; interviewAt: string; interviewDurationM
 export interface AdminInterview extends Interview { fullName: string; email: string; phone: string; headline: string }
 
 export type ReviewStatus = "PENDING" | "APPROVED" | "HIDDEN";
-export interface MyReview { id: string; rating: number; comment: string; status: ReviewStatus; createdAt: string; moderatedAt: string | null; reference: string; agenda: string; sessionAt: string; studentName: string }
+export interface MyReview {
+  id: string; rating: number; comment: string; status: ReviewStatus; createdAt: string; moderatedAt: string | null;
+  reference: string; agenda: string; sessionAt: string; studentName: string;
+  clarity?: number | null; usefulness?: number | null; recommend?: number | null; isCourse?: boolean;
+}
+
+export type CourseStatus = "DRAFT" | "SUBMITTED" | "CHANGES_REQUESTED" | "LIVE" | "CLOSED" | "REJECTED";
+export interface CourseClass {
+  number: number; startAt: string; endAt: string;
+  outline?: string | null;
+  hostStartedAt?: string | null; completedAt?: string | null;
+}
+export type ClassRunStatus = "upcoming" | "live" | "ended" | "completed";
+export interface ClassAttendee { reference: string; name: string; joinedAt: string }
+export interface CourseClassDetail {
+  number: number; startAt: string; endAt: string;
+  hostStartedAt: string | null; completedAt: string | null;
+  status: ClassRunStatus; canComplete: boolean;
+  attendees: ClassAttendee[]; attended: number; enrolled: number;
+}
+export interface CourseMentor { id: string; slug: string; name: string; title: string; organization: string; photoUrl?: string | null; country: string }
+/** A course as anyone sees it. Prices are always in rupees. */
+export interface Course {
+  id: string; slug: string; title: string; summary: string; topics: string[]; audience: string;
+  classOutlines?: string[];
+  schedule: string; startDate: string; startTime: string; weekdays: number[]; sessionsCount: number; sessionMinutes: number;
+  firstClassAt: string | null; lastClassAt: string | null; nextClass: CourseClass | null; classesHeld: number; classes: CourseClass[];
+  priceMinor: number | null; currency: Currency; capacity: number | null; seatsLeft: number | null;
+  open: boolean; full: boolean; ended: boolean; mentor: CourseMentor;
+}
+export interface CourseDetail extends Course { moreFromMentor: Course[] }
+/** A course as its mentor and the POINT B team see it. */
+export interface OwnCourse extends Course {
+  status: CourseStatus; adminNote: string | null; enrolled: number;
+  mentorFeeMinor: number; mentorFeeCurrency: Currency; submittedAt: string | null; reviewedAt: string | null; createdAt: string; updatedAt: string;
+}
+export interface CourseFeedbackSummary {
+  count: number; pending: number; rating: number | null; clarity: number | null; usefulness: number | null; recommend: number | null;
+}
+export interface AdminCourse extends OwnCourse {
+  revenueMinor: number;
+  /** Learner gross − mentor fee when the fee is in PKR; otherwise null. */
+  companyRevenueMinor: number | null;
+  feePaid: { createdAt: string; amountMinor: number; currency: Currency; reference: string | null } | null;
+  feedback?: CourseFeedbackSummary;
+}
+export interface FacultyMember {
+  id: string; slug: string; name: string; title: string; organization: string; country: string; photoUrl?: string | null;
+  introduction: string; expertise: string[]; industries: string[]; languages: string[]; verified: boolean; rating: number | null; reviewCount: number;
+  courses: Omit<Course, "mentor" | "classes">[];
+}
+/** The course part of a learner's enrolment (a booking with a course). */
+export interface BookingCourse {
+  id: string; slug: string; title: string; summary?: string; topics?: string[];
+  sessionsCount: number; classes: CourseClass[]; liveClass: CourseClass | null; nextClass: CourseClass | null; endsAt: string;
+}

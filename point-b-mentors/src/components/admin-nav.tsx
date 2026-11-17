@@ -6,7 +6,7 @@ import type { ReactNode } from "react";
 const GROUPS: { label: string; tabs: string[] }[] = [
   { label: "Home", tabs: ["Overview"] },
   { label: "People", tabs: ["Applications", "Mentors", "Mentees"] },
-  { label: "Sessions", tabs: ["Bookings", "Reviews"] },
+  { label: "Sessions", tabs: ["Courses", "Enrolments", "Reviews"] },
   { label: "Inbox", tabs: ["Support", "Live chat"] },
   { label: "Growth", tabs: ["Referrals", "User tracking"] },
   { label: "System", tabs: ["Activity", "Settings"] },
@@ -18,7 +18,8 @@ const ICON: Record<string, ReactNode> = {
   Applications: path(<><path d="M5.5 2.5h6l3.5 3.5v11.5h-9.5z" /><path d="M11.5 2.5V6H15M8 10h4.5M8 13h4.5" /></>),
   Mentors: path(<><circle cx="10" cy="6.5" r="3" /><path d="M4 17c.8-3.2 3.2-5 6-5s5.2 1.8 6 5" /><path d="M13.8 3.2l.9 1.6 1.8.3-1.3 1.2.3 1.8" /></>),
   Mentees: path(<><circle cx="7.5" cy="7" r="2.6" /><circle cx="13.8" cy="7.8" r="2.1" /><path d="M2.5 16.5c.6-2.8 2.6-4.4 5-4.4s4.4 1.6 5 4.4M12.6 12.2c2.4-.3 4.3 1.1 4.9 4" /></>),
-  Bookings: path(<><rect x="3" y="4.5" width="14" height="12.5" rx="2.5" /><path d="M3 8.5h14M7 2.5v3.5M13 2.5v3.5" /><path d="M7.5 12.5l1.7 1.7 3.3-3.3" /></>),
+  Courses: path(<><path d="M3 5.5c2.5-1 4.8-1 7 .5 2.2-1.5 4.5-1.5 7-.5v10c-2.5-1-4.8-1-7 .5-2.2-1.5-4.5-1.5-7-.5z" /><path d="M10 6v10" /></>),
+  Enrolments: path(<><rect x="3" y="4.5" width="14" height="12.5" rx="2.5" /><path d="M3 8.5h14M7 2.5v3.5M13 2.5v3.5" /><path d="M7.5 12.5l1.7 1.7 3.3-3.3" /></>),
   Reviews: path(<path d="M10 2.8l2.1 4.4 4.8.6-3.5 3.3.9 4.8L10 13.6l-4.3 2.3.9-4.8-3.5-3.3 4.8-.6z" />),
   Support: path(<><path d="M3.5 9.5a6.5 6.5 0 0113 0v3.5a2 2 0 01-2 2H13v-4.5h3.5M3.5 9.5V13a2 2 0 002 2H7v-4.5H3.5" /><path d="M13 15.5c0 1-1 1.8-3 1.8" /></>),
   "Live chat": path(<><path d="M3.5 9.5a6.5 6 0 116 6c-1 0-2-.2-2.9-.6L3.5 16l.9-3a5.7 5.7 0 01-.9-3.5z" /><path d="M7 9.5h.01M10 9.5h.01M13 9.5h.01" strokeWidth="2.2" /></>),
@@ -35,10 +36,6 @@ const ICON: Record<string, ReactNode> = {
 export function AdminNav<T extends string>({ tabs, value, onChange, counts = {} }: { tabs: readonly T[]; value: T; onChange: (t: T) => void; counts?: Partial<Record<T, number>> }) {
   const allowed = new Set<string>(tabs);
   const groups = GROUPS.map((g) => ({ ...g, tabs: g.tabs.filter((t) => allowed.has(t)) as T[] })).filter((g) => g.tabs.length);
-  // Anything new that isn't in a group yet still gets a home.
-  const grouped = new Set(GROUPS.flatMap((g) => g.tabs));
-  const extra = tabs.filter((t) => !grouped.has(t));
-  if (extra.length) groups.push({ label: "More", tabs: [...extra] });
 
   return (
     <nav aria-label="Admin sections" className="rounded-[1.75rem] bg-white/70 p-2 shadow-[0_18px_44px_-34px_rgba(17,17,17,0.45)] ring-1 ring-line backdrop-blur">

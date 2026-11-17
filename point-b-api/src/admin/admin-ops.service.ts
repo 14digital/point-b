@@ -131,11 +131,24 @@ export class AdminOpsService {
   async reviews() {
     const rows = await this.prisma.review.findMany({
       orderBy: { createdAt: 'desc' },
-      include: { booking: { select: { reference: true, slot: { select: { startAt: true } }, student: { select: { name: true } }, mentor: { select: { id: true, slug: true, user: { select: { name: true } } } } } } },
+      include: {
+        booking: {
+          select: {
+            reference: true, agenda: true, courseId: true,
+            slot: { select: { startAt: true } },
+            student: { select: { name: true } },
+            mentor: { select: { id: true, slug: true, user: { select: { name: true } } } },
+            course: { select: { id: true, title: true, slug: true } },
+          },
+        },
+      },
     });
     return rows.map((r) => ({
-      id: r.id, rating: r.rating, comment: r.comment, status: r.status ?? 'APPROVED', moderatedAt: r.moderatedAt, moderatedBy: r.moderatedBy ?? (r.moderatedAt ? 'MENTOR' : null), editedAt: r.editedAt, createdAt: r.createdAt, // MENTOR only on decisions made before admins took this over
+      id: r.id, rating: r.rating, comment: r.comment,
+      clarity: r.clarity ?? null, usefulness: r.usefulness ?? null, recommend: r.recommend ?? null,
+      status: r.status ?? 'APPROVED', moderatedAt: r.moderatedAt, moderatedBy: r.moderatedBy ?? (r.moderatedAt ? 'MENTOR' : null), editedAt: r.editedAt, createdAt: r.createdAt, // MENTOR only on decisions made before admins took this over
       reference: r.booking.reference, sessionAt: r.booking.slot.startAt, studentName: r.booking.student.name, mentorName: r.booking.mentor.user.name, mentorSlug: r.booking.mentor.slug,
+      courseTitle: r.booking.course?.title ?? null, courseSlug: r.booking.course?.slug ?? null, isCourse: !!r.booking.courseId,
     }));
   }
 

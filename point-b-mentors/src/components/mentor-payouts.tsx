@@ -12,13 +12,21 @@ import { useAuth } from "@/lib/auth";
 import { PayoutDetailsView, type PayoutDetails } from "@/components/admin-mentor-detail";
 import type { Currency, Level } from "@/lib/types";
 
-export interface MentorDue { id: string; name: string; level: Level; sessions: number; grossMinor: number; payoutMinor: number | null; paidOutMinor: number | null; dueMinor: number | null; unpaidSessions: number }
+export interface MentorDue { id: string; name: string; level: Level; sessions: number; grossMinor: number; payoutMinor: number | null; paidOutMinor: number | null; dueMinor: number | null; unpaidSessions: number; courses?: number }
 interface PayoutInfo { id: string; createdAt: string; reference: string | null; note: string | null; sessions: number; amountMinor: number }
 interface MentorSession {
   id: string; reference: string; status: "CONFIRMED" | "COMPLETED"; kind: "ONE_TO_ONE" | "GROUP"; returning: boolean;
   startAt: string; endAt: string; studentName: string; priceMinor: number; percent: number | null; feeMinor: number | null; payoutMinor: number | null; payout: PayoutInfo | null;
 }
-interface MentorLedger { mentor: { id: string; name: string; email: string; level: Level; payoutDetails: PayoutDetails | null }; currency: Currency; configured: boolean; earnedMinor: number; paidMinor: number; dueMinor: number; unpaidCount: number; sessions: MentorSession[] }
+interface MentorCourseFee {
+  id: string; title: string; sessionsCount: number; reviewedAt: string | null; feeMinor: number;
+  payout: PayoutInfo | null;
+}
+interface MentorLedger {
+  mentor: { id: string; name: string; email: string; level: Level; payoutDetails: PayoutDetails | null };
+  currency: Currency; configured: boolean; earnedMinor: number; paidMinor: number; dueMinor: number; unpaidCount: number;
+  sessions: MentorSession[]; courses?: MentorCourseFee[];
+}
 
 const NOT_SET = "Not configured";
 const day = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
@@ -67,7 +75,7 @@ export function MentorPayoutsModal({ currency, period, query, mentors, grossMino
                       <Avatar name={m.name} />
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm font-medium text-ink">{m.name}</span>
-                        <span className="block truncate text-xs text-ink-soft">{LEVEL_LABEL[m.level]} · {plural(m.sessions, "session")}{settled ? "" : ` · ${m.unpaidSessions} unpaid`}</span>
+                        <span className="block truncate text-xs text-ink-soft">{LEVEL_LABEL[m.level]} · {plural(m.sessions, "item")}{(m.courses ?? 0) > 0 ? ` · ${plural(m.courses!, "course")}` : ""}{settled ? "" : ` · ${m.unpaidSessions} unpaid`}</span>
                       </span>
                       <span className="text-right">
                         {settled
@@ -137,7 +145,7 @@ function MentorLedgerView({ mentor, currency, eyebrow, query, onBack, onChanged,
 
   const upcomingIn = (ids: string[]) => ids.filter((id) => new Date(byId.get(id)?.startAt ?? 0).getTime() > now).length;
 
-  const footer = !canPay || !l || !l.sessions.length || !unpaid.length ? undefined : confirming ? (
+  const footer = !canPay || !l || !unpaid.length ? undefined : confirming ? (
     <div className="space-y-3">
       <div className="flex items-baseline justify-between gap-4">
         <p className="text-sm text-ink">Record a payout of <span className="font-medium tabular-nums">{money(total(confirming))}</span> to {l.mentor.name} for {plural(confirming.length, "session")}</p>
@@ -168,9 +176,9 @@ function MentorLedgerView({ mentor, currency, eyebrow, query, onBack, onChanged,
     <FinanceModal label={`Payouts for ${mentor.name}`} eyebrow={eyebrow} onBack={onBack} backLabel="All mentors" onClose={onClose}
       title={<span className="flex items-center gap-2"><Avatar name={mentor.name} size="h-6 w-6 text-[0.6rem]" /><span className="font-medium text-ink">{mentor.name}</span><span>· {LEVEL_LABEL[mentor.level]}</span></span>}
       total={money(l ? l.dueMinor : mentor.dueMinor)}
-      totalNote={l ? (l.unpaidCount ? `Due for ${plural(l.unpaidCount, "session")}${l.paidMinor ? ` · ${money(l.paidMinor)} already paid` : ""}` : l.sessions.length ? "Everything in this period has been paid" : undefined) : undefined}
+      totalNote={l ? (l.unpaidCount ? `Due for ${plural(l.unpaidCount, "item")}${l.paidMinor ? ` · ${money(l.paidMinor)} already paid` : ""}` : (l.sessions.length || (l.courses?.length ?? 0)) ? "Everything in this period has been paid" : undefined) : undefined}
       footer={footer}>
-      {ledger.loading && !l ? <Skeleton className="h-48 rounded-2xl" /> : ledger.error || !l ? <Alert>{ledger.error}</Alert> : !l.sessions.length ? <Empty>No paid sessions for this mentor in this period.</Empty> : (
+      {ledger.loading && !l ? <Skeleton className="h-48 rounded-2xl" /> : ledger.error || !l ? <Alert>{ledger.error}</Alert> : !(l.sessions.length || (l.courses?.length ?? 0)) ? <Empty>No paid sessions or course fees for this mentor in this period.</Empty> : (
         <>
           <div className="grid grid-cols-3 gap-2 text-center">
             {([["Earned", l.earnedMinor, "bg-paper"], ["Paid", l.paidMinor, l.paidMinor ? "bg-mint/60" : "bg-paper"], ["Due", l.dueMinor, l.dueMinor ? "bg-lemon/60" : "bg-paper"]] as const).map(([k, v, bg]) => (
@@ -180,13 +188,37 @@ function MentorLedgerView({ mentor, currency, eyebrow, query, onBack, onChanged,
               </div>
             ))}
           </div>
-          {!l.configured && <Alert tone="info">Set the commission for this mentor&apos;s tier under Pricing &amp; settings before recording payouts.</Alert>}
+          {!l.configured && l.sessions.length > 0 && <Alert tone="info">Set the commission for this mentor&apos;s tier under Pricing &amp; settings before recording 1:1 session payouts.</Alert>}
           <section>
             <SectionTitle>Where to pay {mentor.name.split(" ")[0]}</SectionTitle>
             <PayoutDetailsView d={l.mentor.payoutDetails} />
           </section>
+          {(l.courses?.length ?? 0) > 0 && (
+            <section>
+              <SectionTitle>Course fees</SectionTitle>
+              <ul className="divide-y divide-line/70">
+                {l.courses!.map((c) => (
+                  <li key={c.id} className="-mx-3 rounded-2xl px-3 py-3.5">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-ink">{c.title}</p>
+                        <p className="mt-0.5 text-xs text-ink-soft">Fixed fee for {plural(c.sessionsCount, "class")} · mark paid from Admin → Courses</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="whitespace-nowrap text-sm font-medium text-ink tabular-nums">{money(c.feeMinor)}</p>
+                        {c.payout
+                          ? <p className="mt-1 whitespace-nowrap text-xs text-forest">Paid {day(c.payout.createdAt)}</p>
+                          : <p className="mt-1 whitespace-nowrap text-xs text-ink-soft">Unpaid</p>}
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
           <section>
-            <SectionTitle aside={<a href={`mailto:${l.mentor.email}`} className="text-xs text-ink-soft underline-offset-4 hover:text-ink hover:underline">{l.mentor.email}</a>}>Sessions</SectionTitle>
+            <SectionTitle aside={<a href={`mailto:${l.mentor.email}`} className="text-xs text-ink-soft underline-offset-4 hover:text-ink hover:underline">{l.mentor.email}</a>}>1:1 sessions</SectionTitle>
+            {!l.sessions.length ? <p className="text-sm text-ink-soft">No 1:1 sessions in this period.</p> : (
             <ul className="divide-y divide-line/70">
               {l.sessions.map((s) => {
                 const upcoming = new Date(s.startAt).getTime() > now;
@@ -226,6 +258,7 @@ function MentorLedgerView({ mentor, currency, eyebrow, query, onBack, onChanged,
                 );
               })}
             </ul>
+            )}
           </section>
         </>
       )}

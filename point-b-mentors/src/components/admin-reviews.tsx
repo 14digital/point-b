@@ -11,6 +11,7 @@ import { useApi } from "@/lib/use-api";
 interface AdminReview {
   id: string; rating: number; comment: string; status: "APPROVED" | "HIDDEN" | "PENDING"; moderatedAt: string | null; moderatedBy: "ADMIN" | "MENTOR" | null; editedAt: string | null; createdAt: string;
   reference: string; sessionAt: string; studentName: string; mentorName: string; mentorSlug: string;
+  clarity?: number | null; usefulness?: number | null; recommend?: number | null; courseTitle?: string | null; courseSlug?: string | null; isCourse?: boolean;
 }
 
 const FILTERS = [["PENDING", "Waiting for approval"], ["APPROVED", "Public"], ["HIDDEN", "Private"], ["low", "3 stars or fewer"], ["all", "All"]] as const;
@@ -70,13 +71,18 @@ function ReviewCard({ r, onChanged }: { r: AdminReview; onChanged: (rows: AdminR
         <div className="flex min-w-0 items-center gap-3">
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-medium text-ink" style={{ backgroundColor: pastelFor(r.studentName) }}>{initials(r.studentName)}</span>
           <div className="min-w-0">
-            <p className="text-sm text-ink"><span className="font-medium">{r.studentName}</span> <span className="text-ink-soft">on</span> <a href={`/mentors/${r.mentorSlug}`} target="_blank" rel="noreferrer" className="font-medium underline-offset-4 hover:underline">{r.mentorName}</a></p>
-            <p className="text-xs text-ink-soft">Session {fmtDay(r.sessionAt).replace(/^\w+, /, "")} · <span className="whitespace-nowrap font-mono">{r.reference}</span> · sent {fmtDay(r.createdAt).replace(/^\w+, /, "")}{r.editedAt ? ` · edited by the mentee ${fmtDay(r.editedAt).replace(/^\w+, /, "")}` : ""}</p>
+            <p className="text-sm text-ink"><span className="font-medium">{r.studentName}</span> <span className="text-ink-soft">on</span> <a href={`/mentors/${r.mentorSlug}`} target="_blank" rel="noreferrer" className="font-medium underline-offset-4 hover:underline">{r.mentorName}</a>{r.courseTitle ? <> <span className="text-ink-soft">·</span> <span className="font-medium">{r.courseTitle}</span></> : null}</p>
+            <p className="text-xs text-ink-soft">{r.isCourse ? "Course" : "Session"} {fmtDay(r.sessionAt).replace(/^\w+, /, "")} · <span className="whitespace-nowrap font-mono">{r.reference}</span> · sent {fmtDay(r.createdAt).replace(/^\w+, /, "")}{r.editedAt ? ` · edited by the mentee ${fmtDay(r.editedAt).replace(/^\w+, /, "")}` : ""}</p>
           </div>
         </div>
         <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${STATE[r.status][1]}`}>{STATE[r.status][0]}</span>
       </div>
       <p className="mt-3 text-lg leading-none tracking-wide" aria-label={`${r.rating} out of 5 stars`}><span className="text-brass">{"★".repeat(r.rating)}</span><span className="text-line">{"★".repeat(5 - r.rating)}</span></p>
+      {(r.clarity != null || r.usefulness != null || r.recommend != null) && (
+        <p className="mt-2 text-xs text-ink-soft">
+          {[r.clarity != null && `Clarity ${r.clarity}/5`, r.usefulness != null && `Usefulness ${r.usefulness}/5`, r.recommend != null && `Recommend ${r.recommend}/5`].filter(Boolean).join(" · ")}
+        </p>
+      )}
       <p className="mt-2 whitespace-pre-line text-sm leading-relaxed text-ink">{r.comment}</p>
       {r.moderatedAt && r.status !== "PENDING" && <p className="mt-2 text-xs text-ink-soft">{r.moderatedBy === "MENTOR" ? "Set by the mentor" : "Decided by POINT B"} on {fmtDay(r.moderatedAt).replace(/^\w+, /, "")}</p>}
 

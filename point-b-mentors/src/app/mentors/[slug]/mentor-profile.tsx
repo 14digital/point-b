@@ -4,18 +4,18 @@ import { Flag } from "@/components/flag";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import type { ReactNode } from "react";
-import { Container, MentorPhoto, Skeleton, pastelFor } from "@/components/ui";
+import { Button, Container, MentorPhoto, Skeleton, pastelFor } from "@/components/ui";
 import { Reveal } from "@/components/motion";
 import { useApi } from "@/lib/use-api";
 import { CATEGORY_LABEL, LEVEL_LABEL } from "@/lib/constants";
 import { formatMoney, initials } from "@/lib/format";
-import type { MentorDetail } from "@/lib/types";
-import { BookingPanel } from "./booking-flow";
+import type { Course, MentorDetail } from "@/lib/types";
 import { NoticeText } from "@/lib/policy";
+import { classesLabel } from "@/components/course-card";
 
 export function MentorProfile() {
   const { slug } = useParams<{ slug: string }>();
-  const { data: m, error, loading, reload } = useApi<MentorDetail>(`/mentors/${slug}`);
+  const { data: m, error, loading } = useApi<MentorDetail>(`/mentors/${slug}`);
 
   if (loading) {
     return (
@@ -193,21 +193,21 @@ export function MentorProfile() {
             </Section>
           </div>
 
-          {/* Booking */}
+          {/* Courses */}
           <aside id="book" className="min-w-0 scroll-mt-28 lg:sticky lg:top-24 lg:self-start">
             <div className="animate-rise rounded-[28px] bg-white p-6 shadow-[0_30px_80px_-40px_rgba(17,17,17,0.35)] ring-1 ring-ink/5 sm:p-7" style={{ ["--rise-delay" as string]: "120ms" }}>
               <div className="flex items-center gap-3">
                 <MentorPhoto name={m.name} photoUrl={m.photoUrl} className="h-11 w-11 rounded-full" initialsClass="text-base" />
                 <div className="min-w-0">
-                  <p className="text-sm font-medium text-ink">Book a session with {first}</p>
-                  <p className="text-xs text-ink-soft">30-minute video call</p>
+                  <p className="text-sm font-medium text-ink">Courses with {first}</p>
+                  <p className="text-xs text-ink-soft">Live online · Pakistan time</p>
                 </div>
               </div>
-              <BookingPanel mentor={m} onSlotTaken={reload} />
+              <MentorCoursesPanel slug={m.slug} />
               <ul className="mt-6 space-y-2.5 border-t border-line pt-5 text-sm text-ink-soft">
-                <Assurance><NoticeText text="Full refund if you cancel up to {notice} before" /></Assurance>
-                <Assurance>Private video room, link on your dashboard</Assurance>
-                <Assurance>Reminder by email 30 minutes before</Assurance>
+                <Assurance><NoticeText text="Full refund if you cancel up to {notice} before the first class" /></Assurance>
+                <Assurance>Join each class from your dashboard</Assurance>
+                <Assurance>One fee covers every class</Assurance>
               </ul>
               {m.linkedinUrl && (
                 <a href={linkedinHref(m.linkedinUrl)} target="_blank" rel="noopener noreferrer" className="mt-5 flex items-center justify-between rounded-2xl bg-paper px-4 py-3 text-sm text-ink hover:bg-paper-dim">
@@ -219,17 +219,41 @@ export function MentorProfile() {
         </div>
       </Container>
 
-      {/* Mobile booking bar */}
+      {/* Mobile courses bar */}
       <div className="fixed inset-x-0 bottom-0 z-40 border-t border-line bg-white/90 px-5 py-3 backdrop-blur lg:hidden">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-4">
           <div>
-            <p className="text-sm font-medium text-ink">{formatMoney(m.priceMinor, m.currency)} <span className="font-normal text-ink-soft">/ 30 min</span></p>
-            <p className="text-xs text-ink-soft">Group from {formatMoney(m.groupPriceMinor, m.currency)}</p>
+            <p className="text-sm font-medium text-ink">Courses with {first}</p>
+            <p className="text-xs text-ink-soft">Live online · one fee in rupees</p>
           </div>
-          <a href="#book" className="rounded-full bg-ink px-5 py-2.5 text-sm font-medium text-paper">See times</a>
+          <a href="#book" className="rounded-full bg-ink px-5 py-2.5 text-sm font-medium text-paper">See courses</a>
         </div>
       </div>
     </div>
+  );
+}
+
+function MentorCoursesPanel({ slug }: { slug: string }) {
+  const { data, loading } = useApi<Course[]>(`/courses?mentor=${encodeURIComponent(slug)}`);
+  if (loading) return <div className="mt-5 space-y-3"><Skeleton className="h-16 rounded-2xl" /><Skeleton className="h-16 rounded-2xl" /></div>;
+  const list = (data ?? []).filter((c) => c.open);
+  if (!list.length) {
+    return (
+      <div className="mt-5 rounded-2xl bg-paper px-4 py-5 text-sm text-ink-soft">
+        No open courses from this faculty member right now. <Link href="/courses" className="font-medium text-ink underline-offset-4 hover:underline">See all courses</Link>
+      </div>
+    );
+  }
+  return (
+    <ul className="mt-5 space-y-3">
+      {list.map((c) => (
+        <li key={c.id} className="rounded-2xl bg-paper px-4 py-3">
+          <Link href={`/courses/${c.slug}`} className="font-medium text-ink hover:underline">{c.title}</Link>
+          <p className="mt-1 text-xs text-ink-soft">{classesLabel(c)}{c.priceMinor != null ? ` · ${formatMoney(c.priceMinor, "PKR")}` : ""}</p>
+          <Button href={`/courses/${c.slug}`} size="sm" className="mt-3 w-full">View course</Button>
+        </li>
+      ))}
+    </ul>
   );
 }
 

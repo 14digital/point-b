@@ -30,13 +30,16 @@ export function SessionButton({ link, startAt, endAt, withName, detail, joinClas
     return () => clearInterval(t);
   }, []);
   const opensAt = new Date(startAt).getTime() - OPENS_BEFORE_MS;
-  const open = now >= opensAt;
+  // Matches the API call window: open until an hour after the scheduled end.
+  const closesAt = new Date(endAt).getTime() + 60 * 60_000;
+  const open = now >= opensAt && now <= closesAt;
+  const ended = now > closesAt;
 
   return (
     <>
       {open
         ? <a href={link} target="_blank" rel="noreferrer" className={joinClass}>Join now</a>
-        : <button type="button" className={waitClass} onClick={() => { setNow(Date.now()); setShowing(true); }}>{waitLabel}</button>}
+        : <button type="button" className={waitClass} onClick={() => { setNow(Date.now()); setShowing(true); }}>{ended ? "Session details" : waitLabel}</button>}
       {showing && (
         <FinanceModal label="Your session" eyebrow="Your session" onClose={() => setShowing(false)}
           title={<span className="font-display text-2xl leading-tight text-ink">Session with {withName}</span>}
@@ -53,10 +56,14 @@ export function SessionButton({ link, startAt, endAt, withName, detail, joinClas
             <div className="flex justify-between gap-6"><dt className="text-ink-soft">Time</dt><dd className="text-right text-ink">{fmtTime(startAt)}–{fmtTime(endAt)}</dd></div>
             <div className="flex justify-between gap-6"><dt className="text-ink-soft">Session</dt><dd className="text-right text-ink">{detail}</dd></div>
           </dl>
-          <div className={`rounded-2xl px-5 py-4 ${open ? "bg-mint" : "bg-lemon/60"}`} aria-live="polite">
-            <p className="font-medium text-ink">{open ? "Your session is open" : "Your session isn’t open yet"}</p>
+          <div className={`rounded-2xl px-5 py-4 ${open ? "bg-mint" : ended ? "bg-paper" : "bg-lemon/60"}`} aria-live="polite">
+            <p className="font-medium text-ink">{open ? "Your session is open" : ended ? "This session has ended" : "Your session isn’t open yet"}</p>
             <p className="mt-1 text-sm leading-relaxed text-ink/70">
-              {open ? "The call room is ready. Join whenever you’re set." : `The call room opens at ${fmtTime(new Date(opensAt).toISOString())}, in ${timeLeft(opensAt - now)}.${new Date(startAt).getTime() - now > 30 * 60_000 ? " We’ll email you a reminder 30 minutes before the start." : ""}`}
+              {open
+                ? "The call room is ready. Join whenever you’re set."
+                : ended
+                  ? "The room is closed. You’ll find this session under Past."
+                  : `The call room opens at ${fmtTime(new Date(opensAt).toISOString())}, in ${timeLeft(opensAt - now)}.${new Date(startAt).getTime() - now > 30 * 60_000 ? " We’ll email you a reminder 30 minutes before the start." : ""}`}
             </p>
           </div>
         </FinanceModal>

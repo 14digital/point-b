@@ -194,7 +194,7 @@ export class MentorsService {
     const p = await this.mine(userId);
     await this.bookings.releaseExpiredHolds();
     const rows = await this.prisma.booking.findMany({
-      where: { mentorId: p.id, status: { not: 'PENDING_PAYMENT' } },
+      where: { mentorId: p.id, status: { not: 'PENDING_PAYMENT' }, OR: [{ courseId: null }, { courseId: { isSet: false } }] },
       orderBy: { slot: { startAt: 'asc' } },
       include: { slot: true, student: { select: { name: true } }, review: true },
     });
@@ -206,11 +206,17 @@ export class MentorsService {
     const p = await this.mine(userId);
     const rows = await this.prisma.review.findMany({
       where: { booking: { mentorId: p.id } }, orderBy: { createdAt: 'desc' },
-      select: { id: true, rating: true, comment: true, status: true, createdAt: true, moderatedAt: true, booking: { select: { reference: true, agenda: true, slot: { select: { startAt: true } }, student: { select: { name: true } } } } },
+      select: {
+        id: true, rating: true, comment: true, clarity: true, usefulness: true, recommend: true, status: true, createdAt: true, moderatedAt: true,
+        booking: { select: { reference: true, agenda: true, courseId: true, slot: { select: { startAt: true } }, student: { select: { name: true } }, course: { select: { title: true } } } },
+      },
     });
     return rows.map((r) => ({
-      id: r.id, rating: r.rating, comment: r.comment, status: r.status ?? 'APPROVED', createdAt: r.createdAt, moderatedAt: r.moderatedAt,
-      reference: r.booking.reference, agenda: r.booking.agenda, sessionAt: r.booking.slot.startAt, studentName: r.booking.student.name,
+      id: r.id, rating: r.rating, comment: r.comment,
+      clarity: r.clarity ?? null, usefulness: r.usefulness ?? null, recommend: r.recommend ?? null,
+      status: r.status ?? 'APPROVED', createdAt: r.createdAt, moderatedAt: r.moderatedAt,
+      reference: r.booking.reference, agenda: r.booking.course?.title ?? r.booking.agenda, sessionAt: r.booking.slot.startAt, studentName: r.booking.student.name,
+      isCourse: !!r.booking.courseId,
     }));
   }
 
@@ -235,7 +241,7 @@ export class MentorsService {
   async myEarnings(userId: string) {
     const p = await this.mine(userId);
     const rules = await commissionRules(this.prisma);
-    const rows = await this.prisma.booking.findMany({ where: { mentorId: p.id, status: { in: ['CONFIRMED', 'COMPLETED'] } }, select: { currency: true, priceMinor: true, platformFeeMinor: true, listPriceMinor: true, mentorPaidInFull: true, repeatStudent: true } });
+    const rows = await this.prisma.booking.findMany({ where: { mentorId: p.id, status: { in: ['CONFIRMED', 'COMPLETED'] }, OR: [{ courseId: null }, { courseId: { isSet: false } }] }, select: { currency: true, priceMinor: true, platformFeeMinor: true, listPriceMinor: true, mentorPaidInFull: true, repeatStudent: true } });
     const out: Record<string, { currency: string; grossMinor: number; feeMinor: number; payoutMinor: number; sessions: number; repeatSessions: number }> = {};
     let unknown = false;
     for (const b of rows) {
@@ -244,6 +250,11 @@ export class MentorsService {
       const fee = feeForBooking(b, rate);
       if (fee == null) unknown = true;
       o.grossMinor += b.priceMinor; o.feeMinor += fee ?? 0; o.payoutMinor += b.priceMinor - (fee ?? 0); o.sessions++; if (b.repeatStudent) o.repeatSessions++;
+    }
+    // Each published course earns the mentor the fee they agreed, whatever the enrolment.
+    for (const c of await this.prisma.course.findMany({ where: { mentorId: p.id, status: { in: ['LIVE', 'CLOSED'] } }, select: { mentorFeeMinor: true, mentorFeeCurrency: true } })) {
+      const o = (out[c.mentorFeeCurrency] ??= { currency: c.mentorFeeCurrency, grossMinor: 0, feeMinor: 0, payoutMinor: 0, sessions: 0, repeatSessions: 0 });
+      o.grossMinor += c.mentorFeeMinor; o.payoutMinor += c.mentorFeeMinor;
     }
     return { totals: Object.values(out), tierPercent: rules.tier[p.level], repeatPercent: rules.repeat, commissionConfigured: !unknown && rules.tier[p.level] != null, note: 'Payout schedule is set by POINT B administrators.' };
   }
@@ -257,11 +268,13 @@ export class MentorsService {
     const rules = await commissionRules(this.prisma);
     const [rows, payouts] = await Promise.all([
       this.prisma.booking.findMany({
-        where: { mentorId: p.id, status: { in: ['CONFIRMED', 'COMPLETED'] } }, orderBy: { slot: { startAt: 'desc' } },
+        where: { mentorId: p.id, status: { in: ['CONFIRMED', 'COMPLETED'] }, OR: [{ courseId: null }, { courseId: { isSet: false } }] }, orderBy: { slot: { startAt: 'desc' } },
         select: { reference: true, status: true, currency: true, priceMinor: true, platformFeeMinor: true, listPriceMinor: true, mentorPaidInFull: true, commissionPercent: true, payoutId: true, slot: { select: { startAt: true } }, student: { select: { name: true } } },
       }),
-      this.prisma.mentorPayout.findMany({ where: { mentorId: p.id }, orderBy: { createdAt: 'desc' }, select: { id: true, createdAt: true, currency: true, amountMinor: true, sessions: true, reference: true, note: true } }),
+      this.prisma.mentorPayout.findMany({ where: { mentorId: p.id }, orderBy: { createdAt: 'desc' }, select: { id: true, createdAt: true, currency: true, amountMinor: true, sessions: true, reference: true, note: true, courseId: true, course: { select: { title: true } } } }),
     ]);
+    const courses = (await this.prisma.course.findMany({ where: { mentorId: p.id, status: { in: ['LIVE', 'CLOSED'] } }, orderBy: { createdAt: 'desc' }, select: { id: true, title: true, mentorFeeMinor: true, mentorFeeCurrency: true } }))
+      .map((c) => ({ id: c.id, title: c.title, currency: c.mentorFeeCurrency, feeMinor: c.mentorFeeMinor, paidOn: payouts.find((x) => x.courseId === c.id)?.createdAt ?? null }));
     const sessions = rows.map((b) => {
       const pct = b.commissionPercent ?? rules.tier[p.level];
       const fee = feeForBooking(b, pct);
@@ -269,15 +282,17 @@ export class MentorsService {
       return { reference: b.reference, status: b.status, currency: b.currency, startAt: b.slot.startAt, studentName: b.student.name, priceMinor: b.priceMinor, percent: pct, earnMinor: fee == null ? null : b.priceMinor - fee, paidOn: paidOut?.createdAt ?? null };
     });
     // Sessions paid out and later cancelled: the money was sent, so it counts as paid, and the mentor can see why.
-    const cancelledPaid = await this.prisma.booking.findMany({ where: { mentorId: p.id, payoutId: { not: null }, status: { notIn: ['CONFIRMED', 'COMPLETED'] } }, select: { currency: true, priceMinor: true, platformFeeMinor: true, listPriceMinor: true, mentorPaidInFull: true } });
-    const totals = reportCurrencies([...sessions, ...payouts]).map((currency) => {
+    const cancelledPaid = await this.prisma.booking.findMany({ where: { mentorId: p.id, payoutId: { not: null }, status: { notIn: ['CONFIRMED', 'COMPLETED'] }, OR: [{ courseId: null }, { courseId: { isSet: false } }] }, select: { currency: true, priceMinor: true, platformFeeMinor: true, listPriceMinor: true, mentorPaidInFull: true } });
+    const totals = reportCurrencies([...sessions, ...payouts, ...courses]).map((currency) => {
       const mine = sessions.filter((s) => s.currency === currency);
+      const theirCourses = courses.filter((c) => c.currency === currency);
+      const courseFees = (l: typeof theirCourses) => l.reduce((n, c) => n + c.feeMinor, 0);
       const sum = (l: typeof mine) => l.reduce((n, s) => n + (s.earnMinor ?? 0), 0);
       const paidMinor = payouts.filter((x) => x.currency === currency).reduce((n, x) => n + x.amountMinor, 0);
       const forCancelledMinor = cancelledPaid.filter((b) => b.currency === currency).reduce((n, b) => n + b.priceMinor - (b.platformFeeMinor ?? 0), 0);
-      return { currency, earnedMinor: sum(mine), paidMinor, dueMinor: sum(mine.filter((s) => !s.paidOn)), forCancelledMinor, sessions: mine.length };
-    }).filter((t) => t.sessions > 0 || t.paidMinor > 0);
-    return { totals, payouts, sessions, hasPayoutDetails: !!p.payoutDetails };
+      return { currency, earnedMinor: sum(mine) + courseFees(theirCourses), paidMinor, dueMinor: sum(mine.filter((s) => !s.paidOn)) + courseFees(theirCourses.filter((c) => !c.paidOn)), forCancelledMinor, sessions: mine.length, courses: theirCourses.length };
+    }).filter((t) => t.sessions > 0 || t.courses > 0 || t.paidMinor > 0);
+    return { totals, payouts: payouts.map(({ course, ...x }) => ({ ...x, courseTitle: course?.title ?? null })), sessions, courses, hasPayoutDetails: !!p.payoutDetails };
   }
 
   /** Students who have had a paid session with this mentor, and so can be offered a promo code for the next one. */
